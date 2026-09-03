@@ -1,0 +1,85 @@
+# tests/os-release/expected.tsv -- what each fixture in this directory must
+# resolve to, against BOTH matrix files the test reads. Tab-separated, SEVEN
+# columns, one row per fixture:
+#
+#   fixture  id  version_id  tier_shipped  row_shipped  tier_pinned  row_pinned
+#
+#   fixture       the file name in this directory
+#   id            the ID field the parser must read out of it
+#   version_id    the VERSION_ID field the parser must read out of it, which
+#                 may legitimately be EMPTY -- see debian-testing below
+#   tier_shipped  supported | legacy | unknown, against ../../support-matrix.yml
+#   row_shipped   the row it matches there, or "-" when none
+#   tier_pinned   the same, against support-matrix.pinned-example.yml
+#   row_pinned    the row it matches there, or "-" when none
+#
+# WHY TWO PAIRS OF COLUMNS. The shipped support-matrix.yml has an EMPTY
+# supported tier, honestly, because no upstream ref is pinned. Nothing could
+# then ever resolve as supported, and the supported half of the reader -- the
+# tier lookup, the supported-wins precedence, the summary -- would never be
+# executed by any test in the tree. support-matrix.pinned-example.yml is a
+# matrix as it will look once tools/pin-upstream.sh has run, so the last two
+# columns exercise that half. Neither file is evidence that anything was ever
+# installed anywhere; tests/MATRIX-STATUS.md is where that would live.
+#
+# THE ROW THAT EARNS THE SECOND PAIR: debian-13 is legacy against the shipped
+# file and SUPPORTED against the pinned one, from the same fixture and the same
+# code. debian:13 is listed in both tiers of the pinned example, which is the
+# real case -- it is both what today's upstream accepts and one of the nine the
+# old installer ran on -- and this row is what proves supported wins.
+#
+# WHY THIS FILE RESTATES THE ANSWER. It is a deliberate second statement, and
+# the only one in the tree. A test that derived the answer with the same rule
+# the code uses would agree with itself no matter what the rule was; the Mint
+# truncation in particular is a rule that has to be asserted from outside, or a
+# regression turning 21.3 into linuxmint:21.3 passes every test we have.
+# support-matrix.yml stays the ONE place the tiers are declared: a row here is
+# about one fixture, not about what we support.
+#
+# The six fixtures that match nothing in the shipped file each carry a distinct
+# reason:
+#
+#   ubuntu-26.04   what upstream's gate accepts TODAY, and not one of the
+#                  legacy nine. Unknown against the shipped file precisely
+#                  because nothing is pinned; supported against the pinned one.
+#                  It is also the only fixture with a comment line in it, which
+#                  is what proves the os-release parser skips one.
+#   almalinux      upstream accepts AlmaLinux 10 and this installer still
+#                  cannot drive it -- no apt-get. It is the fixture that shows
+#                  the supported tier is an INTERSECTION and not a copy of
+#                  upstream's list. Note VERSION_ID="10.0", so the
+#                  first-component rule is what a future almalinux:10 row would
+#                  rely on.
+#   debian-testing Debian testing publishes NO VERSION_ID at all. matrix_identify
+#                  returns an empty version, and an empty version must match
+#                  nothing rather than fall back to the id. This row is the one
+#                  with two adjacent tabs, which is also what stops the
+#                  manifest splitter from collapsing empty fields.
+#   kali           an ID we have never heard of, and a date-shaped rolling
+#                  version
+#   raspbian       an ID we do not support, wearing ID_LIKE=debian and
+#                  VERSION_ID=12. It matches debian:12 the moment anybody
+#                  consults ID_LIKE. This is the fixture that stops that.
+#                  Upstream accepts Raspbian at major 13; we still do not.
+#   fedora         not a Debian derivative at all, no ID_LIKE, and an UNQUOTED
+#                  VERSION_ID -- which is also the fixture that proves the
+#                  parser does not require quotes.
+#
+# Order follows support-matrix.yml's legacy tier, then the supported-only
+# release, then the negatives.
+#
+debian-11.os-release	debian	11	legacy	debian:11	legacy	debian:11
+debian-12.os-release	debian	12	legacy	debian:12	legacy	debian:12
+debian-13.os-release	debian	13	legacy	debian:13	supported	debian:13
+ubuntu-20.04.os-release	ubuntu	20.04	legacy	ubuntu:20.04	legacy	ubuntu:20.04
+ubuntu-22.04.os-release	ubuntu	22.04	legacy	ubuntu:22.04	legacy	ubuntu:22.04
+ubuntu-24.04.os-release	ubuntu	24.04	legacy	ubuntu:24.04	legacy	ubuntu:24.04
+linuxmint-20.3.os-release	linuxmint	20.3	legacy	linuxmint:20	legacy	linuxmint:20
+linuxmint-21.3.os-release	linuxmint	21.3	legacy	linuxmint:21	legacy	linuxmint:21
+linuxmint-22.os-release	linuxmint	22	legacy	linuxmint:22	legacy	linuxmint:22
+ubuntu-26.04.os-release	ubuntu	26.04	unknown	-	supported	ubuntu:26.04
+kali-2024.2.os-release	kali	2024.2	unknown	-	unknown	-
+raspbian-12.os-release	raspbian	12	unknown	-	unknown	-
+fedora-40.os-release	fedora	40	unknown	-	unknown	-
+almalinux-10.os-release	almalinux	10.0	unknown	-	unknown	-
+debian-testing.os-release	debian		unknown	-	unknown	-

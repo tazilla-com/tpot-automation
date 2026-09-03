@@ -1,0 +1,54 @@
+---
+# tests/os-release/support-matrix.pinned-example.yml
+#
+# A support-matrix.yml AS IT WOULD LOOK ONCE A REF IS PINNED. Test scaffolding,
+# not a claim: nothing in this repository has been installed on any of these.
+#
+# WHY IT EXISTS. The real support-matrix.yml ships with an EMPTY supported
+# tier, honestly, because tpot_upstream_ref is unset. That means the supported
+# code path -- the tier lookup, the supported-wins precedence, the summary, the
+# bash/YAML equivalence over a non-empty supported list -- would otherwise
+# never be executed by any test in the tree. This file is the second matrix
+# tests/check-matrix-parse.sh runs everything against, so both halves of the
+# two-tier reader are exercised.
+#
+# IT ALSO DOCUMENTS WHAT tools/pin-upstream.sh MUST PRODUCE: the supported tier
+# is the ref's own gate INTERSECTED WITH what this installer can drive, and the
+# ref it was derived from is written in the same edit.
+#
+# The contents below are the intersection recorded in support-matrix.yml's
+# header for upstream master as read on 2026-09-02:
+#
+#   upstream's gate accepted    debian:13  ubuntu:26.04  raspbian:13
+#                               almalinux:10  rhel:10  rocky:10  fedora:44
+#                               opensuse-tumbleweed (rolling)
+#   this installer can drive    apt-get only, x86_64 / aarch64 only
+#   raspbian:13                 dropped -- nobody here has run it, and folding
+#                               it into debian would mean consulting ID_LIKE,
+#                               which the match rule forbids
+#   ------------------------------------------------------------------------
+#   supported tier              debian:13, ubuntu:26.04
+#
+# `master` is a moving branch and would never be a legal pin -- CI asserts the
+# ref is never `master`. The string below is deliberately a dated pseudo-ref so
+# that nobody can mistake this file for a pinned configuration.
+#
+# debian:13 appears in BOTH tiers on purpose. That is the real case, and it is
+# what proves the supported-wins precedence rule.
+
+tpot_support_matrix_supported_ref: "example-not-a-real-ref-2026-09-02"
+
+tpot_support_matrix_supported:
+  - "debian:13"
+  - "ubuntu:26.04"
+
+tpot_support_matrix_legacy:
+  - "debian:11"
+  - "debian:12"
+  - "debian:13"
+  - "ubuntu:20.04"
+  - "ubuntu:22.04"
+  - "ubuntu:24.04"
+  - "linuxmint:20"
+  - "linuxmint:21"
+  - "linuxmint:22"

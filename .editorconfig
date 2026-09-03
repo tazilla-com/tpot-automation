@@ -1,0 +1,41 @@
+# EditorConfig -- https://editorconfig.org
+# The file formats in this tree, so that a contributor's editor produces a
+# diff that is only their change.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+max_line_length = 120
+
+[*.{yml,yaml,json}]
+indent_size = 2
+
+[*.sh]
+# Four spaces: the shell library and install.sh nest deeply enough that two
+# stops being readable, and it matches the Python files beside them.
+indent_size = 4
+
+[*.py]
+indent_size = 4
+max_line_length = 99
+
+[*.md]
+# Markdown tables and prose lines are not worth wrapping mechanically, and
+# trailing whitespace is significant (two spaces is a hard line break), so
+# neither rule applies here.
+max_line_length = off
+trim_trailing_whitespace = false
+
+[lib/exitcodes.sh]
+# The exit table's rows are single lines by design: the table is diffed
+# byte-for-byte against docs/exit-codes.md and against --help output, so a
+# wrapped row would be a different table.
+max_line_length = off
+
+[Makefile]
+indent_style = tab

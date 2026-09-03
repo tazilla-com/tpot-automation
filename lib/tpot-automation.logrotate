@@ -1,0 +1,24 @@
+# logrotate policy for this installer's own transcripts.
+#
+# Installed to /etc/logrotate.d/tpot-automation by lib/log.sh's
+# log_install_logrotate, which substitutes @TPOT_LOG_DIR@ for the directory
+# actually in use (--log-dir can move it). It is shipped as a file rather than
+# written from a heredoc so that a packager can install it directly and a
+# reader can see the policy without reading shell.
+#
+# One transcript is written per run, named install-<UTC timestamp>.log, so
+# these files do not grow -- they accumulate. Rotation here is really about
+# putting an upper bound on how many runs' worth of output survives, and the
+# `create 0600 root root` line is the part that matters: a rotated transcript
+# must not become world-readable, because a transcript is exactly the artefact
+# both of this platform's credential incidents were.
+@TPOT_LOG_DIR@/*.log {
+    monthly
+    rotate 12
+    missingok
+    notifempty
+    compress
+    delaycompress
+    create 0600 root root
+    su root root
+}

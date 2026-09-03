@@ -1,0 +1,46 @@
+                        LICENCE NOT YET CHOSEN
+                        ======================
+
+This project has no open-source licence yet. **All rights reserved.**
+
+No permission is granted, expressly or by implication, to use, copy, modify,
+merge, publish, distribute, sublicense or sell copies of this software while
+this file says what it says.
+
+This file is a deliberate placeholder, not an oversight. It is replaced with a
+real licence text before the first public release, and that replacement is the
+event that makes this project open source.
+
+Why it is still empty
+---------------------
+
+Choosing the licence is a decision with consequences that cannot be undone
+cheaply. Re-licensing a published project requires the agreement of every
+contributor whose work is in it, so the cost of choosing wrongly rises with
+every commit and every contributor after publication, while the cost of
+choosing later is zero. The decision is therefore taken deliberately, once,
+before the first public commit -- not inherited from whichever template
+happened to be at hand.
+
+What this does and does not block
+---------------------------------
+
+* It does NOT block development. Work continues in the private working
+  repository under this notice.
+* It DOES block the first public commit. Publishing without a licence
+  publishes source that nobody may legally use, which is worse than not
+  publishing at all.
+
+Third-party software
+--------------------
+
+This project installs, but does not contain or redistribute, upstream T-Pot
+(https://github.com/telekom-security/tpotce) and the Ansible collections named
+in requirements.yml. Each of those carries its own licence, which is unaffected
+by this file and by whatever replaces it.
+
+When this file is replaced, the replacement commit must also:
+
+  * state the chosen licence in README.md,
+  * add the SPDX identifier to the repository metadata,
+  * and record the choice, with its reasoning, in the project's decision log.

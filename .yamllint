@@ -1,0 +1,62 @@
+---
+# yamllint configuration for this tree.
+#
+#   yamllint .
+#
+# ansible-lint reads this file too, so a YAML style rule is defined once here
+# and not repeated in .ansible-lint.
+
+extends: default
+
+rules:
+  # Every YAML file in this tree starts with `---`. It is the cheapest way to
+  # tell a truncated file from a complete one in a transcript.
+  document-start:
+    present: true
+
+  # 120 columns, matching .editorconfig. A warning rather than an error: a
+  # long fail_msg that names both the measured and the required value is worth
+  # more than a wrapped one.
+  line-length:
+    max: 120
+    level: warning
+    allow-non-breakable-words: true
+    allow-non-breakable-inline-mappings: true
+
+  # Sequences are indented under their key. Ansible task files are unreadable
+  # the other way round.
+  indentation:
+    spaces: 2
+    indent-sequences: true
+
+  # Booleans are written `true`/`false`, never `yes`/`no`/`on`/`off`, so that
+  # a value means the same thing in YAML, in JSON and in the merged
+  # configuration document. Keys are exempt: `on:` is GitHub Actions' own.
+  truthy:
+    allowed-values: ['true', 'false']
+    check-keys: false
+
+  # `mode: "0600"` is a string on purpose. An unquoted 0600 is decimal 600 in
+  # YAML 1.1 and octal 384 in YAML 1.2, and Ansible has been bitten by both.
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true
+
+  # inventories/example/group_vars/all.yml is documentation: every key is a
+  # comment, and there is no following content line to align a comment with.
+  comments-indentation: disable
+
+  comments:
+    require-starting-space: true
+    min-spaces-from-content: 2
+
+  braces:
+    max-spaces-inside: 1
+  brackets:
+    max-spaces-inside: 1
+
+ignore: |
+  .git/
+  .venv/
+  collections/
+  tests/fixtures/

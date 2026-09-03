@@ -1,0 +1,54 @@
+# tpot-automation — what must never be committed.
+#
+# This file is in the FIRST commit on purpose. Most of the patterns below name
+# artefacts that carry a plaintext credential, and git history is not
+# retractable in practice: a secret that is committed and then removed is still
+# in the object store, in every clone and in every fork.
+
+# --- Plaintext credential backups -------------------------------------------
+# The installer this project replaces wrote one timestamped, world-readable
+# copy of its credentials file per run and never cleaned them up. This tool
+# creates none, but a user migrating from the old one will have some lying
+# around in the directory they run us from.
+*.bak*
+
+# --- macOS zip debris --------------------------------------------------------
+# A release downloaded and unzipped on macOS carries these back into the tree.
+.DS_Store
+__MACOSX/
+._*
+
+# --- Run-time state that is regenerated, and may hold secrets ---------------
+# T-Pot's own environment file, and any local copy of one.
+.env
+# The merged configuration document. Written to a 0700 tmpfs run directory at
+# run time, mode 0600; it holds every supplied value, including the password.
+merged.json
+# Generated inventory. Written by install.sh on every run.
+inventories/local/*
+!inventories/local/.gitkeep
+# Answer files. Named by convention so a file left beside the tree by accident
+# is ignored rather than committed. The real ones live outside the tree, in
+# /root, mode 0600 — install.sh refuses an answer file inside the repo.
+answers*.yml
+answers*.json
+tpot*.yml.local
+
+# --- Tool output -------------------------------------------------------------
+*.retry
+*.log
+*.tfstate*
+collections/
+.venv/
+__pycache__/
+*.py[cod]
+
+# --- Deliberate exceptions ---------------------------------------------------
+# Test fixtures are named after the artefacts above on purpose: the .env
+# rewriting, the merged document and the transcript all need fixtures with
+# realistic names. Keep them tracked. (A negation only works because no parent
+# directory of these paths is itself ignored.)
+!tests/fixtures/**/.env
+!tests/fixtures/**/*.env
+!tests/fixtures/**/merged.json
+!tests/fixtures/**/*.log

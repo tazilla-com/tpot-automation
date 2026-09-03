@@ -1,0 +1,19 @@
+# Hand-authored, not copied off a running box: this project has no Ubuntu
+# 26.04 guest. ID and VERSION_ID are the load-bearing fields and are exactly
+# what upstream's version gate compares (it requires the FULL string "26.04",
+# not the major). The rest is shape. This is also the only fixture carrying a
+# comment line, which is what proves the parser skips one -- os-release permits
+# them and no other fixture has one.
+PRETTY_NAME="Ubuntu 26.04 LTS"
+NAME="Ubuntu"
+VERSION_ID="26.04"
+VERSION="26.04 LTS (Resolute Raccoon)"
+VERSION_CODENAME=resolute
+ID=ubuntu
+ID_LIKE=debian
+HOME_URL="https://www.ubuntu.com/"
+SUPPORT_URL="https://help.ubuntu.com/"
+BUG_REPORT_URL="https://bugs.launchpad.net/ubuntu/"
+PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
+UBUNTU_CODENAME=resolute
+LOGO=ubuntu-logo

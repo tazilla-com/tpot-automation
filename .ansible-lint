@@ -1,0 +1,52 @@
+---
+# ansible-lint configuration.
+#
+#   ansible-lint
+#
+# YAML style comes from .yamllint, which ansible-lint reads for itself; this
+# file carries only the Ansible-specific rules.
+
+profile: moderate
+
+# No network at lint time. The container tier and the operator's own box both
+# run this offline, and a rule that silently degrades when a fetch fails is
+# worse than one that is switched off deliberately.
+offline: true
+
+exclude_paths:
+  - .git/
+  - .github/
+  - .venv/
+  - collections/
+  # Generated on every run by install.sh. Linting it lints the last run.
+  - inventories/local/
+  # Fixtures are deliberately malformed in places: that is what they test.
+  - tests/fixtures/
+
+use_default_rules: true
+
+enable_list:
+  # Fully qualified module names everywhere. `command` and `copy` resolving
+  # differently depending on which collections happen to be installed is the
+  # exact class of surprise this project exists to remove.
+  - fqcn
+  # A task that handles a password and lacks no_log is a build break, not a
+  # style opinion.
+  - no-log-password
+  # File and directory modes are stated, never inherited from umask.
+  - risky-file-permissions
+  - risky-shell-pipe
+  - name[casing]
+
+warn_list:
+  - experimental
+  # `ss`, `getent` and `htpasswd` are used through command/shell on purpose:
+  # each is doing the parsing that a fact or a filter would do worse. Every
+  # such task carries a comment saying why, and an explicit changed_when.
+  - command-instead-of-module
+
+skip_list:
+  # Task names name the thing they act on, and that is sometimes a variable:
+  # "Load the knowledge for upstream ref {{ tpot_upstream_ref }}" is more use
+  # in a transcript than the same sentence with the ref left out.
+  - name[template]

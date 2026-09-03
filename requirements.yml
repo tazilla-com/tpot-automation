@@ -1,0 +1,22 @@
+---
+# Ansible collections this project needs, and the only ones it installs.
+#
+# Install them with:
+#
+#   ansible-galaxy collection install -r requirements.yml \
+#       -p /usr/local/share/tpot-automation/collections
+#
+# NEVER with --force. --force overwrites whatever is already installed at that
+# path, including a version another consumer depends on. install.sh checks
+# whether an acceptable version is already present and installs only when it
+# is not; a failed install is a hard error (exit 13), never a fallback to
+# "native modules only" -- there is no native fallback, because os_prep would
+# then fail at community.general.timezone.
+collections:
+  - name: community.general
+    # A RANGE, not a pin. 8.0.0 is the first release whose modules used here
+    # (timezone, sudoers) have the behaviour this project relies on; 12.0.0 is
+    # excluded because a new major version may change it again. Widen this
+    # only with evidence from the container matrix, never to make a run pass.
+    version: ">=8.0.0,<12.0.0"
+    source: https://galaxy.ansible.com

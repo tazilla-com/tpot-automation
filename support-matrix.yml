@@ -1,0 +1,239 @@
+---
+# support-matrix.yml -- the two tiers of distribution releases, and the ONE
+# place either of them is written down.
+#
+# ============================================================================
+# WHAT THIS FILE IS
+# ============================================================================
+#
+# Nothing else in the tree restates these releases: lib/matrix.sh reads this
+# file, roles/preflight loads it with include_vars, the preflight message about
+# an unrecognised box is built from it, and tests/check-matrix-parse.sh asserts
+# that the bash reader and a real YAML parser produce byte-identical lists,
+# tier by tier. A release is one line here and nowhere else.
+#
+# ============================================================================
+# THE TWO TIERS -- WHAT EACH ONE MEANS, AND WHAT STANDS BEHIND IT (D-07)
+# ============================================================================
+#
+# SUPPORTED  tpot_support_matrix_supported
+#
+#     MEANING: this installer, at the upstream ref it currently pins, can
+#     install T-Pot here end to end. It is the only tier the README, the
+#     preflight message or a release note may call supported.
+#
+#     EVIDENCE OWED PER ROW: a real run on a real guest at the pinned ref,
+#     dated in tests/MATRIX-STATUS.md. A row with no dated run there blocks a
+#     release tag. NOTHING in this repository is that evidence: no VM run
+#     exists yet.
+#
+#     IT IS DERIVED, NOT ASSERTED. The list is
+#
+#         (what the PINNED upstream ref's own gate accepts)
+#           INTERSECTED WITH
+#         (what this installer can drive at all)
+#
+#     and tools/pin-upstream.sh writes it, together with the ref it was derived
+#     from, in the same edit. The second half of that intersection is not
+#     decoration: our preflight requires apt-get and our arch check accepts
+#     x86_64 and aarch64 only, so an upstream-accepted RHEL-family or openSUSE
+#     release is still not a row we may claim. See the table further down.
+#
+#     IT SHIPS EMPTY, AND EMPTY IS AN HONEST ANSWER. tpot_upstream_ref ships
+#     unset and install.sh hard-fails naming tools/pin-upstream.sh, so until a
+#     ref is pinned there is no ref whose gate could have been consulted and no
+#     run that could have been made. `[]` says exactly that. It does not say
+#     "nothing works"; it says "nobody has pinned anything, so nobody may
+#     claim anything." A list of plausible releases here would be an assertion
+#     with no evidence under it, which is the failure this project treats as
+#     its worst.
+#
+#     tpot_support_matrix_supported_ref carries the ref the list was derived
+#     from. The invariant, asserted by tests/check-matrix-parse.sh: the ref is
+#     empty if and only if the list is empty. CI owes one assert more, which
+#     needs a pin to be checkable at all -- that this ref is the same string as
+#     tpot_upstream_ref (D-10: one variable pins the fetch URL and the -b
+#     argument, and now also this tier).
+#
+# LEGACY  tpot_support_matrix_legacy
+#
+#     MEANING: the automation this project replaces was installed on these
+#     nine releases, and they are reachable HERE only by pinning an older
+#     upstream ref -- tpot_upstream_ref is the knob. They are documented so
+#     that the users the old installer serves are not silently abandoned.
+#
+#     THEY ARE NOT TESTED, AND MAY NEVER BE DESCRIBED AS TESTED. The evidence
+#     behind them is a run of a DIFFERENT installer against whichever
+#     install.sh upstream's master branch served on the day, which nobody
+#     recorded. It has already expired, provably and without needing upstream's
+#     history: the old prompt-matching script anticipated the prompt
+#     "### Install Type? (h/s/m) " while today's upstream prints
+#     "### Install Type? (h/s/l/i/m/t) ". Three install types then, six now.
+#     The two cannot have been exercised together.
+#
+#     A legacy box is REACHABLE: preflight may proceed on one. What it may not
+#     do is record it as supported. lib/matrix.sh keeps the two verdicts in
+#     separate functions -- matrix_supports is the supported tier and nothing
+#     else, matrix_tier prints which tier matched -- so that host.json and
+#     result.json can carry the tier and a reader can tell a tested box from a
+#     documented one a year from now.
+#
+#     Which (ref x release) pairs have actually been proven belongs in
+#     tests/MATRIX-STATUS.md, per pair, with dates. Not here.
+#
+# THE COUPLING, WHICH IS THE THING TO HOLD ON TO:
+#
+#     CHANGING THE PIN CHANGES THE SUPPORTED TIER. This file and
+#     tpot_upstream_ref are not independent statements that happen to agree;
+#     one is derived from the other. Editing the supported tier by hand,
+#     without moving the pin, produces a repository that claims releases its
+#     own upstream will refuse -- and upstream's refusal arrives ~90 minutes
+#     later, on the box, where it wins.
+#
+# ============================================================================
+# WHAT UPSTREAM'S OWN GATE ACCEPTED ON 2026-09-02 -- AND WHY LEGACY EXISTS
+# ============================================================================
+#
+# Recorded so that a reader can see, without fetching anything, why eight of
+# the nine legacy rows cannot simply be promoted. Read from upstream's
+# install.sh at line 295 (the distribution list) and 306-339 (the version
+# gate), and verified by executing those gates against the fixtures in
+# tests/os-release/. Full evidence: the project's notes/upstream-facts.md.
+#
+# THIS IS A DATED OBSERVATION OF A MOVING BRANCH, NOT A TIER. It is prose on
+# purpose and must never be pasted into either list below: upstream matches on
+# the NAME field of /etc/os-release and we match on ID, so the two are not the
+# same kind of string, and a straight copy would be a category error.
+#
+#   upstream NAME=                 upstream requires   our ID          drivable
+#                                                                      by us?
+#   -----------------------------  ------------------  --------------  --------
+#   "Debian GNU/Linux"             major == 13         debian          yes
+#   "Ubuntu"                       VERSION_ID == 26.04 ubuntu          yes
+#   "Raspbian GNU/Linux"           major == 13         raspbian        untested
+#   "AlmaLinux"                    major == 10         almalinux       no, dnf
+#   "Red Hat Enterprise Linux"     major == 10         rhel            no, dnf
+#   "Rocky Linux"                  major == 10         rocky           no, dnf
+#   "Fedora Linux"                 major == 44         fedora          no, dnf
+#   "openSUSE Tumbleweed"          rolling, no gate    opensuse-tumbleweed  no, zypper
+#
+# Note the asymmetry in the middle column: Debian is compared on the MAJOR
+# only, Ubuntu on the FULL VERSION_ID. Both comparisons are `!=` -- exact
+# string inequality, no ordering -- so "newer than" does not exist and neither
+# does an override flag. Linux Mint reports NAME="Linux Mint" and is absent
+# from upstream's list altogether, so all three Mint rows are refused there
+# whatever version they carry. Executed against the fixtures in
+# tests/os-release/: debian-13 rc=0; debian-11, debian-12, all three Mints and
+# all three Ubuntus rc=1.
+#
+# Both gates run BEFORE upstream handles -s, so unattended mode does not reach
+# them, and tpot_force_unsupported_os relaxes OUR preflight and cannot touch
+# upstream's exit 1. That is why the legacy tier is a different upstream ref
+# rather than a flag.
+#
+# Also why the right-hand column matters: of the three upstream would accept
+# today, only two are ones this installer could drive. raspbian is left out of
+# the derived tier deliberately -- nobody here has installed T-Pot on it, and
+# consulting ID_LIKE to fold it into debian is exactly what we refuse to do
+# (see the match rule). tests/os-release/support-matrix.pinned-example.yml
+# shows the two-row supported tier this observation would produce.
+#
+# ============================================================================
+# FORMAT, AND THE MATCH RULE -- IDENTICAL FOR BOTH TIERS
+# ============================================================================
+#
+# Each tier is a flat list of "<id>:<version>" strings, quoted, in the order
+# the documentation discusses them. Flat and quoted on purpose:
+#
+#   * `<id>` is the ID field of /etc/os-release, verbatim and lower case --
+#     `linuxmint`, not "Linux Mint". We match on ID rather than on NAME, which
+#     is what upstream matches on, because ID is the field the specification
+#     says is machine-readable and stable.
+#   * ID_LIKE IS DELIBERATELY NOT CONSULTED. Raspberry Pi OS reports
+#     ID=raspbian, ID_LIKE=debian, VERSION_ID="12" and would match debian:12
+#     through ID_LIKE while being a distribution nobody here has installed
+#     T-Pot on. tests/os-release/raspbian-12.os-release holds that line.
+#   * `<version>` is matched against VERSION_ID with ONE rule, applied to every
+#     row alike: VERSION_ID matches if it equals the row, OR if its first
+#     dot-separated component equals the row. So "21.3" matches linuxmint:21
+#     and "22.04" matches ubuntu:22.04, while "20.10" matches neither
+#     ubuntu:20.04 nor anything else. Granularity is therefore a property of
+#     the row rather than a per-distribution exception: Debian and Mint carry a
+#     bare major because that is how they are supported, Ubuntu carries
+#     major.minor because 20.10 is not 20.04. Nothing special-cases Mint.
+#   * MEMBERSHIP IS AN EXACT COMPARISON, ELEMENT BY ELEMENT. Not a substring
+#     test and not `=~` against the joined list. Upstream's install.sh line 298
+#     uses that idiom for this same job, and because its right-hand side is
+#     quoted, bash compares it LITERALLY against the space-joined array:
+#     measured under bash 5.2.37, it accepts the bare strings "Linux",
+#     "GNU/Linux" and "Enterprise Linux" as distribution names, and accepts a
+#     value spanning two array elements. lib/matrix.sh compares whole rows in a
+#     loop, tests/check-matrix-parse.sh proves it by execution, and the Ansible
+#     side must do the same.
+#   * A ROW MAY APPEAR IN BOTH TIERS, and one legitimately will: debian:13 is
+#     both what today's upstream accepts and one of the nine the old installer
+#     ran on. SUPPORTED WINS -- matrix_key searches the supported tier first,
+#     so a box is never reported as legacy when it is also tested. Duplicates
+#     WITHIN one tier are an error and the test fails on them.
+#   * Quoted, because "20.04" unquoted is a YAML float and "22" is a YAML
+#     integer, and the reader that greps this file would then disagree with the
+#     reader that parses it -- which is precisely what
+#     tests/check-matrix-parse.sh exists to catch.
+#   * An empty tier is written `[]` on the key's own line. That is different
+#     from the key being ABSENT: `[]` is a declaration that the tier is empty,
+#     absent is a malformed file, and lib/matrix.sh tells them apart.
+#
+# THE ANSIBLE SIDE reads this file with include_vars and must apply the same
+# rule to each tier separately. Note that Ansible's own facts do not expose the
+# os-release ID: map `ansible_facts['distribution'] | lower | replace(' ', '')`
+# to it ("Linux Mint" -> linuxmint, "Debian" -> debian, "Ubuntu" -> ubuntu) and
+# check the mapping when a distribution is added. The candidate versions are
+# `ansible_facts['distribution_version']` and
+# `ansible_facts['distribution_major_version']`, in that order.
+#
+# ============================================================================
+# CHANGING IT
+# ============================================================================
+#
+# Adding to LEGACY (rare -- it is a historical record, not a wish list):
+#   1. Add the row, add the fixture in tests/os-release/ and its line in
+#      tests/os-release/expected.tsv, run tests/check-matrix-parse.sh.
+#   2. Say in CHANGELOG.md which older upstream ref reaches it.
+#
+# Adding to SUPPORTED:
+#   NOT BY HAND. Move the pin. tools/pin-upstream.sh rewrites
+#   tpot_support_matrix_supported and tpot_support_matrix_supported_ref
+#   together, from the gate of the ref being pinned, intersected with what this
+#   installer can drive. Then run the row on a real guest and date it in
+#   tests/MATRIX-STATUS.md; an undated row there blocks a release tag. A row
+#   added here without a pin move is a claim about an upstream we are not
+#   fetching.
+#
+# ============================================================================
+
+# The upstream ref the supported tier below was derived from. Empty if and only
+# if that tier is empty. Written by tools/pin-upstream.sh, never by hand.
+tpot_support_matrix_supported_ref: ""
+
+# SUPPORTED AND TESTED at the ref above. Empty because no ref is pinned yet.
+tpot_support_matrix_supported: []
+
+# LEGACY -- documented, reachable only by pinning an older upstream ref, and
+# never described as tested. The nine releases the automation this project
+# replaces was installed on.
+tpot_support_matrix_legacy:
+  # Debian. VERSION_ID is a bare major ("12"), so the row is a bare major too.
+  - "debian:11"
+  - "debian:12"
+  - "debian:13"
+  # Ubuntu. VERSION_ID is major.minor ("22.04") and the interim releases are
+  # not supported, so the row carries both components.
+  - "ubuntu:20.04"
+  - "ubuntu:22.04"
+  - "ubuntu:24.04"
+  # Linux Mint. VERSION_ID carries a point release ("21.3") that tracks the
+  # Ubuntu base it is built on, and every point release of a series is the same
+  # base, so the row is the major and the first-component rule does the rest.
+  - "linuxmint:20"
+  - "linuxmint:21"
+  - "linuxmint:22"
