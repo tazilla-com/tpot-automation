@@ -15,27 +15,56 @@ Three properties are designed to hold:
   machine back, or read the transcript. The one place this is blunter than it
   looks is `15` versus `16`, and `15` says why.
 * **Something is always written.** `result.json` is produced by an exit trap,
-  so it exists on every path -- including an interruption at minute 70.
+  so it exists on every path -- including an interruption at minute 70. The one
+  way to get no file is a state directory that cannot be created at all; the
+  trap then warns on stderr instead, which is what an unprivileged run on a
+  developer box produces.
 
 ## What this build can and cannot return
 
 **The Ansible play does not exist in this tree.** `site.yml`, `verify.yml` and
 the whole of `roles/` are a separate slice and have not been written, so
 **this build has never installed anything and cannot**. There has been no
-virtual machine, no root and no network; the only thing ever executed here is
-the tree's own gate suite.
+virtual machine, no root and no network. What has been executed is the tree's
+own gate suite and `install.sh` itself, unprivileged, run to the refusal
+described below -- never past it.
 
-`install.sh` handles that by refusing rather than pretending. The switch is
-whether the play file is on disk: when it is not, the run logs what is
-missing, sets the outcome to `internal_error` and returns **`40`**. So in this
-build:
+`install.sh` refuses rather than pretends, and it does so **twice over**.
 
-* `10`, `11` and `12` are reachable and are the real behaviour of the code in
-  this tree -- argument handling and the two preflight stages are written;
-* `13` through `16`, `20` and `30` describe the contract and are **not
-  exercisable yet**. Nothing below that describes them is a report of
-  observed behaviour;
-* `40` is what a full run returns today, for the reason above.
+The outer refusal is the one that actually fires. Preflight stage A checks that
+the seventeen files this installer is made of are on disk; `site.yml` and
+`verify.yml` are two of them; a tree missing them fails that check and the run
+returns **`11`** at step 3 of the ten steps a run performs -- before the
+configuration is merged, and before anything on the box is touched. No
+`--force-*` flag relaxes it, and `--verify-only`, `--preflight-only` and
+`--check` are all stopped by it too.
+
+The inner refusal is the one described in `install.sh` itself: at step 9 the
+play is looked for again, and when it is absent the run logs what is missing,
+sets the outcome to `internal_error` and returns `40`. **Step 9 is never
+reached in this build.** That arm is written, it is shadowed by the check above,
+and it has never executed.
+
+So in this build:
+
+* `10` and `11` are reachable and are the real behaviour of the code in this
+  tree -- argument handling and preflight stage A are written, and both numbers
+  above were produced by running it;
+* **`11` is what every full run returns today**, with `repo_tree` named in the
+  preflight report as the check that failed -- and, on the unprivileged
+  development box these runs were made on, `root` named beside it;
+* `12` is `--preflight-only`'s code for "nothing failed, something could not be
+  measured", so it needs stage A to pass first, which cannot happen while the
+  play is missing. The unpinned upstream ref that would otherwise produce it is
+  a stage B check, and stage B is never reached;
+* `13` through `16` and `20` describe the contract and are **not exercisable
+  yet** -- every one of them names a stage that lives in the play. Nothing below
+  that describes them is a report of observed behaviour;
+* `30` is written and would be produced by the exit trap on a signal; nothing
+  here has exercised it;
+* `40` is written and, in this build, **unreachable**, for the reason above.
+* **So no run of this build can reach `0` or `20`.** That is the guarantee both
+  refusals exist for, and it holds whichever one of them fires.
 
 Everything else in this document is written in the present tense because it is
 the contract the codes name, not because a machine has demonstrated it. When
@@ -68,11 +97,11 @@ bash lib/exitcodes.sh
 ```
 
 Three copies of that table exist -- this file, `README.md` and
-`install.sh --help`. All three agree with `lib/exitcodes.sh` byte for byte as
-this is written, checked by hand and by `diff`. **The CI check that keeps them
-agreeing has not been built**; until it exists, treat the blocks as
-hand-synchronised and regenerate them after any change to `lib/exitcodes.sh`
-rather than editing one in place.
+`install.sh --help` -- and all three agree with `lib/exitcodes.sh` byte for
+byte. That is now a property rather than a state: **`tests/check-exit-table.sh`
+is a build gate**, it runs in `tests/run-gates.sh`, and it fails the build when
+any copy drifts. Regenerate them after a change to `lib/exitcodes.sh` rather
+than editing one in place; the gate will tell you if you forget.
 
 ## What to do about each one
 
@@ -106,6 +135,22 @@ The four common cases:
 
 The box is not in a state this installer will act on, and **nothing was
 changed**. Preflight runs before the first mutation for exactly this reason.
+
+**In this build `11` is what you get from anything that would act on the box**
+-- `--help`, `--version` and `--example-config` print and exit `0` without
+reaching preflight -- and on a box you would really install on the failing
+check is `repo_tree`: stage A verifies that the seventeen files this installer
+is made of are present, and `site.yml` and `verify.yml` have not been written
+yet. The preflight report names them and says so. Nothing is wrong with your
+copy, no flag relaxes it, and note that the one-line meaning for `11` in the
+table above does not list this condition -- the preflight report is what tells
+you which check failed.
+
+The runs behind that paragraph were made unprivileged, on a development box, so
+the report they produced names **two** failures rather than one: `root` fails
+there too, because the run was not root. Read `repo_tree` as the one that
+survives on a root shell, and `root` as an artefact of where the measurement was
+taken.
 
 Resource floors can be overridden with `--force-low-resources`, and the
 supported-distribution check with `--force-unsupported-os`; both are recorded
@@ -229,8 +274,10 @@ reboot
 install.sh --verify-only             #  -> 0, or 16 naming the failing check
 ```
 
-That is the specified sequence. In this build both invocations return `40`
-instead, because the play they would run is not in the tree.
+That is the specified sequence. In this build both invocations return `11`
+instead, and neither of them reaches the play at all: `site.yml` and
+`verify.yml` are two of the seventeen files preflight stage A requires, so the
+run refuses there, at step 3 of ten.
 
 `--verify-only` is the documented recovery, and it is the one to use.
 
@@ -287,9 +334,12 @@ it:
   outcome is a defect in this project's redaction, and a bug report for it is
   worth more than any other;
 * **the play is not in this build.** `site.yml` and `verify.yml` have not been
-  written, and a run that finds no play refuses and returns `40` rather than
-  reporting a success it cannot have had. This is the expected outcome of
-  running this tree today, and it is not a bug to report.
+  written, and the step that would run them refuses and returns `40` rather than
+  reporting a success it cannot have had. **That arm is unreachable today**, and
+  this is the correction worth carrying: the same two files are part of the
+  manifest preflight stage A checks, so a run stops at `11` six steps earlier
+  and never gets there. If you do see `40` from this build it is one of the two
+  causes above, and it is worth an issue -- it is not the missing play.
 
 For the first two, please file an issue with the transcript attached. It is
 redacted by construction and mode `0600`; read it before you attach it anyway.

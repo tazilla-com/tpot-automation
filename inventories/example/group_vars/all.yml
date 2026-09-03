@@ -3,10 +3,38 @@
 #
 # Every key this installer understands is listed below, in the order the
 # documentation discusses them, with its default. Each one is COMMENTED OUT on
-# purpose: this file is documentation, it holds no real value, and nothing
-# reads it at run time. Uncommenting a line here makes it authoritative for
-# this inventory only -- which is not how the product is meant to be
-# configured.
+# purpose: this file is documentation and it holds no real value. Uncommenting
+# a line here makes it authoritative for this inventory only -- which is not
+# how the product is meant to be configured.
+#
+# WHAT IS BUILT AND WHAT IS NOT, AND IT IS MOST OF WHAT THIS FILE DESCRIBES.
+# This is version 0.1.0, unreleased. NOTHING HAS EVER BEEN INSTALLED WITH THIS
+# TOOL: there has been no virtual machine, no root, no network and no T-Pot,
+# and not one behaviour described below has been observed happening to a real
+# box. What exists today is install.sh, the shell library beside it, the
+# configuration merge, the documentation and the build gates. So a setting
+# below is READ, TYPED, VALIDATED AND RECORDED exactly as described -- that
+# half runs, and is tested -- and is then acted on by ANSIBLE ROLES THAT DO
+# NOT EXIST YET. Neither do site.yml and verify.yml, the two plays those roles
+# would run from, nor tools/pin-upstream.sh and docs/roadmap-ioc.md, which the
+# prose names below because they are where each subject is to be written up.
+# docs/firewall.md, also named below, does exist -- and opens by saying that
+# nothing on it has been observed on an installed honeypot either.
+#
+# SO READ EVERY PARAGRAPH BELOW AS AN INTENDED BEHAVIOUR unless it says
+# otherwise. Where a description would mislead about what a reader gets today
+# -- a refusal that does not refuse yet, a file that is not there -- it says
+# so in place, rather than leaving the reader to find out.
+#
+# ONE THING HERE IS NOT DOCUMENTATION: lib/args.sh READS THIS FILE AT RUN
+# TIME. It scans it for the commented key lines and for the SECRET markers, to
+# learn which names exist and which of them may never be passed with --set. No
+# VALUE in this file is ever read -- the layout is. So keep the shape: one
+# commented key line per key, and a marker that starts a comment line in the
+# block introducing a secret. tests/check-variable-surface.sh compares the
+# result against lib/varschema.json in both directions, and against the answer
+# lib/args.sh itself gives -- so a reformat that breaks the parse breaks the
+# build, instead of quietly making a credential settable on a command line.
 #
 # CONFIGURE IT ONE OF THESE FOUR WAYS INSTEAD, highest precedence first:
 #
@@ -32,9 +60,19 @@
 # answer file, by environment or by --*-password-file (a PATH, never a value).
 # They may NOT be supplied by --set, and there is no flag that takes one as a
 # value: the process argument list is world-readable in /proc for the lifetime
-# of the process, and an install runs for 30 to 90 minutes. NO SECRET REACHES
-# A COMMAND LINE ANYWHERE IN THIS PRODUCT, upstream's own installer included;
-# SECURITY.md says how that is arranged.
+# of the process, and an install runs for 30 to 90 minutes. That much is built
+# and is enforced by lib/args.sh and lib/config.py today.
+#
+# THE WIDER CLAIM -- THAT NO SECRET REACHES A COMMAND LINE ANYWHERE IN THIS
+# PRODUCT, upstream's own installer included -- IS A PROPERTY OF THE DESIGN,
+# and the half of it that faces upstream is not built. It rests on driving
+# upstream as a sensor install and then writing the dashboard credential into
+# T-Pot's .env with `htpasswd -n -i` reading it from standard input, and both
+# of those live in the roles that do not exist yet. What holds it up today is
+# a build gate, tests/check-argv-hygiene.sh, which fails the build on any line
+# that would put a credential on a command line -- including a line of
+# documentation that merely claims we do. SECURITY.md says how the whole
+# arrangement is meant to work.
 
 
 # ============================================================================
@@ -86,12 +124,16 @@
 # SECRET, AND THE ONLY REQUIRED INPUT IN THE WHOLE PRODUCT.
 # The dashboard password. Supply it by answer file, by TPOT_WEB_PASSWORD, or
 # by --web-password-file /root/.tpot-web-pw (root-owned, 0600).
-# It never reaches a command line. Upstream is driven as a SENSOR install,
-# which is the one install type whose code path never asks for a web
-# credential, and this project then writes the credential into T-Pot's own
-# .env itself -- hashing it with `htpasswd -n -i`, which reads the password
-# from standard input. SECURITY.md carries the detail and the one deviation
-# that would reintroduce the exposure.
+# IT NEVER REACHES A COMMAND LINE -- BY DESIGN, AND THE DESIGN IS NOT BUILT.
+# The arrangement is that upstream is driven as a SENSOR install, which is the
+# one install type whose code path never asks for a web credential, and that
+# this project then writes the credential into T-Pot's own .env itself --
+# hashing it with `htpasswd -n -i`, which reads the password from standard
+# input. Both halves live in roles that do not exist yet, so nothing has ever
+# performed them. What is built is the part that gets the value here: --set is
+# refused for this key, no flag takes it as a value, and a build gate fails on
+# any line that would put it on a command line. SECURITY.md carries the detail
+# and the one deviation that would reintroduce the exposure.
 # tpot_web_password: "..."
 
 
@@ -176,9 +218,12 @@
 # only by pinning an older ref and never claimed as tested. Changing the pin
 # changes the supported tier; the two are coupled on purpose.
 #
-# Run tools/pin-upstream.sh <ref> to fetch it, print its sha256, count the
-# containers of the pinned edition and scaffold the data file. Until that
-# lands, this installer refuses to run.
+# tools/pin-upstream.sh is meant to fetch the ref, print its sha256, count the
+# containers of the pinned edition and scaffold the data file. IT HAS NOT BEEN
+# WRITTEN, so there is nothing to run yet and no pinned ref to hand you. An
+# unpinned ref does not get you a default install: preflight records the
+# upstream checks as inconclusive and the run stops there, before anything on
+# the box has been changed.
 # tpot_upstream_ref: "24.04.1"
 
 # Where upstream's install.sh is fetched from. DERIVED from the ref, and that
@@ -322,8 +367,9 @@
 # honeypots based on the selected docker-compose.yml" and then enumerates
 # every image across all editions, which is a different quantity. The only
 # authoritative source is compose/<edition>.yml at the pinned ref, which is
-# what tools/pin-upstream.sh reads. A guessed number here turns verification
-# into either a rubber stamp or a false alarm.
+# what tools/pin-upstream.sh is to read -- when it is written; it is not, yet.
+# A guessed number here turns verification into either a rubber stamp or a
+# false alarm, which is why this ships unset rather than with a plausible one.
 # tpot_min_containers:
 
 # How long verification waits for listeners after a reboot. They come up over
@@ -389,7 +435,10 @@
 # playbook sets the firewalld public zone target to ACCEPT and puts SELinux
 # into monitor (permissive) mode on Red Hat family distributions, so on those
 # a firewall that was filtering before this run is not filtering after it.
-# A worked example is in docs/firewall.md.
+# docs/firewall.md works that through, and carries a worked example ruleset.
+# Note what it says about itself: nobody here has loaded that ruleset on a
+# host running T-Pot, because this project has never installed one. It is a
+# starting point to verify, not a tested recipe.
 # tpot_firewall_mode: "none"
 
 # Whether install.sh may install its own prerequisites (apt packages,
@@ -410,18 +459,25 @@
 
 
 # ============================================================================
-# IoC FORWARDING -- RESERVED, DECLARED, AND REFUSING
+# IoC FORWARDING -- RESERVED, DECLARED, AND NOT YET REFUSING
 # ============================================================================
 #
 # These five names are reserved so that an answer file written today stays
-# valid when forwarding lands. Nothing implements them in this release:
-# setting ioc_forwarding_enabled to true FAILS with a message naming
-# docs/roadmap-ioc.md. That is a reservation that refuses, not a flag that
-# quietly does nothing.
+# valid when forwarding lands. Nothing implements them in this release.
 #
-# With forwarding disabled -- the default and the only supported value today
-# -- this installer opens no connection to any endpoint, and that is a
-# property of the code rather than a promise in a document.
+# THE REFUSAL IS DESIGNED, NOT BUILT, AND TODAY IT DOES NOT REFUSE. The
+# intention is that setting ioc_forwarding_enabled to true stops the run with a
+# message naming docs/roadmap-ioc.md -- a reservation that refuses, rather than
+# a flag that quietly does nothing. Measured on this build, it does not: the
+# configuration merge accepts the key set to true, exits 0, and carries the
+# value into the merged document unchallenged. The refusal belongs to the role
+# that would read the key, and no role exists yet. docs/roadmap-ioc.md has not
+# been written yet either.
+#
+# What is true today is narrower, and it is the part that matters: nothing in
+# this installer opens a connection to an IoC endpoint. Not because it declines
+# to, but because no code that could has ever been written -- there is no
+# forwarding client, no role and no template anywhere in the tree.
 
 # ioc_forwarding_enabled: false
 

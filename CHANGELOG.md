@@ -16,18 +16,38 @@ implementation rather than a change to something earlier.
 entrypoint, the libraries it sources and the build gates are written. **The
 Ansible play is not**: `site.yml`, `verify.yml` and the whole of `roles/` are
 a separate slice and are absent from this tree, and so are
-`tools/pin-upstream.sh`, the `bats` suite, the CI workflows and
-`tests/MATRIX-STATUS.md`.
+`tools/pin-upstream.sh`, the `bats` suite, `tests/fixtures/`, the CI workflows,
+`tests/MATRIX-STATUS.md` and the four documents other shipped files cite. The
+complete list is *Designed, specified, and not built in this release*, below.
 
 **Nothing has ever been installed by this code.** There has been no virtual
 machine, no root, no network and no T-Pot. Every claim below about what
 happens on a real host is a claim about what the code is written to do, not a
 report of it having been done.
 
-`install.sh` is built to refuse rather than to pretend. The switch is whether
-the play file is present on disk: with no `site.yml` there, it logs what is
-missing, leaves the box unchanged at that step, records `internal_error` and
-returns `40`. **No run of this build can reach exit `0` or exit `20`.**
+`install.sh` is built to refuse rather than to pretend, and it refuses twice.
+
+The refusal that actually fires is in preflight. Stage A checks that the
+seventeen files this installer is made of are present; `site.yml` and
+`verify.yml` are two of them; a tree missing them stops there with `11`
+(`EX_PREFLIGHT`), at step 3 of the ten steps a run performs, before the
+configuration is merged and before anything on the box is touched. That is
+what a run of this build returns today -- measured, with `repo_tree` named in
+the preflight report as the failing check, and no `--force-*` flag relaxes it.
+Those measurements were made unprivileged on a development box, so the report
+names two failures and not one: `root` fails there as well, because the run was
+not root. `repo_tree` is the one that still fails on a machine you would really
+install on.
+
+The second refusal is at step 9, where the play would be invoked: it logs what
+is missing, records `internal_error` and returns `40`. **Step 9 is never
+reached in this build**, so that arm is shadowed by the preflight check and has
+never executed. Documents in this repository that named `40` as the outcome of
+running the tree were describing the second refusal and did not account for the
+first; they now say `11`.
+
+Either way the guarantee both arms exist for holds, and it is the one that
+matters: **no run of this build can reach exit `0` or exit `20`.**
 
 ### Added
 
@@ -42,15 +62,17 @@ returns `40`. **No run of this build can reach exit `0` or exit `20`.**
 - `lib/exitcodes.sh` as the single source of truth for the exit table.
   `docs/exit-codes.md` and `README.md` embed its output between generated
   markers and `install.sh --help` prints it; all three agree with it byte for
-  byte today, and the check that keeps them agreeing is listed below as not
-  yet built.
+  byte, and `tests/check-exit-table.sh` is the build gate that keeps them
+  agreeing rather than leaving it to whoever remembers.
 - Preflight in two stages that mutate nothing: stage A before any dependency
   exists, stage B after the merge. `--preflight-only` reports and exits, and
   distinguishes "nothing failed" from "some checks could not be exercised".
 - A machine-readable outcome at `/var/lib/tpot-automation/result.json`,
   schema `tpot-automation/result@1`, written by an exit trap so it exists on
-  every path including interruption. It reports the pinned ref, the ref
-  upstream was actually given, whether the two agree, and
+  every path including interruption -- the single exception, observed on an
+  unprivileged developer run, being a state directory that cannot be created,
+  where the trap warns on stderr and writes nothing. It reports the pinned ref,
+  the ref upstream was actually given, whether the two agree, and
   `upstream.pins_payload: false` -- which is permanent, because pinning a ref
   pins the recipe and never the container images.
 - `lib/notice.sh`: the closing notice that tells the operator what the box has
@@ -62,19 +84,47 @@ returns `40`. **No run of this build can reach exit `0` or exit `20`.**
 - `inventories/example/group_vars/all.yml`: the complete variable surface as
   commented placeholders, so every knob is discoverable without any file in
   the tree holding a real value.
-- Eight build gates under `tests/`, run by `tests/run-gates.sh`, each turning
+- Ten build gates under `tests/`, run by `tests/run-gates.sh`, each turning
   one promise into a build break: no interactive prompt anywhere, no
   credential or bare value on a command line, no screen-scraping driver, no
   trace of the customer this work derives from, `C.UTF-8` and never plain `C`,
   the matrix readers agreeing, the notice block matching its documentation,
-  and the variable surface agreeing across schema and example inventory. Each
-  gate ships a negative proof, and a gate that cannot run reports `SKIP`,
-  which `tests/run-gates.sh` never counts as a pass.
+  every written copy of the exit table matching `lib/exitcodes.sh`, the
+  variable surface agreeing across schema and example inventory, and every path
+  this tree names either existing on disk or being declared absent in the
+  gate's own registry -- which is what a not-built list becomes when it has to
+  survive somebody doing the work. All ten pass on this tree and the runner
+  exits `0`, printing the five live `gate-allow` exemptions under its
+  summary.
+- Negative proof for the gates themselves, because a gate whose pattern
+  matches nothing passes forever while checking nothing.
+  `tests/run-gates.sh --self-test` builds a deliberately violating tree
+  outside the repository, points each gate at it, and requires it to fail.
+  **Nine of the ten come back `PROVEN`. `check-matrix-parse.sh` comes back
+  `UNPROVEN`**, because no fixture is registered for it in the runner. That is
+  not the same as untested: its negative controls live inside its own assertions
+  instead -- rejections of a glob, a prefix, a suffix, an empty value and a
+  value spanning two rows, plus a control that reproduces upstream's own
+  membership idiom and demonstrates it accepting four strings that are not
+  distribution names. What is missing is the runner-level proof, and the summary
+  prints `UNPROVEN` rather than implying otherwise.
+- A gate that cannot run reports `SKIP`: its own verdict in the summary, never
+  shown as a pass, because "checked nothing" and "found nothing" are different
+  facts and only one of them is reassuring. The runner says so in words -- a
+  run with a skip in it is reported as not clean, not as "all gates passed" --
+  and `--strict` makes it a failing exit status. No gate skips on this tree.
 - A reserved `ioc_*` namespace: IoC forwarding is declared and documented as
   five variables that this release does not implement.
 - `README.md`, `SECURITY.md`, `docs/exit-codes.md` and this file, each written
   against what the tree contains and each stating plainly where it describes
   something that is designed and not built.
+- `docs/firewall.md`: the firewall position in full -- what this installer
+  configures (nothing), what upstream's playbook changes about a host's
+  filtering anyway, the administrative ports, why no default ruleset is
+  shipped when nobody has written down which ports a honeypot must leave
+  open, and a worked `nftables` example. That example has never been loaded on
+  a host running T-Pot, and the document says so at the top rather than at the
+  bottom.
 
 ### Designed, specified, and not built in this release
 
@@ -108,13 +158,26 @@ shipped. Each is specified; none of it exists in this tree.
 - **`tools/pin-upstream.sh`**, which fetches upstream's `install.sh` at a ref,
   prints its sha256 and scaffolds the per-ref data file. Until it is run, no
   ref is pinned -- see *Verification status*.
-- **The CI workflows and the `bats` suite**, including the check that keeps
-  `lib/exitcodes.sh`, `docs/exit-codes.md`, `README.md` and `--help` from
-  drifting apart, and the release gate that refuses a tag while
-  `tests/MATRIX-STATUS.md` has a missing or stale row.
-- **Three referenced documents**: `docs/firewall.md`, `docs/verification.md`
-  and `docs/roadmap-ioc.md`. Each is cited by a file that does ship, and none
-  of them is written.
+- **The CI workflows and the `bats` suite**, including the release gate that
+  refuses a tag while `tests/MATRIX-STATUS.md` has a missing or stale row.
+  (The check that keeps `lib/exitcodes.sh`, `docs/exit-codes.md`, `README.md`
+  and `--help` from drifting apart was on this list and is no longer: it
+  shipped, as `tests/check-exit-table.sh`.)
+- **Four referenced documents.** Every one is cited by a file that does ship,
+  and none is written: `docs/answer-file.md` and `docs/variables.md`, both
+  cited by `lib/config.py`; `docs/verification.md`, cited by
+  `lib/preflight.sh`; and `docs/roadmap-ioc.md`, cited by the example answer
+  files and the example inventory. The list is exhaustive as of this release
+  and is meant to stay that way -- a not-built list whose whole value is being
+  complete is worth nothing the first time something is left off it, and it is
+  worth no more the first time it keeps something that has since been written.
+  It said five, and `docs/firewall.md` was the fifth: that document is now in
+  the tree, cited by `lib/notice.sh`, `lib/preflight.sh`, `SECURITY.md`,
+  `README.md`, both example answer files and the example inventory. It is
+  listed under *Added* instead.
+- **`tests/fixtures/`**, the `/proc` and configuration fixtures the unit suite
+  would read. `.gitignore`, `.yamllint` and `.ansible-lint` already carve out
+  the path and `lib/preflight.sh` names it; the directory does not exist.
 
 ### Changed
 
@@ -182,8 +245,13 @@ run. `tests/MATRIX-STATUS.md` is where a dated per-cell record is to live, and
 that file does not exist yet -- so there is no row to read and none to trust.
 
 What *has* been executed is the tree's own gates, unprivileged, on a
-development box: `tests/run-gates.sh`. That is evidence about this repository,
-not about any installed host.
+development box -- `tests/run-gates.sh`, all ten passing, exit `0` -- and
+`install.sh` itself, run to its refusal with stdin closed under `setsid --wait`
+in every mode it offers. Each of those runs exited `11` and wrote
+`result.json`; in the ones that were given a dashboard password, that password
+appears nowhere in the terminal output, the transcript or the result file. That
+is evidence about this repository, not about any installed host: no run reached
+a step that changes a machine, and none could have.
 
 The support matrix has two tiers, and the honest statement of each is:
 
@@ -203,7 +271,8 @@ The support matrix has two tiers, and the honest statement of each is:
   (ref x distribution) pair works is unrecorded until a dated run says so.
   Evidence: upstream's `install.sh` distribution and version gates, executed
   against fixture `/etc/os-release` files under `tests/os-release/`; full
-  reading in the project's `notes/upstream-facts.md`.
+  reading in `notes/upstream-facts.md`, a project record kept outside this
+  repository, which no clone of it contains -- see the end of `README.md`.
 
 The earlier installer's "works on nine distributions" was never evidence that
 transfers here: it fetched upstream's `install.sh` from a moving branch, with

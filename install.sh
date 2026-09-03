@@ -28,6 +28,12 @@
 #    10  failure class -> exit code; result.json; reboot;    yes
 #        the notice
 #
+#   STEP 9 IS THE ONE THAT DOES NOT EXIST YET. site.yml, verify.yml and
+#   roles/** are a separate slice and have not been written, so no run of this
+#   file has ever installed anything. The banner above step 9 says what stands
+#   in for it, and what a reader observes today instead -- which is a preflight
+#   refusal at step 3, not step 9.
+#
 #   Steps 1 to 5 leave the machine byte-identical to how they found it. That
 #   is a property, not an aspiration: preflight writes only inside $RUNDIR,
 #   the run's own 0700 directory on tmpfs, and the exit trap destroys it.
@@ -173,8 +179,12 @@ _TPOT_IN_EXIT_TRAP=0
 # invokes upstream must therefore scrub, from the child environment,
 # ANSIBLE_CONFIG, ANSIBLE_LOG_PATH, PATH, VIRTUAL_ENV and PYTHONPATH -- and
 # set `chdir`, because upstream wgets its playbook into $PWD and ansible-core
-# would then find ./ansible.cfg anyway. Evidence and line numbers: the
-# project's notes/upstream-facts.md, "CWD is load-bearing".
+# would then find ./ansible.cfg anyway. Evidence and line numbers are in
+# notes/upstream-facts.md, "CWD is load-bearing" -- a project record kept in
+# the workspace beside this repository and NOT PUBLISHED WITH IT, so a reader
+# who cloned this repository will not find that path here. It is cited rather
+# than dropped because the underlying evidence is real and checkable: it is
+# upstream T-Pot's own install.sh, read from source at the ref recorded there.
 #
 # THIS IS LATENT, NOT BROKEN, TODAY: no driver task exists yet -- there is no
 # site.yml and no roles/ in this tree -- so nothing has ever inherited these.
@@ -709,10 +719,28 @@ _tpot_write_inventory() {
 # #      to run, on this box or any other -- so "written in full" is a       #
 # #      statement about the code and not about a passing test.              #
 # #                                                                          #
-# #    * _tpot_playbook_absent -- what happens until then. It refuses. It    #
-# #      logs what is missing, sets the outcome to internal_error and        #
-# #      returns EX_INTERNAL (40), so a build without a play CANNOT report   #
+# #    * _tpot_playbook_absent -- the refusing arm. It logs what is          #
+# #      missing, sets the outcome to internal_error and returns             #
+# #      EX_INTERNAL (40), so a build without a play CANNOT report           #
 # #      success, cannot reach exit 0, and cannot reach exit 20.             #
+# #                                                                          #
+# #  IN THIS BUILD THAT ARM IS SHADOWED, AND NOBODY WILL SEE IT FIRE.        #
+# #  Preflight stage A checks this tree against a manifest of 17             #
+# #  required files, and site.yml and verify.yml are two of the              #
+# #  seventeen -- so a run stops at step 3 with EX_PREFLIGHT (11) and        #
+# #  never reaches step 9 at all. Measured here on 2026-09-03: a fully       #
+# #  unattended run -- the password in the environment, no controlling       #
+# #  terminal, stdin from /dev/null -- exits 11 on the root check and        #
+# #  the repo_tree check, having changed nothing. So the 40 above is         #
+# #  what this guard RETURNS, not what a reader observes today. Today        #
+# #  the observable answer is 11, and it comes from preflight.               #
+# #                                                                          #
+# #  The arm stays as it is, and it is not redundant. It is the LAST         #
+# #  guard rather than the first, and which of the two fires is an           #
+# #  ordering this file must not depend on: preflight's manifest and         #
+# #  this presence test are two statements of one rule, and the thing        #
+# #  that must never happen -- a build with no play reporting success        #
+# #  -- is refused by both.                                                  #
 # #                                                                          #
 # #  There is no flag, no variable and no environment value that selects     #
 # #  between them: the switch is whether the play file is present on disk.   #

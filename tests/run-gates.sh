@@ -6,8 +6,11 @@
 #   break: nothing prompts a human, no credential reaches a command line, the
 #   customer this work derives from is named nowhere, the deleted
 #   screen-scraping driver stays deleted, the locale is UTF-8, the three
-#   copies of the variable surface agree, and the README's notice is the real
-#   one. Run this before every commit and in CI.
+#   copies of the variable surface agree, every written copy of the exit
+#   table is the generated one, the README's notice is the real one, and every
+#   path this tree names either exists or is declared absent in one registry
+#   that is checked in both directions. Run this before every commit and in
+#   CI.
 #
 # HOW GATES ARE FOUND
 #   Every executable tests/check-*.sh, in name order. Nothing is listed here,
@@ -27,6 +30,16 @@
 #
 #   Exit status: 0 when nothing failed, 1 when anything failed or is broken.
 #   With --strict a skip fails too, which is what a release build should use.
+#
+# THE LAST LINE REPORTS COUNTS, NOT A VERDICT IT HAS NOT EARNED
+#   The summary ends "8 passed, 1 skipped", never "all gates passed" while
+#   anything skipped. It used to say the latter -- seventy lines after this
+#   same runner had printed "a skip checked nothing; it is not a pass" -- and
+#   that is the untrue assertion every gate in this directory exists to
+#   catch, committed by the tool doing the catching. The DEFAULT EXIT STATUS
+#   is unchanged and still 0 on a skip: that is the deliberate choice
+#   documented directly above, and --strict is how a release build reverses
+#   it. Only the wording was wrong, and only the wording changed.
 #
 # --self-test: PROVING THE GATES CAN FAIL
 #   A gate whose pattern matches nothing passes forever while checking
@@ -221,6 +234,56 @@ Install it and enjoy.
 EOF
 }
 
+_fixture_check_exit_table() {
+    local d=$1 begin end
+    mkdir -p "$d/lib" "$d/docs"
+    cp -- "$REPO_ROOT/lib/exitcodes.sh" "$d/lib/" 2>/dev/null || return 1
+    begin='<!-- BEGIN GENERATED: exit-table -->'
+    end='<!-- END GENERATED: exit-table -->'
+    # One document carries the generated block correctly...
+    {
+        printf '# Exit codes\n\n%s\n```text\n' "$begin"
+        LC_ALL=C.UTF-8 bash "$d/lib/exitcodes.sh" || exit 1
+        printf '```\n%s\n' "$end"
+    } > "$d/docs/exit-codes.md" || return 1
+    # ...and the other has had one meaning quietly reworded in place, which
+    # is the shape this drift really takes: a helpful edit to the copy
+    # somebody was reading, never to the file it is generated from.
+    {
+        printf '# tpot-automation\n\n%s\n```text\n' "$begin"
+        LC_ALL=C.UTF-8 bash "$d/lib/exitcodes.sh" \
+            | sed 's/^  20  EX_REBOOT .*/  20  EX_REBOOT         installed; reboot whenever suits you/' \
+            || exit 1
+        printf '```\n%s\n' "$end"
+    } > "$d/README.md" || return 1
+    grep -q 'whenever suits you' -- "$d/README.md" || return 1
+}
+
+_fixture_check_references() {
+    local d=$1
+    # Both classes at once, because the gate exists for both and a proof that
+    # exercised one would leave the other exactly as unverified as it was.
+    #
+    # (b) THE INVERSE, and the one that keeps recurring: the registry declares
+    #     site.yml absent, here it EXISTS, and a document still calls it
+    #     unwritten. That is the shape of the docs/firewall.md round.
+    _write "$d/site.yml" <<'EOF'
+---
+- hosts: honeypothost
+EOF
+    _write "$d/docs/exit-codes.md" <<'EOF'
+**The Ansible play does not exist in this tree.** `site.yml` is unwritten.
+EOF
+    # (a) A DANGLING REFERENCE. The `@@` matters here for a reason particular
+    #     to this gate: without it THIS file would carry the dangling
+    #     reference, and running the gates over the repository would fail on
+    #     the runner. The gate rejects any token containing an "@", so the
+    #     literal above is invisible to it and the file written from it is not.
+    _write "$d/README.md" <<'EOF'
+The variable reference is in docs/no-such-@@file.md.
+EOF
+}
+
 _fixture_for() {
     case $1 in
         check-no-tty.sh)           printf '_fixture_check_no_tty' ;;
@@ -230,13 +293,15 @@ _fixture_for() {
         check-locale.sh)           printf '_fixture_check_locale' ;;
         check-variable-surface.sh) printf '_fixture_check_variable_surface' ;;
         check-notice-doc.sh)       printf '_fixture_check_notice_doc' ;;
+        check-exit-table.sh)       printf '_fixture_check_exit_table' ;;
+        check-references.sh)       printf '_fixture_check_references' ;;
         *)                         printf '' ;;
     esac
 }
 
 # ---------------------------------------------------------------------------
 NAMES=(); VERDICTS=()
-failures=0; skips=0; unproven=0
+failures=0; skips=0; unproven=0; passes=0; proven=0
 
 if [[ $MODE == self-test ]]; then
     scratch=$(mktemp -d "${TMPDIR:-/tmp}/tpot-gate-selftest.XXXXXXXX") || exit 2
@@ -266,6 +331,7 @@ if [[ $MODE == self-test ]]; then
         if (( rc == 1 )); then
             printf '== %-28s ok       -- failed on its violating fixture, as it must.\n' "$gate"
             VERDICTS+=('PROVEN')
+            proven=$(( proven + 1 ))
         else
             printf '== %-28s UNSOUND  -- exit %d on a tree that violates it. A gate that\n' "$gate" "$rc"
             printf '   cannot fail is worse than no gate: it reports a property nobody is checking.\n'
@@ -280,7 +346,7 @@ else
         rc=$?
         NAMES+=("$gate")
         case $rc in
-            0) VERDICTS+=('PASS') ;;
+            0) VERDICTS+=('PASS'); passes=$(( passes + 1 )) ;;
             1) VERDICTS+=('FAIL'); failures=$(( failures + 1 )) ;;
             3) VERDICTS+=('SKIP'); skips=$(( skips + 1 )) ;;
             *) VERDICTS+=("BROKEN($rc)"); failures=$(( failures + 1 )) ;;
@@ -354,17 +420,62 @@ if (( marker_bad > 0 )); then
 fi
 printf '%s\n' '----------------------------------------------------------------'
 
+# ---------------------------------------------------------------------------
+# _tally -- the counts this run actually has, in the vocabulary of its mode.
+#
+# Every terminal line below is built from this and nothing else, so the last
+# thing a reader sees can only ever be arithmetic over the verdict list
+# printed above it. The line it replaced was a fixed string, "all gates
+# passed", and a fixed string cannot know that one of them skipped.
+# ---------------------------------------------------------------------------
+_tally() {
+    local parts=() out='' p
+    if [[ $MODE == self-test ]]; then
+        (( proven   > 0 )) && parts+=("$proven proven")
+        (( unproven > 0 )) && parts+=("$unproven unproven")
+        (( failures > 0 )) && parts+=("$failures unsound or broken")
+    else
+        (( passes   > 0 )) && parts+=("$passes passed")
+        (( failures > 0 )) && parts+=("$failures failed")
+        (( skips    > 0 )) && parts+=("$skips skipped")
+    fi
+    (( ${#parts[@]} > 0 )) || parts+=('nothing ran')
+    for p in "${parts[@]}"; do
+        [[ -n $out ]] && out+=', '
+        out+=$p
+    done
+    printf '%s' "$out"
+}
+
 if (( failures > 0 )); then
-    printf '  %d gate(s) FAILED.\n' "$failures"
+    printf '  %s. NOT a clean run.\n' "$(_tally)"
     exit 1
 fi
 if (( marker_bad > 0 )); then
-    printf '  the gates passed, but %d exemption marker(s) are defective.\n' "$marker_bad"
+    printf '  %s -- but %d exemption marker(s) are defective, so the run is not clean.\n' \
+        "$(_tally)" "$marker_bad"
     exit 1
 fi
 if (( STRICT && skips > 0 )); then
-    printf '  --strict: a skip is a failure here.\n'
+    printf '  %s. --strict: a skip is a failure here.\n' "$(_tally)"
     exit 1
 fi
-printf '  all gates passed.\n'
+if (( skips > 0 )); then
+    # The exit status is 0 by design (see the header). The wording is not
+    # allowed to round that up into a claim that everything was checked.
+    printf '  %s. NOT a clean run: %d gate(s) checked nothing, and a skip is\n' \
+        "$(_tally)" "$skips"
+    printf '  never a pass. Exit status is 0 by default here; --strict makes it 1.\n'
+    exit 0
+fi
+if (( unproven > 0 )); then
+    printf '  %s. Every gate with a fixture here failed it, as it must; the\n' "$(_tally)"
+    printf '  unproven ones were not exercised by this file at all.\n'
+    exit 0
+fi
+if [[ $MODE == self-test ]]; then
+    printf '  %s. Every gate failed its own violating fixture, as it must.\n' "$(_tally)"
+    exit 0
+fi
+printf '  %s. Every gate ran and found nothing.\n' "$(_tally)"
 exit 0

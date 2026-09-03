@@ -2837,12 +2837,14 @@ _tpot_pf_check_existing_tpot() {
 # configured" is OUR statement about OUR play; upstream's own playbook sets
 # the firewalld public zone target to ACCEPT and SELinux to Monitor Mode on
 # the RHEL family, so on those releases something else did touch the host's
-# filtering (notes/upstream-facts.md, "What the playbook actually does to the
-# box"). Second, which program answers on 22 is a property of the install
-# type -- Cowrie for h, Endlessh for t, Beelzebub for l, and upstream does not
-# say for s, i or m -- so neither the name of the honeypot nor what it does
-# with input belongs in a line that cannot know the type it will run under.
-# lib/notice.sh derives that sentence; this one stays generic.
+# filtering. That is recorded in notes/upstream-facts.md, "What the playbook
+# actually does to the box" -- a project record kept outside this repository
+# and not shipped in it; the evidence behind it is upstream's own playbook,
+# read from source. Second, which program answers on 22 is a property of the
+# install type -- Cowrie for h, Endlessh for t, Beelzebub for l, and upstream
+# does not say for s, i or m -- so neither the name of the honeypot nor what
+# it does with input belongs in a line that cannot know the type it will run
+# under. lib/notice.sh derives that sentence; this one stays generic.
 # ---------------------------------------------------------------------------
 _tpot_pf_check_exposure() {
     local mode admin dash es

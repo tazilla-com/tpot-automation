@@ -1102,6 +1102,14 @@ THE TWO-INVOCATION HAPPY PATH
   reboot
   install.sh --verify-only               # 0: installed and verified
 
+  THE 20 AND THE 0 ABOVE ARE THE CONTRACT, NOT A TRANSCRIPT. This build has
+  never installed anything and cannot: site.yml and verify.yml are two of the
+  seventeen files preflight stage A requires and neither has been written. So
+  both of the runs that would touch this machine stop in stage A and exit 11
+  instead, having changed nothing. (--example-config is unaffected: it prints
+  and exits 0, well before preflight.) docs/exit-codes.md says what is
+  reachable today, and what is only specified.
+
 AFTER IT FINISHES, READ THE NOTICE
   A finished box has moved administrative SSH to 64295 by default -- the
   port is tpot_admin_ssh_port -- and TCP/22 has been taken over by a

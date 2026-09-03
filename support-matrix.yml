@@ -98,7 +98,12 @@
 # the nine legacy rows cannot simply be promoted. Read from upstream's
 # install.sh at line 295 (the distribution list) and 306-339 (the version
 # gate), and verified by executing those gates against the fixtures in
-# tests/os-release/. Full evidence: the project's notes/upstream-facts.md.
+# tests/os-release/. The full evidence is written up in
+# notes/upstream-facts.md -- a project record kept in the workspace beside this
+# repository, not published with it, so it is not a path a reader of this
+# repository can open. The citation stays because naming where a claim was
+# checked beats asserting it from nowhere, and the primary source it cites is
+# public: upstream T-Pot's own install.sh.
 #
 # THIS IS A DATED OBSERVATION OF A MOVING BRANCH, NOT A TIER. It is prose on
 # purpose and must never be pasted into either list below: upstream matches on

@@ -39,17 +39,17 @@
 #   changing lib/notice.sh.
 #
 # WHAT MAKES IT SKIP, AND WHY A SKIP IS SHOUTED
-#   README.md does not exist yet. This gate therefore checks NOTHING today,
-#   and it says so at every run rather than exiting 0 and joining the count
-#   of passing checks. A gate that reports success while its subject is
-#   absent is the exact failure this directory is built to avoid: it would
-#   report green for as long as the README stayed missing, and then keep
-#   reporting green for the first README that arrived with a hand-typed
+#   A missing README.md, and nothing else. That skip is shouted rather than
+#   taken as a quiet exit 0, because a gate that reports success while its
+#   subject is absent is the exact failure this directory is built to avoid:
+#   it would report green for as long as the README stayed missing, and then
+#   keep reporting green for the first README that arrived with a hand-typed
 #   notice in it.
 #
-#   Once README.md exists, a MISSING BLOCK IS A FAILURE, not a skip: a
-#   README without the notice is a README that does not carry the one
-#   sentence that keeps a reader out of trouble.
+#   README.md exists, so this gate does not skip -- it compares, and a
+#   MISSING BLOCK IS A FAILURE rather than a skip: a README without the
+#   notice is a README that does not carry the one sentence that keeps a
+#   reader out of trouble.
 #
 # EXIT: 0 clean, 1 findings, 2 usage/broken, 3 could not run.
 

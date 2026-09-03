@@ -15,7 +15,8 @@ terminal, and is not a fork of T-Pot.
 > executed are unit-level runs on an unprivileged developer machine. Large parts
 > of the product — the Ansible play and every role, the verification step, the
 > pinning tool, the unit-test suite and CI — **are not written yet**, and no
-> upstream ref is pinned, so a full run stops at preflight by design.
+> upstream ref is pinned. A full run therefore refuses inside preflight and
+> exits `11`, before it changes anything — measured on this tree, not predicted.
 > [What exists and what does not](#status--what-exists-and-what-does-not) is the
 > third section of this file. Read it before you plan anything around this.
 
@@ -125,8 +126,9 @@ that is designed but not built, it says so in the same breath.
 | `lib/` | the libraries the entrypoint is made of — exit codes, logging and redaction, the preflight checks, the support-matrix reader, the notice, the result writer, the config merger and its schema |
 | `support-matrix.yml` | the two tiers of distribution releases, and the only place either is written down |
 | `examples/`, `inventories/example/` | the complete input surface as commented placeholders, in YAML and JSON |
-| `tests/` | eight build gates and the `/etc/os-release` fixtures they run against |
-| `docs/exit-codes.md`, `SECURITY.md`, `CHANGELOG.md` | the exit contract, the security position, the change log |
+| `tests/` | ten build gates and the `/etc/os-release` fixtures they run against |
+| `docs/exit-codes.md`, `docs/firewall.md` | the exit contract, and the firewall position with a worked example ruleset nobody here has ever loaded on a host |
+| `SECURITY.md`, `CHANGELOG.md` | the security position, and the change log |
 
 **What does not exist yet** — none of these files are in the tree:
 
@@ -138,32 +140,71 @@ that is designed but not built, it says so in the same breath.
   and to derive the supported tier from it;
 * the unit-test suite (bats), `.github/workflows/` (CI), `tests/MATRIX-STATUS.md`
   (which release was proven at which ref, with dates) and `tests/fixtures/`;
-* `docs/firewall.md`, `docs/verification.md` and `docs/roadmap-ioc.md`, each of
-  which is referenced by a file that does ship.
+* **four referenced documents**, none of them written and every one of them
+  cited by a file that does ship: `docs/answer-file.md` and `docs/variables.md`
+  (cited by `lib/config.py`), `docs/verification.md` (by `lib/preflight.sh`)
+  and `docs/roadmap-ioc.md` (by the example answer files and the example
+  inventory). `docs/firewall.md` was the fifth entry on this list until it was
+  written; it is in the tree now, and the table above carries it.
 
 **What that means if you run it right now**
 
-* **No upstream ref is pinned.** `tpot_upstream_ref` ships empty on purpose:
-  nothing may be claimed as supported until something is pinned. Preflight's
-  upstream reachability check is a *hard* check, and with no ref it can only
-  report `inconclusive` — which in a full run is `11` (`EX_PREFLIGHT`) and under
-  `--preflight-only` is `12` (`EX_INCONCLUSIVE`). **A full run therefore stops at
-  preflight, before touching the box.** That is the designed behaviour, not a bug.
-* **If you pin a ref by hand** with `--upstream-ref` and the rest of preflight
-  passes, the run reaches the playbook step, finds no `site.yml`, logs that
-  nothing was installed, and exits `40` (`EX_INTERNAL`). This is deliberate: a
-  build with no play **cannot** reach `0` or `20`, so it can never claim to have
-  installed anything.
-* **`--verify-only` behaves the same way**, because `verify.yml` is absent too.
+* **It stops in stage A of preflight and exits `11` (`EX_PREFLIGHT`)**, for
+  every invocation that would act on the box. `--help`, `--version` and
+  `--example-config` are unaffected: they print and exit `0` without ever
+  reaching preflight, and a bad flag or a missing required input is still `10`,
+  before preflight runs at all. Stage A checks that the seventeen files this
+  installer is made of are all present, and `site.yml` and `verify.yml` are two
+  of them. A build without the play therefore refuses at **step 3 of the ten**
+  `install.sh` performs — before the configuration is merged, before any
+  dependency is installed, and before one byte of the machine is changed. No
+  `--force-*` flag relaxes that check; `--verify-only`, `--preflight-only` and
+  `--check` all stop in the same place for the same reason; and pinning a ref by
+  hand with `--upstream-ref` does not get past it either. Measured on this tree,
+  every one of those invocations: `11`, with `repo_tree` naming the two missing
+  files — and, because the measuring was done unprivileged, `root` failing in
+  the same report. `repo_tree` is the one that would still fail on a root
+  shell.
+* **Exit `40` is not what this build returns**, and any sentence you find
+  claiming it is has been overtaken. `install.sh` does carry a refusing arm for
+  a missing play — it logs what is absent, records `internal_error` and returns
+  `40` (`EX_INTERNAL`) — but that arm is step 9, preflight stops the run at step
+  3, and so it is **shadowed and has never executed**. What holds either way is
+  the guarantee both mechanisms exist for: **no run of this build can reach `0`
+  or `20`**, so it can never claim to have installed anything.
+* **No upstream ref is pinned**, which would stop a run one stage later.
+  `tpot_upstream_ref` ships empty on purpose — nothing may be claimed as
+  supported until something is pinned — and the upstream reachability check is
+  *hard*, so with no ref it can only report `inconclusive`, which is `11` in a
+  full run and `12` (`EX_INCONCLUSIVE`) under `--preflight-only`. That is the
+  designed behaviour and not a bug. It is simply not what you hit first today,
+  because stage B is never reached.
 * **Neither support tier has a real run behind it.** Not one row, at any ref.
 
 **What has actually been exercised**, all of it unprivileged and on one
 developer machine: the build gates in `tests/`, the support-matrix readers
 cross-checked against PyYAML and against `ansible-core`'s own `include_vars`,
-and upstream's distribution gate replayed against the `/etc/os-release` fixtures
-in `tests/os-release/`. Run `tests/run-gates.sh` to see the current state of the
-tree — some gates fail today, on files still being written, and **a `SKIP` is
-not a pass**.
+upstream's distribution gate replayed against the `/etc/os-release` fixtures in
+`tests/os-release/`, and `install.sh` itself — run to its refusal under
+`setsid --wait` with stdin closed, as an install, as `--verify-only`, as
+`--preflight-only`, as `--check` and with a ref pinned by hand. Every one of
+those exited `11` and wrote its `result.json`; in the four of them that were
+given a dashboard password, that password appears nowhere in the terminal
+output, the transcript or the result file.
+
+Run `tests/run-gates.sh` to see the state of the tree for yourself:
+**all ten gates pass today and the runner exits `0`**, listing
+the five `gate-allow` exemptions under its summary. No gate skips; a gate that
+could not run would report `SKIP`, which is its own verdict in that summary and
+is never shown as a pass — the runner says in words that the run was not clean,
+and `--strict` turns it into a failing exit status. `tests/run-gates.sh
+--self-test` asks the harder question — it points each gate at a deliberately
+violating tree and requires it to fail — and answers `PROVEN` for nine of the
+ten. `check-matrix-parse.sh` is the one exception, reported as `UNPROVEN` rather
+than folded in; the note in the CHANGELOG says what it carries instead.
+
+None of that is evidence about a host. A green gate suite says this repository
+keeps its own promises; it does not say a honeypot has ever come up.
 
 ---
 
@@ -188,8 +229,11 @@ verifies and reports a machine-readable outcome.
   (`ioc_forwarding_enabled: false`) this installer opens no connection to any
   endpoint of yours. The design is that setting it `true` *refuses to run*
   rather than silently doing nothing — **and that refusal is not implemented in
-  this build.** Today the setting changes one line of the end-of-run notice and
-  nothing else, so do not rely on it to stop you. The mock receiver the roadmap
+  this build.** Setting it `true` today is accepted: the configuration merge
+  takes it, exits `0` and records the value, and the only thing it then reaches
+  is one line of the end-of-run notice — which belongs to the last step of a run
+  and is itself never printed, because no run gets that far. Do not rely on the
+  setting to stop you. The mock receiver the roadmap
   describes is not in this repository either.
 
 ---
@@ -295,10 +339,11 @@ and exits `0`, `11` or `12`. Run it first. `--check` goes further — preflight
 plus the playbook in check mode — and still changes nothing on the box.
 
 **Today this example does not complete**, and the [Status](#status--what-exists-and-what-does-not)
-section says exactly where it stops: at preflight with `11` while no ref is
-pinned, or at the playbook step with `40` if you pin one by hand, because
-`site.yml` is not written yet. The contract above is what the finished product
-owes you; it is not a transcript of something that has happened.
+section says exactly where it stops: in stage A of preflight, with `11`, because
+`site.yml` and `verify.yml` are part of the file manifest that stage checks and
+neither has been written. Pinning a ref by hand does not move that; nor does
+`--verify-only`. The contract above is what the finished product owes you; it is
+not a transcript of something that has happened.
 
 ---
 
@@ -315,8 +360,11 @@ caller must be able to branch on the outcome without parsing English.
 * **Every failure code says how far the run got** — `11` never touched the box,
   `14` never ran upstream's installer, `16` has T-Pot installed and one assertion
   unhappy.
-* **`result.json` is written on every path**, including an interruption at minute
-  70, by an exit trap.
+* **`result.json` is written on every path**, including an interruption at
+  minute 70, by an exit trap — unless the state directory itself cannot be
+  created, in which case the trap warns on stderr and writes nothing.
+  Unprivileged runs on a developer box hit exactly that, which is how it is
+  known.
 
 <!-- BEGIN GENERATED: exit-table -->
 ```text
@@ -336,9 +384,11 @@ CODE  NAME              MEANING
 <!-- END GENERATED: exit-table -->
 
 `lib/exitcodes.sh` is the source of truth; the block above is its output
-verbatim, regenerated with `bash lib/exitcodes.sh`. Unlike the notice block,
-this copy has no build gate watching it yet, so regenerate it by hand whenever
-the table changes. `docs/exit-codes.md` says what to do about each code.
+verbatim, regenerated with `bash lib/exitcodes.sh`. Like the notice block, it
+has a build gate watching it: `tests/check-exit-table.sh` compares this copy,
+the one in `docs/exit-codes.md` and the one `install.sh --help` renders against
+`lib/exitcodes.sh`, so editing one in place breaks the build rather than
+drifting quietly. `docs/exit-codes.md` says what to do about each code.
 
 ---
 
@@ -396,8 +446,12 @@ a T-Pot install runs for thirty to ninety minutes. So:
   `--os-user-password-file` take a **path**, root-owned and mode `0600`. A
   password may also come from the environment or from an answer file, and
   `--set` refuses a secret key outright.
-* **The merged configuration reaches Ansible as a file reference**, never as
-  `key=value` on a command line.
+* **The merged configuration reaches Ansible as a file reference** (`-e @PATH`),
+  never as `key=value` on a command line. That is written into the single place
+  `ansible-playbook` is invoked — a place no run has reached yet, because the
+  play is not in this tree — and it is held statically meanwhile:
+  `tests/check-argv-hygiene.sh` fails the build on `--extra-vars` followed by
+  anything that is not `@`.
 * **The transcript is redacted as it is written**, and then searched for each
   supplied secret; a hit truncates the log and fails the run.
 * **The dashboard password is to reach `htpasswd` on standard input** — that
@@ -483,8 +537,12 @@ software that was verified on it. `result.json` carries that as a field —
 `upstream.pins_payload`, which is `false` and stays `false` — rather than
 implying otherwise.
 
-The notice printed at the end of a run points at `docs/firewall.md`. **That file
-is not written yet**; what you have just read is the substance it owes you.
+Two messages point at `docs/firewall.md` — the closing notice, and the exposure
+line in the preflight report — and neither has ever been printed, because no run
+of this build gets to either one. The file itself is in the tree: it carries
+this section's evidence, the ports, why no default firewall is shipped, and a
+worked `nftables` example. **Nothing on that page has been applied to a running
+T-Pot by this project**, and it opens by saying so.
 
 ---
 
@@ -515,6 +573,7 @@ unaffected by any of the above.
 |---|---|
 | `install.sh --help` | the complete flag surface, with the exit table |
 | `docs/exit-codes.md` | what to do about each exit code |
+| `docs/firewall.md` | what this installer configures (nothing), what upstream changes anyway, the ports, and a worked example ruleset nobody here has run |
 | `SECURITY.md` | credential handling, the `sudo` grant, what the installed box becomes, and how to report a vulnerability |
 | `examples/tpot.example.yml` | a commented answer file — the same content as `--example-config` |
 | `inventories/example/group_vars/all.yml` | every setting, documented once |
@@ -527,3 +586,11 @@ upstream's behaviour was read from upstream's `master` branch as it stood on
 2026-09-02**, and `master` moves. Those claims are why this installer is built
 the way it is, and each one has to be re-checked against whichever ref is
 actually pinned here — which, today, is none.
+
+**Where a file here cites `notes/upstream-facts.md`, it is citing a project
+record kept outside this repository, which does not ship with it and which no
+clone of this repository contains.** That record is the reconciled reading
+behind the upstream claims in this tree, and several files here name it in
+place of repeating it. It is not a file you have. Follow any of those citations
+to upstream's own source at the ref you pin instead: that is where the reading
+was done, and it is the only copy that can be re-checked.

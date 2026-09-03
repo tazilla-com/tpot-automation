@@ -353,17 +353,139 @@ def as_int(value, default=None):
         return default
 
 
+# Upstream's own getopts string, install.sh:215 -- ":sb:r:t:u:p:h".  Only
+# one half of it is needed to read an argv back: the letters that take a
+# value, because the shape a value can be written in depends entirely on
+# whether its letter takes one.  Every other letter -- upstream's two
+# flagless ones, and anything upstream would report as unknown -- is skipped
+# the same way getopts skips it, by carrying on to the next letter.
+UPSTREAM_VALUE_OPTS = "brtup"
+# The two whose value may never survive into this document.
+UPSTREAM_SECRET_OPTS = "up"
+MASK = "***"
+# The English for each maskable letter, so a warning names what was on the
+# command line rather than leaving a reader to look the letter up.
+SECRET_OPT_SUBJECT = {"p": "a credential", "u": "a web username"}
+
+
+def scan_upstream_argv(flags):
+    """Read an argv list the way upstream's own getopts reads it.
+
+    Returns one record per option occurrence, in order:
+
+        (letter, value, value_index, tail_offset)
+
+    `value` is None when the option was last in the list with nothing after
+    it -- upstream sees that as a missing argument, which is not the same as
+    an empty value.  When the value came from the tail of the SAME element,
+    `value_index` is that element and `tail_offset` is the character the
+    value starts at; when it came from the following element, `value_index`
+    is that element and `tail_offset` is None.  A caller that wants only the
+    value ignores both.
+
+    This is a scanner rather than "the token after -x" because getopts
+    accepts three shapes for one option, and the first version of this file
+    knew only the first of them:
+
+        separated   two elements, the value second
+        attached    one element, the value in the tail
+        clustered   flagless letters, then one that takes a value, then the
+                    value -- in the same element or the next one
+
+    Measured under bash 5.2.37 against a transcription of upstream's own
+    getopts call: all three reach the same letter with the same OPTARG.  Two
+    shapes that look like they ought to be options are measured too, and are
+    deliberately NOT treated as one: everything after a value-taking letter
+    is that letter's value, so a cluster ending in a word is one option with
+    a wordy value; and an ordinary-looking word after a single dash is read
+    by getopts as its first letter plus a value, which is why a leading
+    value-taking letter is treated as an option and not as a word.
+
+    One deliberate departure from getopts: a bare `--` is not treated as the
+    end of the options.  Upstream would stop there and pass the rest on as
+    operands, but this list is not being executed here -- it is being written
+    into a document that gets attached to bug reports.  Something
+    credential-shaped after a `--` is still a credential sitting in an argv,
+    so it is still found and still masked.
+
+    What no scanner can see, stated rather than left to be discovered: a
+    BARE OPERAND.  A value with no option in front of it is indistinguishable
+    from a hostname, so if a caller ever builds a list where a credential
+    stands alone, nothing here will recognise it.
+    """
+    records = []
+    index = 0
+    while index < len(flags):
+        token = flags[index]
+        if len(token) < 2 or not token.startswith("-"):
+            index += 1
+            continue
+        position = 1
+        while position < len(token):
+            letter = token[position]
+            if letter not in UPSTREAM_VALUE_OPTS:
+                position += 1
+                continue
+            tail = token[position + 1:]
+            if tail:
+                records.append((letter, tail, index, position + 1))
+            elif index + 1 < len(flags):
+                records.append((letter, flags[index + 1], index + 1, None))
+                index += 1
+            else:
+                records.append((letter, None, None, None))
+            break
+        index += 1
+    return records
+
+
+def mask_upstream_credentials(flags):
+    """Blank every credential-bearing value in an argv list.
+
+    Returns the masked list and the warnings the masking earned.  Masking is
+    not the point -- the warning is.  This project's own invocation never
+    puts a credential on a command line at all, so anything found here means
+    something drove upstream the other way, and a silent replacement would
+    turn a real defect into a clean-looking document.
+    """
+    masked = list(flags)
+    warnings = []
+    for letter, value, value_index, tail_offset in scan_upstream_argv(masked):
+        if letter not in UPSTREAM_SECRET_OPTS:
+            continue
+        if value is None:
+            warnings.append(
+                "upstream was invoked with -%s and nothing followed it: "
+                "there was no value to replace, and this project's own "
+                "invocation never passes -%s at all" % (letter, letter))
+            continue
+        if tail_offset is None:
+            masked[value_index] = MASK
+        else:
+            masked[value_index] = masked[value_index][:tail_offset] + MASK
+        warnings.append(
+            "upstream was invoked with -%s: %s reached a command line, "
+            "which this project's own invocation never does"
+            % (letter, SECRET_OPT_SUBJECT[letter]))
+    return masked, warnings
+
+
 def flag_value(flags, name):
-    """The token following `name` in an argv list, or None.
+    """The value upstream's getopts would have read for one option.
 
     Used to read facts back out of the argv that was actually used, rather
     than out of a second field somebody has to remember to keep in step with
-    it.  A flag in last position has no value and yields None.
+    it.  The LAST occurrence wins, because upstream assigns its variable on
+    every pass of its own getopts loop and the last assignment is the one
+    the box ends up running.  An option with nothing after it yields None.
     """
-    for index, flag in enumerate(flags):
-        if flag == name and index + 1 < len(flags):
-            return flags[index + 1]
-    return None
+    letter = name.lstrip("-")
+    found = None
+    for opt_letter, value, _value_index, _tail_offset in \
+            scan_upstream_argv(flags):
+        if opt_letter == letter and value is not None:
+            found = value
+    return found
 
 
 TIERS = ("supported", "legacy", "unsupported", "unknown")
@@ -589,11 +711,24 @@ if report is not None:
 # the difference, and the difference is the whole reason no credential ever
 # reaches a command line.
 #
-# The "-p" pass is therefore no longer a redaction that is expected to fire.
-# Our invocation never passes a credential on a command line at all, so a "-p"
-# arriving here means something drove upstream the old way: the value is still
-# replaced, and a warning says so, because a silent success would hide a real
-# defect.
+# The credential pass is therefore not a redaction that is expected to fire.
+# Our invocation never puts a credential on a command line at all, so a "-u"
+# or a "-p" arriving here means something drove upstream the other way: the
+# value is replaced AND a warning says so, because a silent success would
+# hide a real defect behind a clean-looking document.
+#
+# It cannot fire in this build at all, and saying so is not a reason to leave
+# it wrong: the role that would populate `flags` has not been written, so
+# nothing reaches this pass today.  The code ships into that slice as it
+# stands here, and SECURITY.md tells a vulnerability reporter that
+# result.json holds no credential and invites them to attach it -- so the
+# masking has to be right before the thing that feeds it exists, not after.
+#
+# It reads the list the way upstream's own getopts reads it, which is the
+# defect the first version had: it recognised only a value written as a
+# separate element, and let an attached or clustered one through in clear
+# text with no warning at all.  See `scan_upstream_argv` above for the shapes
+# and for what was measured.
 DRIVER_FIELDS = ("name", "rc", "duration_s", "flags", "upstream_install_type")
 
 driver_warnings = []
@@ -608,13 +743,8 @@ if isinstance(driver_obj, dict):
         driver_obj["name"] = "native"
     if isinstance(driver_obj.get("flags"), list):
         driver_flags = [str(f) for f in driver_obj["flags"]]
-        for index, flag in enumerate(driver_flags):
-            if flag == "-p" and index + 1 < len(driver_flags):
-                driver_flags[index + 1] = "***"
-                driver_warnings.append(
-                    "upstream was invoked with -p: a credential reached a "
-                    "command line, which this project's own invocation never "
-                    "does")
+        driver_flags, flag_warnings = mask_upstream_credentials(driver_flags)
+        driver_warnings.extend(flag_warnings)
         driver_obj["flags"] = driver_flags
     driver_obj["upstream_install_type"] = flag_value(driver_flags, "-t")
     # Declared order, so two artefacts from two runs read the same way.

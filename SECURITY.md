@@ -19,8 +19,11 @@ sources and the build gates are written. The Ansible play is not: `site.yml`,
 Everything that would change a real host lives there.
 
 **Nothing has ever been installed by this code.** No virtual machine, no root,
-no network, no T-Pot. The only thing that has ever been executed is the tree's
-own gate suite, unprivileged, on a development box.
+no network, no T-Pot. Two things have been executed, both unprivileged on a
+development box: the tree's own gate suite, and `install.sh` itself, run to its
+refusal in every mode it offers and never past it. Every one of those runs
+stopped inside preflight with exit `11`, before anything on a machine could
+change.
 
 So this document has two kinds of statement in it, and they are marked:
 
@@ -257,10 +260,14 @@ and nowhere else.
   documents which one it is.
 * **This installer adds no firewall rules of its own.** The honeypot ports
   must be reachable for the product to work at all; which of the remaining
-  ports should be closed is a site decision. A worked example is planned for
-  `docs/firewall.md`, which has not been written yet; until it exists, the
-  closing notice and the preflight report name which administrative ports will
-  be world-reachable, which is the part that matters before you walk away.
+  ports should be closed is a site decision. `docs/firewall.md` carries that
+  position in full, with a worked example ruleset -- which nobody here has
+  loaded on a host running T-Pot, because this project has never installed one.
+  The closing notice and the preflight report are written to name which
+  administrative ports will be world-reachable -- the part that matters before
+  you walk away -- but neither has ever been printed: the exposure line is a
+  preflight stage B check and every run of this build stops in stage A, and the
+  notice belongs to the end of an install that has never completed.
 * **That is not the same as the host's filtering being untouched.** Upstream's
   playbook sets the firewalld public zone target to `ACCEPT` and puts SELinux
   into monitor (permissive) mode on Red Hat family distributions. On those, a
