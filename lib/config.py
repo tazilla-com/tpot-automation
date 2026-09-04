@@ -507,6 +507,21 @@ def validate(key, value):
                 return "%s: wanted one of %s" % (name, " ".join(choices))
         pattern = key.get("pattern")
         if pattern and not re.match(pattern, value):
+            # A regex refusal is the least actionable message this file can
+            # produce: the user is told the form is wrong and not what the
+            # right form is, and the pattern itself is not something to print
+            # at somebody. So a key may carry `pattern_help`, one sentence
+            # written for the person who just typed the wrong thing.
+            #
+            # tpot_upstream_ref is why this exists. Its pattern refuses an
+            # ABBREVIATED commit sha, and the reason is three steps deep --
+            # ansible.builtin.git accepts a short sha and leaves HEAD at the
+            # full one, so upstream's own re-run check then compares seven
+            # characters against forty and exits 1 on every second run. No
+            # generic message could ever lead somebody to that.
+            help_text = key.get("pattern_help")
+            if help_text:
+                return "%s: %s" % (name, help_text)
             return "%s: is not in the form this variable requires" % name
         return None
 

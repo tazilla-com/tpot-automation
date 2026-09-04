@@ -1,0 +1,93 @@
+---
+# roles/tpot_install/defaults/main.yml -- the INPUT keys this role reads.
+#
+# WHAT MAY BE IN THIS FILE, AND WHAT MAY NOT
+#   tests/check-variable-surface.sh check 4 reads every roles/*/defaults/*.yml
+#   and requires each `tpot_*`/`ioc_*` key it finds to exist in
+#   lib/varschema.json AND in inventories/example/group_vars/all.yml, with a
+#   BYTE-EQUAL default. So this file is not a place to invent a knob: a value
+#   this role needs that no user should ever set lives in vars/main.yml, which
+#   the gate does not scan and which an answer file cannot override.
+#
+#   Every key below is one of the 50 documented inputs, and every value below
+#   is that key's documented default, copied rather than re-derived. At run
+#   time none of them is actually consulted: install.sh merges the
+#   configuration itself and passes the whole document as `-e @<file>`, which
+#   outranks a role default. They are here so that the role states its own
+#   inputs, and so that `ansible-playbook site.yml` run by hand -- without
+#   install.sh, for a --syntax-check or a --list-tasks -- does not explode on
+#   an undefined variable before it has said anything useful.
+#
+# THE EIGHT KEYS THAT ARE DELIBERATELY ABSENT FROM THIS FILE
+#   lib/config.py applies a schema default to every key that has one, so at
+#   play time a variable is either supplied or defaulted -- EXCEPT the eight
+#   that have no default at all and are simply missing from the merged
+#   document when nobody supplied them. Four of those belong to this role:
+#
+#       tpot_upstream_ref  tpot_upstream_url  tpot_upstream_checksum
+#       tpot_web_password
+#
+#   Giving any of them a default here would be worse than useless: it would
+#   turn "the operator pinned nothing" into "the operator pinned the empty
+#   string", which upstream's own `-b` handling silently degrades to `master`.
+#   The role asserts them instead, by name, with a message that says how to
+#   supply one. See tasks/fetch-upstream.yml.
+
+# The unprivileged account that owns the T-Pot checkout and runs upstream's
+# installer. Upstream refuses to run as root -- a EUID test, exit 1, no
+# override -- so this role is the only place in the tree that escalates, and
+# it escalates DOWNWARDS, from the root the play already is.
+tpot_os_user: "honeypot"
+
+# Whether that account may sudo without a password. Not a preference: under
+# `-s` upstream probes `sudo -n -k true` and aborts the whole install when it
+# fails, the first time before it has installed anything. tasks/install-upstream.yml
+# refuses to start the driver when this is false, so that the refusal names
+# the reason instead of arriving 30 seconds into upstream's own output.
+tpot_sudo_nopasswd: true
+
+# Which T-Pot edition to install -- h, s, l, i, m or t. THIS IS NOT WHAT
+# UPSTREAM IS TOLD; see vars/main.yml. It selects which compose file this role
+# copies over docker-compose.yml afterwards.
+tpot_install_type: "h"
+
+# The repository upstream's own installer clones the payload from, passed to
+# it as `-r`. Stating it removes upstream's fallback, which reads the URL out
+# of whatever git work tree it happens to find itself in.
+tpot_upstream_repo_url: "https://github.com/telekom-security/tpotce"
+
+# Extra flags appended verbatim to upstream's invocation. Empty, and it should
+# stay empty. tasks/install-upstream.yml refuses the six flags this project
+# sets itself, because a second copy of one of them either does nothing or
+# quietly undoes an invariant the product depends on.
+tpot_upstream_extra_flags: []
+
+# Non-secret environment for upstream's installer, merged OVER the base
+# environment this role sets. No secret may be put here: it becomes part of
+# the child process environment, which is readable in /proc for the whole run.
+tpot_upstream_env: {}
+
+# The wall-clock budget for upstream's own installer, in seconds. 5400 is
+# ninety minutes, the top of upstream's own stated range.
+tpot_driver_install_timeout: 5400
+
+# `"off"` | `"on"`. Upstream's submission to its community dashboard. Quoted:
+# unquoted `off` is a boolean in YAML, not a string. `off` is implemented as a
+# structural edit of docker-compose.yml, because there is no .env key and no
+# upstream flag for it -- see tasks/configure-env.yml.
+tpot_upstream_telemetry: "off"
+
+# Whether to overwrite a dashboard credential already present in T-Pot's .env.
+# On the ordinary path there is never one to overwrite, because upstream is
+# driven as the one install type whose code path never writes WEB_USER at all.
+tpot_web_env_force: false
+
+# Whether to delete an existing T-Pot checkout before installing over it.
+# It really is `rm -rf {{ tpot_home }}/tpotce`, and the reason is in
+# tasks/workspace.yml -- it is not that upstream would refuse.
+tpot_force_reinstall: false
+
+# Where this installer keeps its own transcripts. Upstream's own log is copied
+# here after every driver run, because upstream deletes the previous one at
+# the start of the next.
+tpot_log_dir: /var/log/tpot-automation

@@ -151,12 +151,13 @@
     {
       "name": "tpot_upstream_ref",
       "type": "string",
-      "pattern": "^(?!(?:master|main|HEAD)$)[A-Za-z0-9][A-Za-z0-9._/+-]{0,99}$",
+      "pattern": "^[0-9a-f]{40}$",
+      "pattern_help": "a FULL 40-character lowercase commit sha of upstream T-Pot -- not a tag, not a branch, not an abbreviated sha. A tag makes upstream's own re-run check compare the tag NAME against the commit sha git checked out, so every second run exits 1; an abbreviated sha fails the same way. roles/tpot_install refuses anything else before it fetches, so a value this pattern let through would fail an hour later instead of now. Run tools/pin-upstream.sh, which resolves a tag or branch to the sha and writes everything derived from it.",
       "secret": false,
       "required": false,
       "env": true,
       "config_file": true,
-      "help": "A tag or commit of upstream T-Pot, never a branch. Shipped unset; tools/pin-upstream.sh produces it. ONE VARIABLE PINS TWO THINGS: the install.sh this project fetches and verifies, and the -b argument that pins the payload upstream clones. They may never be set apart, because with no -b upstream silently resolves its own default branch. It also decides the supported tier, because upstream gates on /etc/os-release before it reads any flag."
+      "help": "A FULL 40-character commit sha of upstream T-Pot. Never a tag and never a branch: upstream resolves a detached checkout to a commit sha and compares it against what you asked for, so a tag mismatches itself on every second run. Shipped unset; tools/pin-upstream.sh produces it. ONE VARIABLE PINS TWO THINGS: the install.sh this project fetches and verifies, and the -b argument that pins the payload upstream clones. They may never be set apart, because with no -b upstream silently resolves its own default branch. It also decides the supported tier, because upstream gates on /etc/os-release before it reads any flag. It does NOT pin the container images: those carry a mutable tag from .env and are re-pulled at every start."
     },
     {
       "name": "tpot_upstream_url",

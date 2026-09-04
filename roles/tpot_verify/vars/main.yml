@@ -1,0 +1,200 @@
+---
+# roles/tpot_verify/vars/main.yml -- the constants this role checks AGAINST.
+#
+# WHY vars/ AND NOT defaults/
+#   None of this is user input. tests/check-variable-surface.sh check 4
+#   requires every tpot_* key in a role's defaults/ to be one of the 50
+#   documented input keys, and correctly so: a knob nobody documented is a
+#   knob nobody can support. These are facts about upstream T-Pot at the
+#   pinned commit, not settings -- and vars/ has the property this wants, in
+#   that an answer file cannot override them. A run may not talk its way out
+#   of an assertion by redefining what the assertion compares against.
+#
+# WHY THE REGULAR EXPRESSIONS LIVE HERE RATHER THAN INLINE
+#   A YAML single-quoted scalar keeps a backslash literally, and Jinja then
+#   receives the pattern as a VALUE rather than as a string literal it has to
+#   unescape first. Written inline in a template the same pattern needs its
+#   backslashes doubled, which is the spelling readers get wrong and reviewers
+#   cannot check by eye.
+
+# ---------------------------------------------------------------------------
+# The compose project label.
+#
+# THIS LABEL IS DERIVED, NEVER DECLARED, and that is the single most
+# surprising fact in this file. There is no COMPOSE_PROJECT_NAME in upstream's
+# .env, no `-p` on any compose invocation, and no `name:` key in any of the
+# six compose files. Docker Compose falls back to the basename of the
+# directory holding the compose file, which is `tpotce` only because
+# upstream's own installer clones into ~/tpotce.
+#
+# The consequence is worth stating out loud: RENAMING THE CHECKOUT SILENTLY
+# BREAKS EVERY CONTAINER CHECK IN THIS ROLE. They would find zero containers
+# and report a failed install on a perfectly healthy box. Nothing warns.
+# ---------------------------------------------------------------------------
+tpot_verify_compose_project: tpotce
+
+# The directory upstream clones into, under the T-Pot account's home. It is
+# also, and not coincidentally, where the label above comes from.
+tpot_verify_checkout_dirname: tpotce
+
+# The service block D-09 removes when telemetry is off. Upstream offers no
+# .env key for it, so removal is the only opt-out, and this role asserts the
+# block is GONE rather than that the edit ran.
+tpot_verify_telemetry_service: ewsposter
+
+# The systemd unit upstream installs. Upstream's playbook enables it and
+# leaves it STOPPED (installer/install/tpot.yml:1208, state: stopped,
+# enabled: yes), which is why `is-enabled` is a pre-reboot check and
+# `is-active` is a post-reboot one. They are not the same question.
+tpot_verify_service_unit: tpot.service
+
+# The port a honeypot takes over from sshd.
+tpot_verify_honeypot_ssh_port: 22
+
+# ---------------------------------------------------------------------------
+# Which honeypot upstream binds to tcp/22, by install type.
+#
+# The three rows are upstream's own, read from the compose files at the pinned
+# commit: standard.yml:215 publishes 22 to cowrie, tarpit.yml:78 publishes 22
+# to endlessh, llm.yml:52 publishes 22 to beelzebub.
+#
+# THE SILENCE FOR s, i AND m IS DELIBERATE and is copied from lib/notice.sh,
+# which makes the same choice for the same reason: upstream's documentation
+# does not name a program for those editions, and this project does not fill
+# a gap in someone else's documentation with an inference. A type that is not
+# a key here still gets the structural assertion -- something that is not sshd
+# holds tcp/22 -- it just does not get its container's name checked.
+# ---------------------------------------------------------------------------
+tpot_verify_ssh_honeypot_by_type:
+  h: cowrie
+  t: endlessh
+  l: beelzebub
+
+# ---------------------------------------------------------------------------
+# Which editions ship an nginx dashboard, and which ship Elasticsearch.
+#
+# Read from the compose files at the pinned commit rather than assumed, because
+# assuming costs a FALSE FAILURE on a perfectly good box: sensor.yml contains
+# no nginx and no elasticsearch at all, and mobile.yml contains elasticsearch
+# but no nginx. Checking for a dashboard listener on a sensor install would
+# report a broken T-Pot every time.
+#
+#   nginx (tcp/64297)   standard.yml  llm.yml  mini.yml  tarpit.yml
+#   elasticsearch       the same four, plus mobile.yml
+#
+# The first list is also, and not by coincidence, lib/varschema.json's
+# `web_credential_install_types`: the dashboard is what the WEB_USER credential
+# unlocks, so an edition with no nginx has nothing to write a credential for.
+# ---------------------------------------------------------------------------
+tpot_verify_dashboard_types:
+  - h
+  - l
+  - i
+  - t
+
+tpot_verify_elasticsearch_types:
+  - h
+  - l
+  - i
+  - m
+  - t
+
+# Where sshd might be. Probed in order; the first that exists is used. The
+# binary is not on root's PATH on every distribution, and `sshd -T` is worth
+# more than a config-file parse (see tasks/pre-reboot.yml), so it is worth
+# looking for properly rather than hoping.
+tpot_verify_sshd_binaries:
+  - /usr/sbin/sshd
+  - /usr/local/sbin/sshd
+  - /sbin/sshd
+
+# The only addresses Elasticsearch may be bound to. Upstream publishes it as
+# "127.0.0.1:64298:9200" (compose/standard.yml:711); anything else on that
+# port is an unauthenticated index open to the network.
+tpot_verify_loopback_addresses:
+  - 127.0.0.1
+  - '[::1]'
+
+# A `listenaddress` line from `sshd -T` that carries an explicit port. IPv6 is
+# bracketed in that output when a port is present, so requiring the brackets
+# is what stops a portless `fe80::1` from being read as "port 1".
+tpot_verify_listenaddr_port_re: '^([0-9.]+|\[[^]]*\]):[0-9]+$'
+
+# The fourth whitespace-separated column of `ss -H -tln` output: the local
+# socket, as address:port. ss has already done the port matching; this only
+# extracts the ADDRESS half of a line ss itself selected.
+tpot_verify_ss_local_re: '^\S+\s+\S+\s+\S+\s+(\S+).*$'
+
+# ---------------------------------------------------------------------------
+# The post-reboot check ids, declared in ONE place.
+#
+# tasks/post-reboot.yml records these when it runs. tasks/main.yml records the
+# same ids as `skipped` when it does not -- which is every site.yml run,
+# because T-Pot is not running until the box has rebooted.
+#
+# One list, two consumers, so the skipped set and the real set cannot drift
+# into disagreeing about which checks exist. main.yml compares them after a
+# both-phase run and warns if they ever do.
+# ---------------------------------------------------------------------------
+tpot_verify_post_reboot_ids:
+  - listen_admin_ssh
+  - listen_dashboard
+  - listen_elasticsearch
+  - elasticsearch_loopback_only
+  - honeypot_ssh_not_sshd
+  - honeypot_ssh_published
+  - honeypot_ssh_container
+  - containers_running
+  - containers_stable
+  - tpot_service_active
+
+# ---------------------------------------------------------------------------
+# The pre-reboot check ids, declared in ONE place, for the same reason the
+# post-reboot list above is: two consumers must not be able to disagree about
+# which checks exist.
+#
+# tasks/pre-reboot.yml records these when it runs. tasks/main.yml records the
+# same ids as `skipped` when it CANNOT run -- which today means exactly one
+# case, a --check run, where every probe below would be skipped by Ansible and
+# every record derived from one would be fiction. See the block above that
+# task for what was measured.
+# ---------------------------------------------------------------------------
+tpot_verify_pre_reboot_ids:
+  - os_user_present
+  - os_user_shadow
+  - os_user_shadow_announced
+  - sshd_config_valid
+  - sshd_admin_port
+  - sshd_extra_listeners
+  - env_file_present
+  - env_web_user
+  - env_ls_web_user_untouched
+  # compose_file_present and container_floor come before the checks that read
+  # the compose file, because they are checks ON that file. Everything this
+  # role says about containers is derived from it, and an unreadable one does
+  # not fail those derived checks -- it empties them, and they then record
+  # `skipped` in unison. See the long note in tasks/pre-reboot.yml.
+  - compose_file_present
+  - compose_telemetry_absent
+  - container_floor
+  - docker_daemon
+  - tpot_service_enabled
+  - max_map_count
+
+# What site.yml's records say instead of a verdict. The exit contract turns on
+# this distinction: a count cannot tell "we looked and it was fine" from "we
+# could not look", which is why verification is a list of records.
+tpot_verify_pending_reason: >-
+  reboot pending -- site.yml stops before the reboot T-Pot requires, so
+  nothing on the running system was observed. install.sh --verify-only, or the
+  post-boot oneshot the finalize role arms, records these for real.
+
+# And what a --check run's records say. Same rule, different cause: nothing was
+# installed, so there is nothing on this box for any of these checks to be
+# about. `skipped` with this reason, never `pass` and never `fail` -- a check
+# run must not report a verdict on a T-Pot it did not create.
+tpot_verify_check_mode_reason: >-
+  --check run -- nothing was installed and no probe was executed, so nothing
+  about an installed T-Pot was observed. Ansible skips command tasks in check
+  mode while still reporting rc 0 for them, so a record derived from one would
+  say "pass" about a probe that never ran.

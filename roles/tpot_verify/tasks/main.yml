@@ -1,0 +1,357 @@
+---
+# roles/tpot_verify/tasks/main.yml -- stage `verify`.
+#
+# WHAT THIS ROLE IS
+#   The four commands a human used to run and judge by eye, turned into typed
+#   assertions that a machine can act on. There is not one grep for a port
+#   number anywhere in it: `ss` is given a port FILTER and does the matching
+#   itself, because the shape this replaces -- `ss -tulpn | grep -E '80|443|6429'`
+#   -- reports success when 8080, 14430 or 64299 happens to be listening, and
+#   a verification step that can be satisfied by the wrong port is worse than
+#   no verification step at all. It is the same class of defect as a preflight
+#   that says `ok` for a check it never ran.
+#
+# IT CHANGES NOTHING. Every task here is a read, a record or an assertion. If
+# a check needs the box to be different in order to pass, that is a finding
+# and not a repair -- verify.yml says the same thing from the other end.
+#
+# A --check RUN VERIFIES NOTHING, AND SAYS SO. It installs nothing, so there
+# is no T-Pot for any of this to be about; and Ansible skips command tasks in
+# check mode while still reporting rc 0 for them, so every record derived from
+# a probe would be fiction. Both halves are therefore recorded as `skipped`
+# with a reason and neither is run. The block above that decision carries what
+# was measured.
+#
+# TWO PHASES, BECAUSE THE EXIT CONTRACT HAS TO STAY HONEST ACROSS A REBOOT
+#   T-Pot is not running until the box has rebooted, and this project refuses
+#   to call a box verified on the strength of an install log. So:
+#
+#     site.yml   calls this role with no phase. The pre-reboot half runs; the
+#                post-reboot half is RECORDED AS SKIPPED, one record per
+#                check, each with a reason. install.sh then turns exit 0 into
+#                exit 20 -- "installed, a reboot is required".
+#     verify.yml calls it with `tpot_verify_phase: both`. Reaching that play
+#                at all is the caller asserting that the reboot has happened,
+#                so the post-reboot checks run for real and fail honestly if
+#                the box is not up -- AND a post-reboot check that could not
+#                be run at all fails the role too, at the gate at the foot of
+#                this file. On that path "we could not look" is not an answer
+#                the caller can be given a 0 for.
+#     --check    records BOTH halves as skipped and asserts nothing. Nothing
+#                was installed, so there is no verdict to give.
+#
+#   The difference between `skipped` and `pass` is the entire reason
+#   verification is a LIST OF RECORDS rather than a count. A count cannot tell
+#   "we looked and it was fine" from "we could not look", and it is the second
+#   one that green-lights a box nobody has examined.
+#
+# NOTHING HERE HAS EVER RUN AGAINST AN INSTALLED BOX. No VM, no root, no
+# docker, no T-Pot, ever. Every assertion below is what this role is SPECIFIED
+# to check. None of it has been observed.
+
+# ---------------------------------------------------------------------------
+# The stage, first, before anything can fail.
+#
+# site.yml's rescue reads this fact to write $RUNDIR/failure-class, and
+# roles/report/vars/main.yml maps `verify` to exit 16 (EX_VERIFY): installed,
+# and an assertion about the result failed. A role that failed before setting
+# it would be reported as EX_INTERNAL, which is a true statement about a
+# different problem.
+# ---------------------------------------------------------------------------
+- name: Enter the verify stage
+  ansible.builtin.set_fact:
+    tpot_stage: verify
+
+# ---------------------------------------------------------------------------
+# The phase, and the only place it is interpreted.
+#
+# `tpot_verify_phase` is a call-site argument, not one of the 50 input keys,
+# so it has no schema entry and no role default -- see defaults/main.yml. It
+# is read HERE, once, into a boolean, and every later task tests the boolean.
+# A `| default('pre')` repeated at eleven call sites is eleven chances to
+# spell the default differently.
+# ---------------------------------------------------------------------------
+- name: Decide which phases this run performs
+  ansible.builtin.set_fact:
+    tpot_verify_phase_effective: "{{ tpot_verify_phase | default('pre') }}"
+
+- name: Refuse a phase this role does not implement
+  ansible.builtin.assert:
+    that:
+      - tpot_verify_phase_effective in ['pre', 'both']
+    fail_msg: >-
+      tpot_verify_phase is "{{ tpot_verify_phase_effective }}"; this role
+      implements "pre" (the default, used by site.yml) and "both" (used by
+      verify.yml). A phase name it does not recognise would silently skip
+      checks, so it refuses instead.
+    success_msg: "verification phase: {{ tpot_verify_phase_effective }}"
+    quiet: true
+
+- name: Note whether the post-reboot half runs
+  ansible.builtin.set_fact:
+    tpot_verify_do_post: "{{ tpot_verify_phase_effective == 'both' }}"
+
+# ---------------------------------------------------------------------------
+# WHETHER ANY CHECK CAN RUN AT ALL, WHICH IS A SEPARATE QUESTION FROM WHICH
+# PHASE WAS ASKED FOR.
+#
+# A --check run installs nothing, so there is no installed T-Pot for any of
+# these checks to be about. That much is obvious. What is NOT obvious, and
+# what makes this a correctness fix rather than tidiness, is how Ansible
+# behaves in check mode: it SKIPS every ansible.builtin.command task, and the
+# skipped result still carries `rc: 0` and an empty `stdout`. Measured here on
+# ansible-core 2.21.2 -- the same grep that returns rc 1 in a real run
+# registers rc 0 when check mode skipped it.
+#
+# Every probe in this role is a command, and most of the records derived from
+# them read `rc == 0` as the good outcome. So without this gate a --check run
+# recorded `pass` for os_user_present, sshd_config_valid, docker_daemon,
+# containers_stable and honeypot_ssh_not_sshd -- five checks that never ran,
+# on a box where nothing had been installed. That is precisely the failure
+# this project refuses: a check recorded as passed that was never exercised.
+#
+# install.sh cannot combine --check with --verify-only (lib/args.sh refuses
+# two modes in one run), so this gate only ever affects the site.yml path.
+# ---------------------------------------------------------------------------
+- name: Note whether anything can actually be probed on this run
+  ansible.builtin.set_fact:
+    tpot_verify_do_checks: "{{ not ansible_check_mode }}"
+
+# ---------------------------------------------------------------------------
+# Where the T-Pot account's home is -- asked, never composed.
+#
+# WHY THIS ROLE ASKS AGAIN RATHER THAN USING tpot_home
+#   The tpot_user role sets `tpot_home` from getent, and on a site.yml run
+#   that fact is already in play. But verify.yml runs this role ALONE: nothing
+#   before it has created or looked up the account, so `tpot_home` does not
+#   exist on the path that matters most -- the one the post-boot unit takes on
+#   an unattended box with nobody watching. Depending on another role's fact
+#   would make --verify-only die on an undefined variable.
+#
+#   getent, not "/home/" ~ user. The home directory is a field in passwd and
+#   is whatever the box says it is; composing the path is how an installer
+#   ends up verifying a directory nobody uses. `getent` through `command` is
+#   the sanctioned form in this tree (.ansible-lint warns rather than fails on
+#   command-instead-of-module for exactly this): there is no getent module
+#   reading that answers the question without a second parse of the same line.
+# ---------------------------------------------------------------------------
+- name: Look up the T-Pot account in passwd
+  ansible.builtin.command:
+    argv:
+      - getent
+      - passwd
+      - "{{ tpot_os_user }}"
+  register: tpot_verify_passwd
+  # A lookup changes nothing, and a missing account is a finding this role
+  # records rather than an error that stops it before it can say so.
+  changed_when: false
+  failed_when: false
+  # check_mode: false, so that the paths below are the box's real ones even in
+  # a dry run. Ansible skips command tasks under --check, and a check-mode skip
+  # still reports rc 0 with an empty stdout (measured on ansible-core 2.21.2),
+  # which would silently resolve the home directory to "" and make every path
+  # in this role an absolute path starting at /. roles/tpot_user and
+  # roles/tpot_install use the same exemption for the same read.
+  check_mode: false
+
+- name: Take the home directory from the passwd entry
+  ansible.builtin.set_fact:
+    # Field 6 of a passwd line. The trailing empties make the index safe when
+    # the account does not exist and stdout is empty, so the undefined-variable
+    # failure this role exists to report cannot be the way it dies.
+    tpot_verify_home: >-
+      {{ ((tpot_verify_passwd.stdout | default('') | trim).split(':')
+          + ['', '', '', '', '', '', ''])[5] }}
+
+- name: Note the paths every later check reads
+  ansible.builtin.set_fact:
+    tpot_verify_checkout: "{{ tpot_verify_home }}/{{ tpot_verify_checkout_dirname }}"
+    tpot_verify_env_file: "{{ tpot_verify_home }}/{{ tpot_verify_checkout_dirname }}/.env"
+    tpot_verify_compose_file: "{{ tpot_verify_home }}/{{ tpot_verify_checkout_dirname }}/docker-compose.yml"
+
+# A disagreement between what tpot_user announced and what passwd says now is
+# not a verification failure -- passwd is the authority and this role uses it
+# either way -- but it does mean two parts of the same run are describing
+# different directories, and a warning is how that reaches result.json.
+- name: Warn when the announced home and the passwd entry disagree
+  ansible.builtin.set_fact:
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings + ['the T-Pot account home was announced as "'
+         ~ (tpot_home | default('')) ~ '" but passwd says "'
+         ~ tpot_verify_home ~ '"; verification used the passwd entry'] }}
+  when:
+    - tpot_home is defined
+    - tpot_home | length > 0
+    - tpot_home != tpot_verify_home
+
+# ---------------------------------------------------------------------------
+- name: Run the pre-reboot checks
+  ansible.builtin.include_tasks: pre-reboot.yml
+  when: tpot_verify_do_checks | bool
+
+- name: Record every pre-reboot check as skipped, with the reason
+  # One record per declared id, each `skipped` WITH A REASON. This is the
+  # --check branch and nothing else reaches it. The ids come from
+  # vars/main.yml, which is also where pre-reboot.yml's records come from, so
+  # the two sets are the same set by construction.
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': item,
+                                 'phase': 'pre-reboot',
+                                 'status': 'skipped',
+                                 'reason': tpot_verify_check_mode_reason | trim}] }}
+  loop: "{{ tpot_verify_pre_reboot_ids }}"
+  when: not (tpot_verify_do_checks | bool)
+
+- name: Say in the run's warnings that a check run verified nothing
+  # It reaches result.json, which outlives the transcript. A dry run that
+  # returns 0 must carry the sentence that says what that 0 does and does not
+  # mean, or the next reader takes it for a verified box.
+  ansible.builtin.set_fact:
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings + ['this was a --check run: every verification record is '
+         ~ 'skipped, because nothing was installed and no probe was executed. Nothing '
+         ~ 'here says anything about a running T-Pot.'] }}
+  when: not (tpot_verify_do_checks | bool)
+
+# ---------------------------------------------------------------------------
+# The post-reboot half, or an honest account of why it did not happen.
+# ---------------------------------------------------------------------------
+- name: Run the post-reboot checks
+  ansible.builtin.include_tasks: post-reboot.yml
+  when:
+    - tpot_verify_do_post | bool
+    - tpot_verify_do_checks | bool
+
+- name: Record every post-reboot check as skipped, with the reason
+  # One record per declared id, each `skipped` WITH A REASON. Never `pass`:
+  # this run has not looked at a running T-Pot and must not imply that it has.
+  # The ids come from vars/main.yml, which is also where post-reboot.yml gets
+  # them, so the two sets are the same set by construction.
+  #
+  # Two different runs land here and the reason says which: the ordinary
+  # site.yml one, which stops before the reboot T-Pot requires, and a --check
+  # one, where no probe was executed at all.
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': item,
+                                 'phase': 'post-reboot',
+                                 'status': 'skipped',
+                                 'reason': ((tpot_verify_check_mode_reason
+                                             if not (tpot_verify_do_checks | bool)
+                                             else tpot_verify_pending_reason) | trim)}] }}
+  loop: "{{ tpot_verify_post_reboot_ids }}"
+  when: not (tpot_verify_do_post | bool) or not (tpot_verify_do_checks | bool)
+
+# ---------------------------------------------------------------------------
+# The drift check on the record set itself.
+#
+# It is a WARNING and not an assertion on purpose. A mismatch here means this
+# role's own bookkeeping is wrong -- an id recorded that vars/main.yml does
+# not declare, or a declared id that post-reboot.yml never reached. That is a
+# defect in the installer, not a fault in the box, and failing the play for it
+# would report exit 16 ("installed, an assertion about the result failed"),
+# sending a reader to inspect a machine that is fine.
+# ---------------------------------------------------------------------------
+- name: Warn if the post-reboot records do not match the declared set
+  ansible.builtin.set_fact:
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings + ['the post-reboot verification records do not match the declared set: '
+         ~ (tpot_verify_post_reboot_ids | difference(tpot_verify_recorded_post) | join(', ') | default('none', true))
+         ~ ' were declared and not recorded; '
+         ~ (tpot_verify_recorded_post | difference(tpot_verify_post_reboot_ids) | join(', ') | default('none', true))
+         ~ ' were recorded and not declared. This is a defect in the tpot_verify role, not in this host.'] }}
+  vars:
+    tpot_verify_recorded_post: >-
+      {{ tpot_verify_results | selectattr('phase', 'eq', 'post-reboot')
+         | map(attribute='id') | list }}
+  when:
+    - tpot_verify_do_post | bool
+    - tpot_verify_do_checks | bool
+    - (tpot_verify_recorded_post | sort) != (tpot_verify_post_reboot_ids | sort)
+
+# ---------------------------------------------------------------------------
+# THE GATE. A check the caller asked for and did not get is a FAILURE.
+#
+# WHAT WENT WRONG WITHOUT IT
+#   Several post-reboot records can come back `skipped` for reasons that have
+#   nothing to do with the phase: `docker ps` exiting non-zero leaves
+#   containers_running, containers_stable and honeypot_ssh_container with no
+#   verdict at all. Each of those records is correct -- a check that did not
+#   run is `skipped` with a reason, never `pass` -- but nothing then acted on
+#   them. The record was written, the assertion beside it passed over it, the
+#   play exited 0, and install.sh step 10 maps a play rc of 0 straight to
+#   EX_OK. So `install.sh --verify-only` could answer 0, "installed AND
+#   verified", for a box whose containers were never counted, which is the
+#   first property docs/exit-codes.md promises.
+#
+# WHY IT IS SCOPED TO A both-PHASE RUN, AND WHY THAT SCOPE IS THE WHOLE POINT
+#   In a site.yml run the post-reboot records are ALL `skipped`, every time,
+#   by design: T-Pot is not running until the box has rebooted, and site.yml
+#   stops before that. Those ten records are the correct output of a correct
+#   run, and install.sh turns that run's 0 into exit 20. A gate that fired
+#   there would convert every successful install into a failure -- worse than
+#   the defect it is fixing -- so it is conditioned on the same two facts the
+#   post-reboot half itself is: the caller asked for the phase, and probes
+#   could actually be executed.
+#
+#   Reaching verify.yml is the caller asserting the reboot has happened. On
+#   that path a check that could not be run is not "we will look later"; it is
+#   "we cannot say", and this product does not report 0 for "we cannot say".
+#
+# WHY `skipped` AND NOT ALSO `inconclusive`
+#   `inconclusive` is a measured outcome, not a missing one. honeypot_ssh_
+#   published records it when nothing holds a socket on tcp/22, because with
+#   docker's userland proxy disabled a published port is a netfilter DNAT rule
+#   with no host socket -- the check looked, and the answer is genuinely not
+#   decidable from what it can see. honeypot_ssh_container settles that case
+#   separately. Failing the run on `inconclusive` would refuse to verify a
+#   correctly installed box with a legitimate docker configuration.
+#
+# WHY A MISSING RECORD IS STILL ONLY A WARNING
+#   The drift check above already covers an id that was declared and never
+#   recorded, and it warns rather than fails on purpose: that is a defect in
+#   this role's bookkeeping, not a fault in the host, and failing would send a
+#   reader to inspect a machine that is fine. This gate is about records that
+#   exist and say "I could not look".
+# ---------------------------------------------------------------------------
+- name: Note which post-reboot checks this run asked for and did not get
+  ansible.builtin.set_fact:
+    # tpot_verify_post_reboot_ids_required is set by post-reboot.yml and is
+    # the declared set minus the ids this EDITION has nothing to answer for --
+    # a sensor ships no dashboard, so a `skipped` listen_dashboard is a final
+    # answer and not a hole. Referenced without a default: if it is somehow
+    # not set, the undefined variable stops the run, which is the safe
+    # direction. Defaulting it to an empty list would make this gate pass
+    # vacuously, which is the exact shape of the defect it exists to close.
+    tpot_verify_post_unanswered: >-
+      {{ tpot_verify_results
+         | selectattr('phase', 'eq', 'post-reboot')
+         | selectattr('status', 'eq', 'skipped')
+         | map(attribute='id') | list
+         | intersect(tpot_verify_post_reboot_ids_required) | sort }}
+  when:
+    - tpot_verify_do_post | bool
+    - tpot_verify_do_checks | bool
+
+- name: Assert every post-reboot check this run asked for produced a verdict
+  ansible.builtin.assert:
+    that:
+      - (tpot_verify_post_unanswered | length) == 0
+    fail_msg: >-
+      These post-reboot checks could not be run and have no verdict:
+      {{ tpot_verify_post_unanswered | join(', ') }}. Their reasons are in the
+      verification records, and the first one to read is usually a `docker ps`
+      that exited non-zero -- the daemon was not reachable, or this docker does
+      not support a filter used here. This run asked for the post-reboot phase,
+      which is the caller stating that the reboot has happened, so a check that
+      could not look is a failure of the verification and not a deferral of it.
+      This installer does not return 0 for a host it has not actually examined.
+      Fix what stopped the probe and re-run `install.sh --verify-only`.
+    success_msg: >-
+      every post-reboot check this edition owes a verdict for produced one
+      ({{ tpot_verify_post_reboot_ids_required | length }} of them)
+    quiet: true
+  when:
+    - tpot_verify_do_post | bool
+    - tpot_verify_do_checks | bool

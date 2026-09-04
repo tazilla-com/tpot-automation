@@ -1,0 +1,86 @@
+---
+# verify.yml -- verification only. Backs `install.sh --verify-only`.
+#
+# WHY THIS PLAY EXISTS SEPARATELY FROM site.yml
+#   T-Pot requires a reboot before it is running, and this project refuses to
+#   report exit 0 for a box it has not actually verified. So an unattended
+#   install with the default `tpot_reboot_policy: never` ends at exit 20 --
+#   "installed, pre-reboot checks passed, A REBOOT IS REQUIRED" -- and the
+#   post-reboot half of verification has not run yet.
+#
+#   Two things then close that gap, and both run THIS file rather than
+#   site.yml:
+#
+#     * the operator, or their automation, reboots and runs
+#       `install.sh --verify-only`, which reaches 0 or 16;
+#     * the oneshot systemd unit roles/finalize arms, which does the same
+#       thing on the next boot without anybody being present, and disarms
+#       itself afterwards.
+#
+#   Running site.yml for that would be wrong twice over: it would re-run the
+#   whole install to check it, and lib/args.sh deliberately drops the
+#   requirement for tpot_web_password under --verify-only, so the merged
+#   configuration a verify run carries cannot satisfy an install.
+#
+# WHAT IT MUST NOT DO
+#   Change anything. This play is assertions and a report. If a check needs
+#   the box to be different in order to pass, that is a finding, not a repair.
+#
+# NOTHING HERE HAS EVER RUN AGAINST AN INSTALLED BOX. No T-Pot has ever been
+# installed by this project. Read the assertions as specified, not observed.
+
+- name: Verify an installed T-Pot
+  hosts: tpot
+  become: false
+  # `ss`, `docker` and the sshd configuration are all read through facts or
+  # commands that need the box described first.
+  gather_facts: true
+
+  vars:
+    # Same accumulators as site.yml, and initialised here for the same two
+    # reasons -- see the block comment there. A verify run contributes only
+    # verification records and warnings, but the report writer reads the
+    # whole set, so all of them must exist.
+    tpot_stage: verify
+    tpot_verify_results: []
+    tpot_run_warnings: []
+    tpot_report_upstream: {}
+    tpot_report_driver: {}
+    tpot_report_accounts: {}
+    tpot_reboot_required: false
+    tpot_already_installed: true
+
+  tasks:
+    - name: Run verification
+      block:
+
+        # Both phases. Unlike the site.yml call, the post-reboot half is not
+        # skipped: reaching this play at all is the caller asserting that the
+        # reboot has happened. If it has not, the post-reboot checks fail
+        # honestly rather than recording `skipped` -- which is the difference
+        # between "we did not look" and "we looked and it is not there".
+        - name: Verify what is installed
+          ansible.builtin.include_role:
+            name: tpot_verify
+            apply:
+              tags: [tpot_verify]
+          vars:
+            tpot_verify_phase: both
+          tags: [tpot_verify]
+
+      rescue:
+        - name: Record which stage failed
+          ansible.builtin.include_role:
+            name: report
+            tasks_from: failure-class
+
+        - name: Fail the play with the original error
+          ansible.builtin.fail:
+            msg: >-
+              {{ tpot_stage }} failed:
+              {{ ansible_failed_result.msg | default('no message was recorded') }}
+
+      always:
+        - name: Write the play's report for install.sh
+          ansible.builtin.include_role:
+            name: report

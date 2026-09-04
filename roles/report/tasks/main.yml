@@ -1,0 +1,130 @@
+---
+# roles/report/tasks/main.yml -- $RUNDIR/ansible-report.json, the document the
+# play hands back to the shell.
+#
+# WHY IT IS A ROLE AND NOT A COUPLE OF TASKS IN EACH PLAY
+#   Two plays need it -- site.yml and verify.yml -- and they need it to
+#   produce exactly the same shape, because lib/result.sh reads one schema.
+#   The obvious alternative, an `always:` block copied into both files, is
+#   two copies of a schema that a reader has no reason to diff. This tree
+#   already gates four other things against being written down twice; this is
+#   the same problem and gets the same answer.
+#
+# THE SCHEMA IS A WHITELIST ON THE CONSUMER SIDE
+#   lib/result.sh deletes any `driver` field it does not declare and says so
+#   on stderr, and it derives `driver.upstream_install_type` itself by
+#   reading the flags back the way upstream's own getopts would. So this file
+#   must send the flags and must NOT send the derived field. The full
+#   contract is in lib/result.sh's header; the short version:
+#
+#     upstream        url ref repo_url sha256 verified payload_ref
+#     driver          name rc duration_s flags
+#     accounts        free-form, passed through verbatim
+#     verification    [{id, phase, status, reason}]
+#     warnings        [str]
+#     reboot_required, already_installed   booleans
+#
+#   A check that did not run is `skipped` WITH A REASON, never `pass`. That
+#   rule is the reason the verification list is a list of records rather than
+#   a count: a number cannot distinguish "we looked and it was fine" from
+#   "we could not look".
+#
+# IT MUST NOT FAIL, FOR THE SAME REASON failure-class.yml MUST NOT.
+#   It runs in `always:`, which means it runs after a failure. If it raised,
+#   it would replace a real diagnosis with its own.
+
+- name: Assemble the play's report
+  ansible.builtin.set_fact:
+    tpot_report_document:
+      upstream: "{{ tpot_report_upstream | default({}, true) }}"
+      driver: "{{ tpot_report_driver | default({}, true) }}"
+      accounts: "{{ tpot_report_accounts | default({}, true) }}"
+      verification: "{{ tpot_verify_results | default([], true) }}"
+      warnings: "{{ tpot_run_warnings | default([], true) }}"
+      reboot_required: "{{ tpot_reboot_required | default(false) | bool }}"
+      already_installed: "{{ tpot_already_installed | default(false) | bool }}"
+
+# ---------------------------------------------------------------------------
+# The tripwire.
+#
+# This document is written to disk, copied into result.json, and SECURITY.md
+# invites a vulnerability reporter to attach result.json to their report. So
+# the one thing it may never contain is the dashboard password.
+#
+# Nothing is SUPPOSED to put it there -- no role writes a credential into any
+# of the accumulators, and the driver is never given one. That is exactly why
+# the check is worth having: it costs one task, and it fires only when
+# something has gone wrong in a way review did not catch. lib/log.sh carries
+# the same tripwire over the transcript, for the same reason and after the
+# same two incidents.
+#
+# no_log on the comparison, because its arguments are the secret. The assert
+# below then speaks only about a boolean, so a failure names the problem
+# without printing the value that caused it.
+# ---------------------------------------------------------------------------
+- name: Check the report against the supplied credential
+  ansible.builtin.set_fact:
+    tpot_report_is_clean: >-
+      {{ tpot_web_password is not defined
+         or tpot_web_password | length < 1
+         or tpot_web_password not in (tpot_report_document | to_json) }}
+  no_log: true
+
+- name: Refuse to write a report that carries the dashboard credential
+  ansible.builtin.assert:
+    that:
+      - tpot_report_is_clean | bool
+    fail_msg: >-
+      The play's report would have contained the dashboard password. Nothing
+      in this project is supposed to put it there, so this is a defect in a
+      role, not a configuration error. The report has NOT been written; the
+      run's other artefacts are unaffected. Please report it -- see
+      SECURITY.md -- and do not attach the transcript until you have read it.
+    success_msg: the report carries no supplied credential
+    quiet: true
+
+- name: Write the play's report for install.sh
+  ansible.builtin.copy:
+    # to_nice_json rather than to_json: this file is read by people during a
+    # failed install at least as often as it is read by lib/result.sh.
+    content: "{{ tpot_report_document | to_nice_json }}\n"
+    dest: "{{ tpot_runtime_dir }}/ansible-report.json"
+    mode: "0600"
+  # See failure-class.yml: tpot_runtime_dir is supplied by install.sh and is
+  # absent when the play is run directly. Nothing is waiting to read the file
+  # in that case.
+  when:
+    - tpot_runtime_dir is defined
+    - tpot_runtime_dir | length > 0
+  # check_mode: false, for the reason spelled out in failure-class.yml.
+  # ansible.builtin.copy supports check mode, so under --check it reports
+  # `changed` and writes nothing (measured on ansible-core 2.21.2). That
+  # would leave a --check run with no ansible-report.json at all, so
+  # result.json would carry an empty verification list and neither
+  # reboot_required nor already_installed -- and the debug task below would
+  # announce a file that is not there. The document goes into $RUNDIR, the
+  # 0700 tmpfs directory install.sh made for this run and shreds afterwards,
+  # so writing it changes nothing on the box a check run promised to leave
+  # alone.
+  check_mode: false
+  # `always:` must not turn a diagnosable failure into an undiagnosable one.
+  # The next task says whether this worked.
+  failed_when: false
+  register: tpot_report_write
+
+- name: Report whether the report reached the run directory
+  # Deliberately not silent about its own success. install.sh reads this file
+  # to decide `reboot_required` and `already_installed`; if it is missing,
+  # those facts fall back to what the shell itself measured, and a reader
+  # needs to know which of the two they are looking at.
+  ansible.builtin.debug:
+    msg: >-
+      {{
+        'report written to ' ~ tpot_runtime_dir ~ '/ansible-report.json'
+        if (tpot_report_write is defined
+            and tpot_report_write.failed is defined
+            and not tpot_report_write.failed
+            and tpot_runtime_dir is defined)
+        else 'no report was written: there is no run directory, so this play
+              was not started by install.sh'
+      }}

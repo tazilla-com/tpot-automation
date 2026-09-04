@@ -1,0 +1,895 @@
+---
+# roles/tpot_install/tasks/configure-env.yml -- the three things upstream's
+# unattended sensor path leaves undone, done here.
+#
+# STAGE: env, which maps to exit 15 -- the same class as the driver failing,
+# because it is one. A T-Pot whose dashboard has no login, or which is still
+# submitting to a community feed the operator switched off, is not an
+# installed T-Pot; reporting success for it would be the single most
+# misleading thing this installer could do.
+#
+# THE THREE THINGS, IN THIS ORDER AND FOR A REASON
+#
+#   1. THE EDITION. Upstream copies the SENSOR compose file over
+#      docker-compose.yml, because the sensor type is the one whose code path
+#      never asks for a credential. The edition the operator actually asked
+#      for is applied here, by copying its own compose file over the same
+#      destination -- the operation upstream documents for its own users.
+#   2. THE TELEMETRY DECISION. It is an edit to that compose file, so it has
+#      to happen after the file has been replaced, or it would be applied to
+#      a file that is about to be overwritten.
+#   3. THE DASHBOARD CREDENTIAL. Last, because it goes into T-Pot's
+#      environment file rather than the compose file, and because it is the
+#      only step that touches a secret.
+#
+# T-POT'S ENVIRONMENT FILE ALREADY EXISTS BY THE TIME WE GET HERE
+#   It is git-tracked and ships in the checkout, byte-identical to
+#   env.example. Nothing creates it; upstream patches it in place with sed on
+#   its own credentialed path. So its ABSENCE is not a thing to fix -- it
+#   means the clone never happened, which means the install did not finish.
+#
+# NOTHING HERE HAS EVER RUN. No compose file has been edited and no credential
+# has been written, on any machine, by this project.
+
+# ---------------------------------------------------------------------------
+# The preconditions. All of them before the first write.
+# ---------------------------------------------------------------------------
+- name: Look for T-Pot's own environment file
+  ansible.builtin.stat:
+    path: "{{ tpot_install_env_file }}"
+  register: tpot_install_env_stat
+  check_mode: false
+
+- name: Refuse to configure a T-Pot that was never cloned
+  ansible.builtin.assert:
+    that:
+      - tpot_install_env_stat.stat.exists | default(false)
+    fail_msg: >-
+      {{ tpot_install_env_file }} does not exist. That file is tracked in
+      upstream's repository and arrives with the clone, so its absence means
+      upstream's playbook never cloned T-Pot -- even though its installer
+      exited 0, which it does whether or not its own playbook worked. Read
+      {{ tpot_install_log_copy }}.
+    success_msg: "T-Pot's environment file is present"
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Look for the compose file of the edition that was asked for
+  ansible.builtin.stat:
+    path: "{{ tpot_install_edition_source }}"
+  register: tpot_install_edition_stat
+  check_mode: false
+
+- name: Refuse an edition the checkout has no compose file for
+  ansible.builtin.assert:
+    that:
+      - tpot_install_edition_stat.stat.exists | default(false)
+    fail_msg: >-
+      {{ tpot_install_edition_source }} does not exist, so the edition
+      {{ tpot_install_type }} cannot be applied. Either the pinned ref does
+      not carry that edition, or the checkout is incomplete.
+    success_msg: "the {{ tpot_install_edition }} compose file is in the checkout"
+    quiet: true
+  when: not ansible_check_mode
+
+# ---------------------------------------------------------------------------
+# 1. THE EDITION.
+#
+# Unconditional, including when the edition IS the sensor one: copying a file
+# over an identical copy of itself is free, and a conditional here would be a
+# second place where the relationship between our type and upstream's is
+# written down. There is one such place, at the top of vars/main.yml.
+#
+# 0644 and owned by the T-Pot account, which is how it arrives from the
+# checkout. It is not secret -- it is the same file that is public in
+# upstream's repository -- and docker compose reads it as root from the
+# systemd unit.
+# ---------------------------------------------------------------------------
+- name: Apply the T-Pot edition by installing its compose file
+  ansible.builtin.copy:
+    src: "{{ tpot_install_edition_source }}"
+    dest: "{{ tpot_install_compose_file }}"
+    remote_src: true
+    owner: "{{ tpot_os_user }}"
+    mode: "0644"
+
+# ---------------------------------------------------------------------------
+# 2. THE TELEMETRY DECISION.
+#
+# Upstream T-Pot submits captured attack data to a community dashboard by
+# default. There is NO environment key for it and no upstream flag: the
+# opt-out upstream documents for its own users is to remove the service from
+# the compose file, and that is what this does.
+#
+# THE REMOVAL IS STRUCTURAL, AND IT HAS TO BE. The block is 22 lines and is
+# byte-identical across the editions, but it sits at six different line ranges
+# -- so anything that counts lines is right until the day upstream reorders a
+# file, and then it silently deletes the wrong service. This parses the
+# document, removes one key from the services mapping, and writes the document
+# back. Measured against all six compose files at the pinned commit
+# (2026-09-04, on this box, against copies of the files rather than an
+# installed T-Pot): the parse-and-write round trip is lossless -- the reloaded
+# document is equal to the original in every case -- and removing the service
+# is exactly one service fewer with no cascade.
+#
+# WHAT THE ROUND TRIP DOES COST, said plainly: comments and key order in
+# docker-compose.yml are not preserved, because a YAML parser does not carry
+# them. The file stays a valid compose file with identical content, and
+# upstream's own update script overwrites local changes to it anyway, so this
+# edit does not survive an upstream update in either form.
+#
+# The unused network goes too, but only after the surviving services have been
+# checked for a reference to it -- a network that something still joins is not
+# unused, whatever its name suggests.
+# ---------------------------------------------------------------------------
+- name: Read the compose file so telemetry can be removed structurally
+  ansible.builtin.slurp:
+    src: "{{ tpot_install_compose_file }}"
+  register: tpot_install_compose_raw
+  check_mode: false
+  when:
+    - tpot_upstream_telemetry == 'off'
+    - not ansible_check_mode
+
+- name: Count the services this edition ships
+  ansible.builtin.set_fact:
+    tpot_install_services_before: >-
+      {{ (tpot_install_compose_raw.content | b64decode | from_yaml).services | default({}, true) | length }}
+  when:
+    - tpot_upstream_telemetry == 'off'
+    - not ansible_check_mode
+
+- name: Remove upstream's telemetry service from the compose document
+  ansible.builtin.copy:
+    content: "{{ tpot_install_compose_stripped | to_nice_yaml(indent=2, width=1000, sort_keys=false) }}"
+    dest: "{{ tpot_install_compose_file }}"
+    owner: "{{ tpot_os_user }}"
+    mode: "0644"
+  vars:
+    tpot_install_compose_doc: "{{ tpot_install_compose_raw.content | b64decode | from_yaml }}"
+    tpot_install_compose_services: >-
+      {{ tpot_install_compose_doc.services | default({}, true) | dict2items
+         | rejectattr('key', 'equalto', tpot_install_telemetry_target) | items2dict }}
+    tpot_install_compose_nets_used: >-
+      {{ tpot_install_compose_services | dict2items
+         | map(attribute='value.networks', default=[]) | flatten | unique | list }}
+    # `select | length` rather than a containment test: a containment test
+    # against a value that is not there yet is exactly the shape that renders
+    # as a type error rather than as false.
+    tpot_install_compose_networks: >-
+      {{ (tpot_install_compose_doc.networks | default({}, true) | dict2items
+          | rejectattr('key', 'equalto', tpot_install_telemetry_network) | items2dict)
+         if (tpot_install_compose_nets_used | default([], true)
+             | select('equalto', tpot_install_telemetry_network) | list | length) == 0
+         else (tpot_install_compose_doc.networks | default({}, true)) }}
+    # A compose file with no networks section keeps having none: adding an
+    # empty one would be a change to upstream's document that nothing asked
+    # for.
+    tpot_install_compose_stripped: >-
+      {{ tpot_install_compose_doc
+         | combine({'services': tpot_install_compose_services})
+         | combine({'networks': tpot_install_compose_networks}
+                   if tpot_install_compose_doc.networks is defined else {}) }}
+  when:
+    - tpot_upstream_telemetry == 'off'
+    - not ansible_check_mode
+
+# Asserting that the block is GONE, not that the edit was attempted. The
+# distinction is the whole reason there is no switch to turn this check off: a
+# switch on a correctness check about what leaves the box would only ever be
+# used to make the documentation lie.
+- name: Read the compose file back
+  ansible.builtin.slurp:
+    src: "{{ tpot_install_compose_file }}"
+  register: tpot_install_compose_after
+  check_mode: false
+  when:
+    - tpot_upstream_telemetry == 'off'
+    - not ansible_check_mode
+
+- name: Prove upstream's telemetry service is gone
+  ansible.builtin.assert:
+    that:
+      - tpot_install_telemetry_target not in tpot_install_compose_final.services | default({}, true)
+      - tpot_install_telemetry_network not in tpot_install_compose_final.networks | default({}, true)
+      - (tpot_install_compose_final.services | default({}, true) | length)
+        == (tpot_install_services_before | int) - 1
+    fail_msg: >-
+      The telemetry service {{ tpot_install_telemetry_target }} is still in
+      {{ tpot_install_compose_file }}, or removing it changed the service
+      count by something other than one. Telemetry is NOT disabled on this
+      box: T-Pot would submit captured attack data to upstream's community
+      dashboard. Do not report this install as having telemetry off.
+    success_msg: >-
+      telemetry removed: {{ tpot_install_services_before }} services became
+      {{ tpot_install_compose_final.services | default({}, true) | length }}
+    quiet: true
+  vars:
+    tpot_install_compose_final: "{{ tpot_install_compose_after.content | b64decode | from_yaml }}"
+  when:
+    - tpot_upstream_telemetry == 'off'
+    - not ansible_check_mode
+
+- name: Record that upstream telemetry was left switched on
+  ansible.builtin.set_fact:
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings + ['tpot_upstream_telemetry is on, so this T-Pot submits captured attack '
+         ~ 'data to upstream community dashboard. That submission is upstream, not this project, '
+         ~ 'and it is the upstream default; this installer switches it off unless asked not to.'] }}
+  when: tpot_upstream_telemetry != 'off'
+
+# ---------------------------------------------------------------------------
+# 3. THE DASHBOARD CREDENTIAL.
+#
+# Only the editions that have a dashboard get one. The sensor and mobile
+# editions have no web interface at all, so writing an empty or a real record
+# for them would be noise at best.
+#
+# THE CONSTRAINT UPSTREAM ENFORCES ONLY ON THE PATH WE NEVER TAKE
+#   Upstream strips its username to alphanumerics, dot, underscore and hyphen
+#   -- but only when it ASKS for one interactively (install.sh:659). Supplying
+#   it as an argument skips the sanitiser entirely, and so does taking the
+#   sensor path. The record is stored as one `user:hash` line, base64-encoded,
+#   so a colon in the username splits it in the wrong place and produces a
+#   dashboard nobody can log into. The variable schema already restricts the
+#   character set; this asserts the one character that actually breaks the
+#   format, where the format is written.
+# ---------------------------------------------------------------------------
+- name: Refuse a dashboard username containing a colon
+  ansible.builtin.assert:
+    that:
+      - "':' not in tpot_web_user"
+      - tpot_web_user | length > 0
+    fail_msg: >-
+      The dashboard username is stored as one user:hash record, so a colon in
+      the name splits it in the wrong place. Upstream sanitises this only on
+      its interactive path, which this installer never takes, so the
+      constraint is ours to hold.
+    success_msg: "the dashboard username is one this record format can carry"
+    quiet: true
+  when: tpot_install_has_dashboard | bool
+
+- name: Refuse a dashboard edition with no dashboard password
+  ansible.builtin.assert:
+    that:
+      - tpot_web_password is defined
+      - tpot_web_password | default('') | length > 0
+    fail_msg: >-
+      The {{ tpot_install_type }} edition has a dashboard and no password was
+      supplied for it. Supply it in the answer file as tpot_web_password, in
+      the environment as TPOT_WEB_PASSWORD, or with --web-password-file
+      pointing at a root-owned 0600 file. There is deliberately no flag that
+      takes the value itself.
+    success_msg: "a dashboard password was supplied"
+    quiet: true
+  when:
+    - tpot_install_has_dashboard | bool
+    - not ansible_check_mode
+
+# ---------------------------------------------------------------------------
+# THE SHAPE OF THE PASSWORD ITSELF, REFUSED BEFORE IT IS HASHED.
+#
+# THE DEFECT THIS IS HERE TO KILL is the one the installer this project
+# replaces actually shipped: the password that got installed was not the
+# password that was typed, and nothing said so. Everything downstream then
+# behaved perfectly -- the hasher produced a record, the record was one line,
+# the write landed, verification passed -- while the dashboard rejected the
+# operator's own password forever.
+#
+# The hasher is given the password on standard input, and it reads it with a
+# SINGLE LINE READ. Two consequences, and both were MEASURED HERE on
+# 2026-09-04, against a stand-in that recorded the exact bytes it received
+# through this role's own `stdin` / `stdin_add_newline` path:
+#
+#   * a password containing a newline arrives TRUNCATED at the newline.
+#     Supplied "first\nsecond" (12 characters), the hasher received 5 bytes:
+#     "first". The record it produced was still one valid user:hash line, so
+#     no assertion further down this file can see it;
+#   * a password ending in a carriage return arrives with the CR REMOVED.
+#     Supplied "value" followed by a CR (6 bytes), the hasher received
+#     "value" (5). lib/config.py already warns when a password FILE has CRLF
+#     endings and says the value "is used exactly as it is" -- true of the
+#     merged document, and not true of what the hasher then hashes. A
+#     trailing NEWLINE goes the same way, and an answer file can carry one
+#     that lib/config.py's single-newline strip does not reach.
+#
+# The same run established the good news, which is why the refusal is this
+# narrow: quotes, single and double, backslashes, `$(id)`, backticks, UTF-8
+# and leading and trailing spaces ALL arrive byte-identical. There is no
+# shell, no sed and no template step between the merged document and the
+# hasher's standard input, so nothing else needs escaping and nothing else is
+# refused.
+#
+# The length bound is different in kind, and it is stated as what it is. The
+# hasher reads that line into a FIXED buffer -- Apache's own support tools
+# call its size MAX_STRING_LEN -- so a long password is silently truncated
+# in exactly the way a newline truncates it. That buffer was NOT measured
+# here: htpasswd is not installed on the machine this file was written on.
+# 255 bytes is a deliberately conservative bound that sits under the value
+# Apache uses, and a password over it is REFUSED rather than quietly cut
+# down. If it ever needs raising, raise it here, where the reason is written.
+#
+# WHY THE ARITHMETIC IS ON base64 AND NOT ON `| length`. The buffer counts
+# BYTES; Jinja's `length` counts CHARACTERS, and a passphrase of accented or
+# CJK characters is two to four bytes each. `b64encode | length` is exactly
+# 4 * ceil(bytes / 3), so a bound of 340 there is a bound of 255 bytes --
+# checked here: 255 ASCII characters encode to 340, and the two-character
+# "pa" with an umlaut encodes to 4, for the 3 bytes it really is.
+#
+# The three booleans are computed under no_log because their operands are the
+# secret; the assert below speaks only about booleans, so a refusal names the
+# defect without printing the value that caused it. That is the same shape
+# roles/report uses for its tripwire, and for the same reason.
+# ---------------------------------------------------------------------------
+- name: Measure the shape of the dashboard password without keeping it
+  ansible.builtin.set_fact:
+    # Two expressions rather than one, so the transcript can say WHICH shape
+    # was wrong. The second is the whole property, stated as itself: "the
+    # value that comes back out of a single line read is the value that went
+    # in". It carries no escape literal on purpose -- a Jinja `'\r'` inside a
+    # YAML folded scalar is TWO escaping layers and it does not survive them.
+    # Measured here on ansible-core 2.21.2: the literal form silently reported
+    # a password ending in a carriage return as clean, and this form does not.
+    tpot_install_pw_one_line: >-
+      {{ (tpot_web_password | default('')).splitlines() | length <= 1 }}
+    tpot_install_pw_line_read_faithful: >-
+      {{ (tpot_web_password | default(''))
+         == ((tpot_web_password | default('')).splitlines() | first | default('', true)) }}
+    tpot_install_pw_within_buffer: >-
+      {{ (tpot_web_password | default('') | b64encode | length)
+         <= tpot_install_htpasswd_max_b64 }}
+  no_log: true
+  when: tpot_install_has_dashboard | bool
+
+- name: Refuse a dashboard password the hasher would silently change
+  ansible.builtin.assert:
+    that:
+      - tpot_install_pw_one_line | bool
+      - tpot_install_pw_line_read_faithful | bool
+      - tpot_install_pw_within_buffer | bool
+    fail_msg: >-
+      The dashboard password would not survive being hashed unchanged, so it has been
+      refused and NOTHING has been written. The hasher reads it as one line: a newline
+      truncates it there, a trailing carriage return is dropped, and anything longer than
+      {{ tpot_install_htpasswd_max_bytes }} bytes runs off the end of its buffer. In every
+      one of those cases the installer would have finished successfully with a dashboard
+      password that is not the one you supplied. Supply a password of at most
+      {{ tpot_install_htpasswd_max_bytes }} bytes on a single line. If it came from
+      --web-password-file, the file's LAST line ending is stripped and any earlier one is
+      part of the value -- a CRLF file is the usual cause. Quotes, backslashes, $, backticks,
+      spaces and non-ASCII characters are all fine and none of them is why this fired.
+    success_msg: "the dashboard password is one line the hasher will take unchanged"
+    quiet: true
+  when: tpot_install_has_dashboard | bool
+
+# The visible half of the no_log pair above. It says which of the three
+# conditions held, and each one is a boolean about the value rather than the
+# value, so a refusal in an unattended run is still diagnosable from a
+# transcript nobody was watching.
+- name: Say what the shape check found
+  ansible.builtin.debug:
+    msg: >-
+      dashboard password shape: one line={{ tpot_install_pw_one_line | default('(not checked)') }},
+      unchanged by a line read={{ tpot_install_pw_line_read_faithful | default('(not checked)') }},
+      within the hasher's {{ tpot_install_htpasswd_max_bytes }}-byte
+      buffer={{ tpot_install_pw_within_buffer | default('(not checked)') }}
+
+# ---------------------------------------------------------------------------
+# THE ONE ANSIBLE ITSELF PUTS ON DISK, AND THE ONLY THING THIS ROLE CAN DO
+# ABOUT IT.
+#
+# The connection is local, and the local connection plugin does not pipeline.
+# So every module Ansible runs is written to a file first -- and the module's
+# arguments are written INTO that file. For the hashing task below that means
+# the plaintext dashboard password, on disk, in the clear.
+#
+# MEASURED HERE, 2026-09-04, on ansible-core 2.21.2: after an ordinary run
+# the directory is empty -- Ansible removes it and there were zero leftovers.
+# With ANSIBLE_KEEP_REMOTE_FILES=1 the file stays, and the plaintext is
+# recoverable from it with grep. The containing directory is 0700, so the
+# exposure is to root and to nobody else; the file inside it is 0764, which
+# is why the directory being 0700 is the thing doing the work.
+#
+# `no_log` does not touch this. It censors what is DISPLAYED and what is
+# registered; it has nothing to say about the module file. So the only
+# control available is to refuse to hash while the variable that makes the
+# file permanent is set. It is one task, and it turns "an operator was
+# debugging that day" into a refusal with a sentence naming the variable.
+#
+# This is not the whole of the problem -- a run killed with SIGKILL mid-task
+# leaves the same file behind, and no role can defend against that. That belongs
+# to whoever owns install.sh: pointing Ansible's remote_tmp at $RUNDIR, the
+# 0700 tmpfs directory that is shredded at the end of the run, would remove
+# the residue for every task at once. Recorded here because this is where it
+# was found.
+# ---------------------------------------------------------------------------
+- name: Refuse to hash while Ansible is set to keep its module files
+  ansible.builtin.assert:
+    that:
+      - (lookup('env', 'ANSIBLE_KEEP_REMOTE_FILES') | default('', true) | trim | lower)
+        not in ['1', 'true', 'yes', 'on']
+    fail_msg: >-
+      ANSIBLE_KEEP_REMOTE_FILES is set in this environment. The connection is local and
+      the local connection does not pipeline, so every module Ansible runs is written to
+      a file with its arguments inside it -- and with this variable set that file is not
+      deleted afterwards. The next task would hash the dashboard password, so the
+      plaintext would be left under ~/.ansible/tmp for as long as the box lives. Unset
+      the variable and run again. Nothing has been written.
+    success_msg: "Ansible will delete its module files, so the hashing task leaves no copy behind"
+    quiet: true
+  when: tpot_install_has_dashboard | bool
+
+# no_log because the file may already carry a credential record. The task
+# after it reports what was learned, in numbers and one fingerprint, so a
+# failure here is still diagnosable without the file.
+- name: Read T-Pot's environment file
+  ansible.builtin.slurp:
+    src: "{{ tpot_install_env_file }}"
+  register: tpot_install_env_raw
+  no_log: true
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Examine that file without keeping any of its values
+  ansible.builtin.set_fact:
+    tpot_install_env_web_user_count: >-
+      {{ tpot_install_env_lines | select('match', '^WEB_USER=') | list | length }}
+    tpot_install_env_web_user_present: >-
+      {{ ((tpot_install_env_lines | select('match', '^WEB_USER=') | first | default(''))
+          | regex_replace('^WEB_USER=', '') | trim | length) > 0 }}
+    tpot_install_env_ls_fingerprint: >-
+      {{ (tpot_install_env_lines | select('match', '^LS_WEB_USER=') | list | join(' ')) | hash('sha256') }}
+  vars:
+    tpot_install_env_lines: "{{ (tpot_install_env_raw.content | b64decode).splitlines() }}"
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Report what that file said
+  ansible.builtin.debug:
+    msg: >-
+      {{ tpot_install_env_web_user_count | default(0) }} dashboard credential line(s),
+      value {{ 'already set' if (tpot_install_env_web_user_present | default(false) | bool) else 'empty' }};
+      sensor-to-hive line fingerprint {{ (tpot_install_env_ls_fingerprint | default(''))[:12] }}
+  when: not ansible_check_mode
+
+# UPSTREAM'S OWN WRITE FAILS OPEN, SO OURS MUST NOT. Upstream patches the line
+# with `sed -i "s|^WEB_USER=.*|...|"` (install.sh:713). On a file with no such
+# line that command exits 0, changes nothing and reports nothing, and the
+# outcome is a T-Pot whose dashboard has no login and an installer that said
+# it succeeded. This is the check that makes that impossible here.
+- name: Refuse to write a credential into a file with nowhere to put it
+  ansible.builtin.assert:
+    that:
+      - (tpot_install_env_web_user_count | default(0) | int) == 1
+    fail_msg: >-
+      {{ tpot_install_env_file }} carries
+      {{ tpot_install_env_web_user_count | default(0) }} WEB_USER lines and
+      exactly one is required. Upstream's own edit of this file is a sed
+      substitution that exits 0 and changes nothing when the line is missing,
+      which is why this is checked rather than attempted. Nothing has been
+      written.
+    success_msg: "the environment file has exactly one dashboard credential line"
+    quiet: true
+  when:
+    - tpot_install_has_dashboard | bool
+    - not ansible_check_mode
+
+# Whether a password arrived at all, reduced to a boolean before anything
+# looks at it. The value itself is never held in a fact and never templated
+# into a task argument that could be displayed under -vvv.
+- name: Note whether a dashboard password was supplied
+  ansible.builtin.set_fact:
+    tpot_install_web_password_supplied: "{{ (tpot_web_password | default('') | length) > 0 }}"
+  no_log: true
+
+- name: Report whether a dashboard password was supplied
+  ansible.builtin.debug:
+    msg: >-
+      a dashboard password was
+      {{ 'supplied' if (tpot_install_web_password_supplied | bool) else 'not supplied' }}
+
+# The decision, written down before it is acted on so that the transcript says
+# which branch was taken and why. On the ordinary path there is never a
+# credential to overwrite: upstream is driven as the one install type whose
+# code path never writes this key at all.
+- name: Decide whether this run writes the dashboard credential
+  ansible.builtin.set_fact:
+    tpot_install_write_web_env: >-
+      {{ (tpot_install_has_dashboard | bool)
+         and (tpot_install_web_password_supplied | bool)
+         and (not (tpot_install_env_web_user_present | default(false) | bool)
+              or (tpot_web_env_force | bool)) }}
+    tpot_install_web_env_source: >-
+      {{ 'not-applicable' if not (tpot_install_has_dashboard | bool)
+         else ('installer' if (not (tpot_install_env_web_user_present | default(false) | bool)
+                               or (tpot_web_env_force | bool))
+               else 'upstream') }}
+
+- name: Say which mechanism owns the dashboard credential on this box
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'this edition has no dashboard, so no credential is written'
+         if not (tpot_install_has_dashboard | bool)
+         else ('writing it; result.json will say web_env_source installer'
+               if (tpot_install_write_web_env | bool)
+               else 'leaving the one already there; result.json will say web_env_source upstream') }}
+
+- name: Look for the password hasher
+  ansible.builtin.stat:
+    path: "{{ tpot_install_htpasswd_bin }}"
+  register: tpot_install_htpasswd_stat
+  check_mode: false
+  when: tpot_install_write_web_env | bool
+
+- name: Refuse to hash a password without the hasher
+  ansible.builtin.assert:
+    that:
+      - tpot_install_htpasswd_stat.stat.exists | default(false)
+    fail_msg: >-
+      {{ tpot_install_htpasswd_bin }} is missing. It comes from apache2-utils
+      on the Debian family and httpd-tools on the Red Hat family, and
+      upstream's own installer installs it as one of its prerequisites -- so
+      its absence after a successful upstream run means that run did less than
+      it claimed.
+    success_msg: "the password hasher is present"
+    quiet: true
+  # NOT guarded on check mode, unlike the refusals at the top of this file.
+  # Those describe a checkout that a dry run has not got; this one describes a
+  # binary, and the stat above runs under --check because it carries
+  # check_mode: false. The hashing task below ALSO runs under --check, on
+  # purpose -- so without this line a `--check` run on a box that has no
+  # hasher fails inside a no_log command with "No such file or directory" and
+  # no task name worth reading, instead of at this sentence.
+  when: tpot_install_write_web_env | bool
+
+# ---------------------------------------------------------------------------
+# THE PASSWORD REACHES THIS PROCESS ON A FILE DESCRIPTOR AND NOWHERE ELSE.
+#
+# The -i form of the hasher reads it from standard input; the -b form, which
+# upstream uses on its own path (install.sh:709), takes it as an ARGUMENT and
+# is therefore world-readable in /proc for the life of the process. That is
+# the single property this project's security argument rests on.
+#
+# WHY THE VECTOR IS ASSERTED HERE AND NOT LEFT TO THE BUILD GATE.
+#   tests/check-argv-hygiene.sh rule 2 is meant to fail the build on the -b
+#   form. MEASURED HERE on 2026-09-04: it does not fire on this file. The rule
+#   needs the command word and the flag on ONE logical line, and an Ansible
+#   `argv:` list puts every token on a line of its own -- so a copy of this
+#   task rewritten to `-b` with the password appended passed the whole gate
+#   suite cleanly. Rule 5, the one that forbids upstream's own credential
+#   flags, is blind to a Jinja list for the same reason.
+#
+#   Fixing the gate is not this role's to do, and it is reported rather than
+#   patched here. What this role CAN do is check the vector it is about to
+#   run, at run time, in the one place the vector exists -- which is what the
+#   assertion below is. Three claims, and the third is the one that would
+#   survive somebody rewriting the first two: no element of the argv is the
+#   password.
+#
+#   The comparison against the password is computed under no_log, because its
+#   operands are the secret; the assert then speaks only about a boolean.
+#
+#   It is ELEMENT membership, not a substring search over the joined vector,
+#   and that is a choice rather than an oversight. A substring test would fire
+#   on a three-character password that happens to occur inside the username or
+#   inside the hasher's path -- refusing a perfectly good install for a
+#   coincidence. The defect being defended against is an argv element that IS
+#   the password, which is the only shape a hasher invocation can take.
+# ---------------------------------------------------------------------------
+- name: Check the hasher's argument vector against the password
+  ansible.builtin.set_fact:
+    tpot_install_htpasswd_argv_clean: >-
+      {{ (tpot_web_password | default('', true)) not in tpot_install_htpasswd_argv }}
+  no_log: true
+  when: tpot_install_write_web_env | bool
+
+- name: Refuse a hasher invocation that would put the password on a command line
+  ansible.builtin.assert:
+    that:
+      # The type clause is first and it is load-bearing, not decoration.
+      # Every other clause here uses `in`, and `in` against a STRING is a
+      # SUBSTRING test rather than a membership test -- so a vector that had
+      # somehow become a string would make three of these four checks answer
+      # a different question, and answer it wrongly in both directions.
+      # Caught exactly that way while testing this assertion: a vector
+      # supplied as a string reported the forbidden flag present because the
+      # temporary directory in its path contained the two characters.
+      - (tpot_install_htpasswd_argv | type_debug) == 'list'
+      - "'-i' in tpot_install_htpasswd_argv"
+      - tpot_install_htpasswd_forbidden_flag not in tpot_install_htpasswd_argv
+      - (tpot_install_htpasswd_argv | length) == 4
+      - tpot_install_htpasswd_argv_clean | bool
+    fail_msg: >-
+      The hasher was about to be run with an argument vector that is not the standard-input
+      form. On Linux a process argument list is world-readable in /proc for the whole life
+      of the process, so a password there is readable by every local account on the box --
+      on a honeypot, which is a machine deliberately exposed to attackers. This is a defect
+      in this role, not a configuration error: the vector is built in vars/main.yml and
+      cannot be set from an answer file. Nothing has been hashed and nothing written.
+    success_msg: "the hasher will read the password from standard input, not from its argv"
+    quiet: true
+  when: tpot_install_write_web_env | bool
+
+# The visible half of the no_log pair above, and the record of the vector
+# itself. It carries the username and two flags and can hold no secret, so a
+# reader of an unattended transcript can see the exact invocation.
+- name: Say what the hasher will be run with
+  ansible.builtin.debug:
+    msg: >-
+      hasher invocation: {{ tpot_install_htpasswd_argv | join(' ') }}
+      -- password on standard input, argv free of it:
+      {{ tpot_install_htpasswd_argv_clean | default('(not checked)') }}
+  when: tpot_install_write_web_env | bool
+
+# The trailing newline is added and the hasher strips it again: it reads one
+# line and removes a trailing newline or carriage return. Either shape works;
+# sending the newline is the shape a line read is written for. What the hasher
+# does to a password that CONTAINS one is refused further up this file.
+#
+# check_mode: false because it writes nothing at all -- it is a pure function
+# from a password to a hash -- and without it the whole credential path would
+# be invisible under --check.
+- name: Hash the dashboard password, reading it from standard input
+  ansible.builtin.command:
+    argv: "{{ tpot_install_htpasswd_argv }}"
+    stdin: "{{ tpot_web_password }}"
+    stdin_add_newline: true
+  register: tpot_install_htpasswd
+  changed_when: false
+  check_mode: false
+  no_log: true
+  when: tpot_install_write_web_env | bool
+
+- name: Report whether hashing worked
+  # The convention this tree holds: every no_log task is followed by one that
+  # says how it went in numbers, so a failure is still diagnosable.
+  ansible.builtin.debug:
+    msg: >-
+      the hasher exited {{ tpot_install_htpasswd.rc | default('with no status') }}
+      and produced {{ tpot_install_htpasswd.stdout | default('') | length }} characters
+  when: tpot_install_write_web_env | bool
+
+# What upstream writes is the base64 of ONE line with no trailing newline
+# (install.sh:709-713 -- a command substitution, which strips them, then
+# `echo -n`). Upstream's own env.example documents a PIPE instead, which keeps
+# the newline and yields a different base64 for the same credential. Match the
+# code, not the documentation: the value has to be one T-Pot itself would have
+# produced. Ansible's command module strips trailing newlines from stdout,
+# which lands in the same place.
+- name: Refuse a credential record that is not one line of user and hash
+  ansible.builtin.assert:
+    that:
+      - (tpot_install_htpasswd.stdout | default('')) | length > (tpot_web_user | length)
+      - (tpot_install_htpasswd.stdout | default('')).splitlines() | length == 1
+      - tpot_install_htpasswd.stdout | default('') is match('^' ~ (tpot_web_user | regex_escape) ~ ':.')
+    fail_msg: >-
+      The password hasher did not produce a single user:hash line for
+      {{ tpot_web_user }}. The value is base64-encoded into T-Pot's
+      environment file exactly as it stands, so anything else would produce a
+      dashboard that cannot be logged into. Nothing has been written.
+    success_msg: "the credential record is one user:hash line"
+    quiet: true
+  when: tpot_install_write_web_env | bool
+
+# ---------------------------------------------------------------------------
+# 0600 BEFORE the credential goes in, not only after.
+#
+# The file arrives from upstream's checkout at 0644, and the write below is
+# not an edit in place: lineinfile builds the new file in a temporary
+# directory and renames it over the destination. `atomic_move` gives the
+# replacement the DESTINATION's existing mode at the moment of the rename and
+# the module applies its own `mode:` afterwards -- so with the file still at
+# 0644 there is a window, however short, in which a world-readable .env holds
+# a credential record. On a honeypot, which is a machine deliberately exposed
+# to attackers and which has other local accounts, a window is worth closing
+# when closing it costs one task.
+#
+# The unconditional 0600 further down stays: it is the one that covers a run
+# which wrote nothing, and it is the one that fixes a file left 0644 by an
+# earlier version of this installer.
+# ---------------------------------------------------------------------------
+- name: Restrict T-Pot's environment file before a credential goes into it
+  ansible.builtin.file:
+    path: "{{ tpot_install_env_file }}"
+    owner: "{{ tpot_os_user }}"
+    mode: "0600"
+  when:
+    - tpot_install_write_web_env | bool
+    - not ansible_check_mode
+
+# backrefs: true means this can only ever REPLACE the existing line, never
+# append a second one -- which matters because two WEB_USER lines in that file
+# is a state nothing else would notice. The assertion further up has already
+# established that the line is there, so the two together are the guard
+# upstream's own sed does not have.
+- name: Write the dashboard credential into T-Pot's environment file
+  ansible.builtin.lineinfile:
+    path: "{{ tpot_install_env_file }}"
+    regexp: '^WEB_USER='
+    line: "WEB_USER={{ tpot_install_htpasswd.stdout | b64encode }}"
+    backrefs: true
+    owner: "{{ tpot_os_user }}"
+    mode: "0600"
+  register: tpot_install_web_env_write
+  no_log: true
+  when: tpot_install_write_web_env | bool
+
+- name: Report whether the credential was written
+  ansible.builtin.debug:
+    msg: >-
+      the environment file was
+      {{ 'changed' if (tpot_install_web_env_write.changed | default(false)) else 'left as it was' }}
+  when: tpot_install_write_web_env | bool
+
+# 0600 whether or not this run wrote anything. The file now carries a
+# credential record, and upstream ships it 0644 because on its own path it is
+# written before there is anything in it worth protecting. docker compose
+# reads it as root from the systemd unit, and the T-Pot account owns it, so
+# nothing that needs it loses access.
+- name: Keep T-Pot's environment file readable only by its owner
+  ansible.builtin.file:
+    path: "{{ tpot_install_env_file }}"
+    owner: "{{ tpot_os_user }}"
+    mode: "0600"
+  when: not ansible_check_mode
+
+# ---------------------------------------------------------------------------
+# The proof. Two claims, and the second is the one nobody would think to
+# check: that the OTHER credential key in that file is untouched.
+#
+# LS_WEB_USER is upstream-managed state for sensor-to-hive authentication,
+# written only by upstream's own join script. Putting a dashboard credential
+# there would break a distributed deployment, and it would break it silently
+# and much later. The fingerprint is a sha256 of the line rather than the line
+# itself, so the check can be made and reported without holding the value.
+# ---------------------------------------------------------------------------
+- name: Read T-Pot's environment file back
+  ansible.builtin.slurp:
+    src: "{{ tpot_install_env_file }}"
+  register: tpot_install_env_after
+  no_log: true
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Measure the file again without keeping its values
+  ansible.builtin.set_fact:
+    tpot_install_env_web_user_count_after: >-
+      {{ tpot_install_env_lines | select('match', '^WEB_USER=') | list | length }}
+    tpot_install_env_web_user_present_after: >-
+      {{ ((tpot_install_env_lines | select('match', '^WEB_USER=') | first | default(''))
+          | regex_replace('^WEB_USER=', '') | trim | length) > 0 }}
+    tpot_install_env_ls_fingerprint_after: >-
+      {{ (tpot_install_env_lines | select('match', '^LS_WEB_USER=') | list | join(' ')) | hash('sha256') }}
+    # THE CLAIM THAT MAKES THE OTHERS WORTH HAVING: the line in the file is
+    # byte-for-byte the record this run produced. Counting lines and asking
+    # whether one is non-empty cannot tell "we wrote it" from "somebody
+    # else's credential was already there and our write did nothing" -- and
+    # that second case is reachable, through tpot_web_env_force over an
+    # existing value. It is exactly the failure upstream's own `sed` has, in
+    # a different disguise: the command succeeds, the file looks right, and
+    # the dashboard belongs to whoever set it last.
+    tpot_install_env_web_user_matches: >-
+      {{ (tpot_install_env_lines | select('match', '^WEB_USER=') | first | default(''))
+         == ('WEB_USER=' ~ (tpot_install_htpasswd.stdout | default('') | b64encode)) }}
+  vars:
+    tpot_install_env_lines: "{{ (tpot_install_env_after.content | b64decode).splitlines() }}"
+  no_log: true
+  when: not ansible_check_mode
+
+# The visible half of the pair above -- the first read of this file has one
+# and the read-back did not, which made a failure here the one place in this
+# role a transcript went quiet. Every value printed is a count, a boolean or
+# twelve characters of a digest.
+- name: Report what the file said after the write
+  ansible.builtin.debug:
+    msg: >-
+      after writing: {{ tpot_install_env_web_user_count_after | default('(not read)') }}
+      dashboard credential line(s),
+      value {{ 'set' if (tpot_install_env_web_user_present_after | default(false) | bool) else 'empty' }},
+      identical to the record this run produced: {{ tpot_install_match_phrase }};
+      sensor-to-hive line fingerprint {{ (tpot_install_env_ls_fingerprint_after | default(''))[:12] }}
+  # In a task var rather than inline, because a folded scalar keeps a
+  # MORE-INDENTED line literally: a continuation indented past the first line
+  # stops the fold and puts a real newline in the middle of the sentence.
+  # Caught here by reading the rendered message back -- it had one.
+  vars:
+    tpot_install_match_phrase: >-
+      {{ (tpot_install_env_web_user_matches | default('(not read)'))
+         if (tpot_install_write_web_env | bool)
+         else '(not applicable -- this run wrote none)' }}
+  when: not ansible_check_mode
+
+- name: Prove the dashboard credential landed and the sensor-to-hive key did not move
+  ansible.builtin.assert:
+    that:
+      - (tpot_install_env_web_user_count_after | default(0) | int) == 1
+      - tpot_install_env_web_user_present_after | default(false) | bool
+      - tpot_install_env_web_user_matches | default(false) | bool
+      - (tpot_install_env_ls_fingerprint_after | default('x'))
+        == (tpot_install_env_ls_fingerprint | default('y'))
+    fail_msg: >-
+      After writing, {{ tpot_install_env_file }} does not hold exactly one
+      non-empty dashboard credential line, or the line it holds is not the record this
+      run produced, or the sensor-to-hive line changed. The middle one means the write
+      reported success and the file still carries somebody else's credential -- the
+      dashboard would belong to whoever set it, and this installer would have said the
+      install succeeded. The last would be the more serious: this project never writes
+      that key, it is upstream state for joining a sensor to a hive, and a dashboard
+      credential in it breaks a distributed deployment quietly.
+    success_msg: "the dashboard credential is present and the sensor-to-hive key is untouched"
+    quiet: true
+  when:
+    - tpot_install_write_web_env | bool
+    - not ansible_check_mode
+
+- name: Prove nothing moved when this run wrote no credential
+  ansible.builtin.assert:
+    that:
+      - (tpot_install_env_ls_fingerprint_after | default('x'))
+        == (tpot_install_env_ls_fingerprint | default('y'))
+    fail_msg: >-
+      {{ tpot_install_env_file }} changed although this run wrote no
+      credential into it. That is a defect in this role.
+    success_msg: "no credential was written and nothing in that file moved"
+    quiet: true
+  when:
+    - not (tpot_install_write_web_env | bool)
+    - not ansible_check_mode
+
+# ---------------------------------------------------------------------------
+# DISCARD WHAT IS STILL HOLDING A CREDENTIAL.
+#
+# `no_log: true` censors what a task DISPLAYS and what it logs. It does not
+# empty the variable the task registered -- measured here on ansible-core
+# 2.21.2: a no_log command's registered result still carried its own standard
+# output in full, and only the module's `invocation` was stripped. So after
+# the tasks above, three registers in this play's variable namespace hold a
+# credential or something derived from one:
+#
+#   tpot_install_htpasswd        stdout is the user:hash record itself
+#   tpot_install_env_raw         the whole .env, base64
+#   tpot_install_env_after       the whole .env again, now WITH the record
+#
+# Nothing reads them after this point, and nothing is supposed to. That is
+# precisely why they are replaced rather than left: the failure this guards
+# against is a task added later that templates a register whose name gives no
+# hint of what it holds, and there is no warning when that happens. Every fact
+# the rest of the run needs was already reduced to a count, a boolean or a
+# digest above.
+#
+# roles/tpot_user does the same thing to its shadow lookups, for the same
+# reason and in the same words. Unconditional, with no `when:`: a register
+# from a skipped task holds nothing, and overwriting it costs nothing either.
+#
+# What this does NOT reach is the plaintext password itself -- that is
+# tpot_web_password, an input the play needs for roles/report's tripwire and
+# one this role does not own.
+# ---------------------------------------------------------------------------
+- name: Discard the registers that are still holding a credential
+  ansible.builtin.set_fact:
+    tpot_install_htpasswd: "redacted: a credential record is not kept in this play's variables"
+    tpot_install_env_raw: "redacted: T-Pot's environment file is not kept in this play's variables"
+    tpot_install_env_after: "redacted: T-Pot's environment file is not kept in this play's variables"
+    tpot_install_web_env_write: "redacted: the write result is not kept in this play's variables"
+
+# ---------------------------------------------------------------------------
+# What goes into the report. NEVER a credential: `accounts` is copied verbatim
+# into result.json, and SECURITY.md invites a vulnerability reporter to attach
+# that file. The username is not a credential; the hash and the password are,
+# and neither appears here.
+#
+# roles/report refuses outright to write a document containing the supplied
+# password, so this is the second of two independent checks rather than the
+# only one.
+#
+# combine() rather than assignment: the account role has already put its own
+# facts here, and a role that overwrote a shared accumulator would silently
+# delete them.
+# ---------------------------------------------------------------------------
+- name: Record which mechanism owns the dashboard credential
+  ansible.builtin.set_fact:
+    tpot_report_accounts: >-
+      {{ tpot_report_accounts | default({}, true)
+         | combine({'web_user': tpot_web_user,
+                    'web_dashboard': tpot_install_has_dashboard | bool,
+                    'web_env_source': tpot_install_web_env_source}) }}

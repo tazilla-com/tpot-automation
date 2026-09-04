@@ -1,0 +1,596 @@
+---
+# roles/tpot_verify/tasks/post-reboot.yml -- what can only be checked once
+# T-Pot is actually running.
+#
+# WHEN THIS FILE RUNS
+#   Only when the caller passed `tpot_verify_phase: both`, which today means
+#   only verify.yml -- reached by `install.sh --verify-only` after a reboot, or
+#   by the post-boot oneshot the finalize role arms. site.yml never includes
+#   it, and records every id below as `skipped` with a reason instead.
+#
+#   Reaching this file is therefore the caller ASSERTING that the reboot has
+#   happened. If it has not, these checks fail honestly. That is the intended
+#   behaviour and it is not the same thing as `skipped`: "we looked and it is
+#   not there" and "we did not look" are different facts about a machine, and
+#   only one of them is a reason to go and read a log.
+#
+# WHY EVERY PORT QUESTION GOES THROUGH AN ss FILTER
+#   The shape this replaces was `ss -tulpn | grep -E '80|443|6429'`. That
+#   reports success for 8080, for 14430 and for 64299, none of which is the
+#   port anybody meant. So no check here matches a port as text: `ss` is given
+#   `sport = :<n>` and does the matching itself, in the kernel's own terms.
+#   The only thing read out of ss's output is the ADDRESS column of lines ss
+#   already selected -- which is a different question ("bound where?") and one
+#   a filter cannot answer for us.
+#
+# NOTHING IN THIS FILE HAS EVER RUN AGAINST AN INSTALLED BOX.
+
+# ===========================================================================
+# The administrative listeners
+# ===========================================================================
+#
+# WHICH PORTS ARE EXPECTED IS AN EDITION PROPERTY, NOT A CONSTANT. Read from
+# the compose files at the pinned commit: sensor.yml declares neither nginx
+# nor elasticsearch, and mobile.yml declares elasticsearch but no nginx. A
+# dashboard check on a sensor install would report a broken T-Pot on every
+# healthy sensor, which is the false alarm that teaches people to ignore
+# verification.
+
+- name: Decide which administrative listeners this edition should have
+  ansible.builtin.set_fact:
+    tpot_verify_listeners:
+      - id: listen_admin_ssh
+        port: "{{ tpot_admin_ssh_port | int }}"
+        what: administrative SSH
+      - id: listen_dashboard
+        port: "{{ tpot_dashboard_port | int }}"
+        what: nginx dashboard
+      - id: listen_elasticsearch
+        port: "{{ tpot_elasticsearch_port | int }}"
+        what: Elasticsearch
+    # A list of ids rather than a boolean member of each record, because a
+    # boolean written into a templated structure comes back as the STRING
+    # "False" as often as not, and a non-empty string is true. Membership of a
+    # list of ids cannot go wrong that quietly.
+    tpot_verify_listener_ids_expected: >-
+      {{ ['listen_admin_ssh']
+         + (['listen_dashboard'] if tpot_install_type in tpot_verify_dashboard_types else [])
+         + (['listen_elasticsearch'] if tpot_install_type in tpot_verify_elasticsearch_types else []) }}
+
+# ---------------------------------------------------------------------------
+# Which of the declared post-reboot checks THIS run owes a verdict for.
+#
+# Not every declared id applies to every edition. A sensor ships no nginx and
+# no Elasticsearch; mobile ships Elasticsearch and no nginx. On those editions
+# listen_dashboard, listen_elasticsearch and elasticsearch_loopback_only are
+# recorded `skipped`, and that is a true and FINAL answer -- there is nothing
+# on the box for those checks to be about, and there never will be.
+#
+# Every other id is one the caller asked for. A `skipped` against one of those
+# means the check could not be run at all: docker did not answer, or its input
+# was missing. tasks/main.yml refuses to let the role succeed on one of those,
+# which is what stops `install.sh --verify-only` returning 0 -- "installed AND
+# verified" -- for a box whose containers were never counted.
+#
+# THE LIST IS DERIVED FROM THE LISTENER SET DECIDED IMMEDIATELY ABOVE, and not
+# from a second reading of tpot_install_type, so the two cannot come to
+# different conclusions about the same edition. elasticsearch_loopback_only
+# hangs off listen_elasticsearch because it is governed by the same fact --
+# whether this edition ships Elasticsearch at all.
+# ---------------------------------------------------------------------------
+- name: Note which post-reboot checks this run owes a verdict for
+  ansible.builtin.set_fact:
+    tpot_verify_post_reboot_ids_required: >-
+      {{ tpot_verify_post_reboot_ids
+         | difference(tpot_verify_listeners | map(attribute='id') | list
+                      | difference(tpot_verify_listener_ids_expected))
+         | difference(['elasticsearch_loopback_only']
+                      if 'listen_elasticsearch' not in tpot_verify_listener_ids_expected
+                      else []) }}
+
+- name: Wait for each administrative listener to come up
+  ansible.builtin.command:
+    argv:
+      - ss
+      - -H
+      - -tln
+      # ss parses this, not us. A substring match over `ss -tulpn` output is
+      # satisfied by 8080 when it was asked about 80; a `sport = :80` filter
+      # is not, because ss compares numbers.
+      - "sport = :{{ item.port }}"
+  register: tpot_verify_listen
+  loop: "{{ tpot_verify_listeners }}"
+  loop_control:
+    label: "{{ item.id }} tcp/{{ item.port }}"
+  # A read of the kernel's socket table changes nothing.
+  changed_when: false
+  # The verdict is recorded below rather than raised here, so that a listener
+  # that never appears is a NAMED verification record and not an anonymous
+  # task failure.
+  failed_when: false
+  # The containers come up over minutes, not seconds: tpotinit runs first and
+  # everything else waits on its health check. Worst case is
+  # tpot_verify_retries x tpot_verify_delay PER PORT -- 30 x 10s x 3 = 15
+  # minutes on a box where nothing ever starts. That is the price of naming
+  # which listener is missing instead of only that one was.
+  until: (tpot_verify_listen.stdout | default('') | trim | length) > 0
+  retries: "{{ tpot_verify_retries | int }}"
+  delay: "{{ tpot_verify_delay | int }}"
+  when: item.id in tpot_verify_listener_ids_expected
+
+- name: Record each administrative listener
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': item.item.id, 'phase': 'post-reboot',
+         'status': (item.item.id not in tpot_verify_listener_ids_expected) | ternary('skipped',
+                   ((item.stdout | default('') | trim | length) > 0)
+                   | ternary('pass', 'fail')),
+         'reason': (item.item.id not in tpot_verify_listener_ids_expected)
+                   | ternary('install type ' ~ tpot_install_type ~ ' has no '
+                             ~ item.item.what,
+                             ((item.stdout | default('') | trim | length) > 0)
+                             | ternary('listening on tcp/' ~ item.item.port,
+                                       'nothing listens on tcp/' ~ item.item.port
+                                       ~ ' after ' ~ (tpot_verify_retries | int | string)
+                                       ~ ' attempts'))}] }}
+  loop: "{{ tpot_verify_listen.results }}"
+  loop_control:
+    label: "{{ item.item.id }}"
+
+- name: Note which expected listeners never came up
+  ansible.builtin.set_fact:
+    # Only the items that actually ran have a `stdout` at all: the ones this
+    # edition does not ship were skipped by the `when` above and carry none.
+    # So "ran, and produced no line" is the whole definition of missing here.
+    tpot_verify_listen_missing: >-
+      {{ tpot_verify_listen.results
+         | selectattr('stdout', 'defined')
+         | rejectattr('stdout', 'search', '.')
+         | map(attribute='item.port') | list }}
+
+- name: Assert every administrative listener this edition should have is up
+  ansible.builtin.assert:
+    that:
+      - (tpot_verify_listen_missing | length) == 0
+    fail_msg: >-
+      One or more administrative listeners never came up. Missing:
+      tcp/{{ tpot_verify_listen_missing | join(', tcp/') }}.
+      Upstream's own installer exits 0 whether or not its image pull worked,
+      so a listener that is absent here is the first honest evidence that the
+      install did not finish.
+    success_msg: every administrative listener this edition should have is up
+    quiet: true
+
+# ---------------------------------------------------------------------------
+# Elasticsearch: where it is bound, not merely that it is.
+#
+# THIS IS THE ONE CHECK IN THE FILE WITH DIRECT SECURITY VALUE. Upstream
+# publishes Elasticsearch as "127.0.0.1:64298:9200" (compose/standard.yml:711)
+# -- deliberately loopback-only, because the index has no authentication in
+# front of it. A presence check on tcp/64298 passes identically whether the
+# socket is on 127.0.0.1 or on 0.0.0.0, and the second one is an open,
+# unauthenticated copy of everything the honeypots have captured, reachable
+# from the internet.
+#
+# So the assertion is that EVERY listener on that port is on a loopback
+# address. That is stronger than "not 0.0.0.0": it also catches a bind to the
+# host's routable address, which is the shape a well-meaning edit produces.
+# ---------------------------------------------------------------------------
+- name: Ask where Elasticsearch is bound
+  ansible.builtin.command:
+    argv:
+      - ss
+      - -H
+      - -tln
+      - "sport = :{{ tpot_elasticsearch_port | int }}"
+  register: tpot_verify_es
+  changed_when: false
+  failed_when: false
+  when: tpot_install_type in tpot_verify_elasticsearch_types
+
+- name: Take the address half of each Elasticsearch listener
+  ansible.builtin.set_fact:
+    # ss selected these lines by port; this only reads the ADDRESS out of the
+    # local-socket column of lines ss already agreed about. The trailing
+    # `:<port>` comes off last, so a bracketed IPv6 address survives intact.
+    tpot_verify_es_addrs: >-
+      {{ tpot_verify_es.stdout_lines | default([])
+         | map('regex_replace', tpot_verify_ss_local_re, '\1')
+         | map('regex_replace', ':[0-9]+$', '') | list }}
+
+- name: Record whether Elasticsearch is bound to loopback only
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'elasticsearch_loopback_only', 'phase': 'post-reboot',
+         'status': (tpot_install_type not in tpot_verify_elasticsearch_types) | ternary('skipped',
+                   ((tpot_verify_es_addrs | length) == 0) | ternary('inconclusive',
+                   ((tpot_verify_es_addrs | difference(tpot_verify_loopback_addresses) | length) == 0)
+                   | ternary('pass', 'fail'))),
+         'reason': (tpot_install_type not in tpot_verify_elasticsearch_types)
+                   | ternary('install type ' ~ tpot_install_type ~ ' ships no Elasticsearch',
+                   ((tpot_verify_es_addrs | length) == 0)
+                   | ternary('nothing listens on tcp/' ~ (tpot_elasticsearch_port | int | string)
+                             ~ ', so where it is bound could not be established',
+                             'bound on ' ~ (tpot_verify_es_addrs | join(', '))))}] }}
+
+- name: Assert Elasticsearch is reachable on loopback only
+  ansible.builtin.assert:
+    that:
+      - tpot_install_type not in tpot_verify_elasticsearch_types
+        or (tpot_verify_es_addrs | length) == 0
+        or (tpot_verify_es_addrs | difference(tpot_verify_loopback_addresses) | length) == 0
+    fail_msg: >-
+      Elasticsearch on tcp/{{ tpot_elasticsearch_port }} is bound to
+      {{ tpot_verify_es_addrs | join(', ') }}, and only
+      {{ tpot_verify_loopback_addresses | join(' and ') }} are acceptable.
+      There is no authentication in front of that port: anything not on
+      loopback is an open, readable copy of everything this honeypot has
+      captured, including the source addresses of everyone who touched it.
+    success_msg: "Elasticsearch is bound to {{ tpot_verify_es_addrs | join(', ') }}"
+    quiet: true
+
+# ===========================================================================
+# tcp/22 -- the port that stopped being administrative
+# ===========================================================================
+#
+# After the install, tcp/22 belongs to a honeypot and sshd is on
+# tpot_admin_ssh_port. Two separate things are worth asserting and they fail
+# for different reasons:
+#
+#   honeypot_ssh_not_sshd    NOTHING that is sshd is listening on 22. This is
+#                            the security half: an sshd still on 22 means
+#                            upstream's port move did not take, and real
+#                            administrative logins are being offered on the
+#                            port advertised to attackers as a honeypot.
+#   honeypot_ssh_published   SOMETHING is listening on 22. This is the
+#                            functional half: a T-Pot with no honeypot on 22
+#                            is not doing the job it was installed for.
+#
+# The process name comes from ss's own users:(("name",pid=...)) column. That
+# is a match on a PROCESS NAME, which is what was asked; the port was already
+# matched by ss's filter, in numbers.
+
+- name: Ask what is listening on the honeypot SSH port
+  ansible.builtin.command:
+    argv:
+      - ss
+      - -H
+      - -tlnp
+      - "sport = :{{ tpot_verify_honeypot_ssh_port }}"
+  register: tpot_verify_ssh22
+  # -p needs root, which this play already is. There is no module that reports
+  # the process behind a listening socket.
+  changed_when: false
+  failed_when: false
+
+- name: Note what ss said about the honeypot SSH port
+  ansible.builtin.set_fact:
+    tpot_verify_ssh22_lines: "{{ tpot_verify_ssh22.stdout_lines | default([]) }}"
+    # Lines that actually carry ss's users:(("name",pid=...)) column. WITHOUT
+    # THIS THE CHECK PASSES VACUOUSLY: `ss -p` needs root to see who owns a
+    # socket, and without it every line looks like "not sshd" because no line
+    # names any process at all. This play is root, so in the real invocation
+    # the column is there -- but a check that reports `pass` for something it
+    # could not see is the precise failure this project refuses, so the
+    # difference is measured rather than assumed. Observed here 2026-09-04
+    # while running the role unprivileged: ss listed two listeners on tcp/22,
+    # named neither, and the naive form called it a pass with sshd sitting
+    # right there.
+    tpot_verify_ssh22_named: >-
+      {{ tpot_verify_ssh22.stdout_lines | default([]) | select('search', 'users:') | list }}
+    tpot_verify_ssh22_sshd: >-
+      {{ tpot_verify_ssh22.stdout_lines | default([]) | select('search', 'sshd') | list }}
+
+- name: Record whether sshd still holds the honeypot SSH port
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'honeypot_ssh_not_sshd', 'phase': 'post-reboot',
+         'status': ((tpot_verify_ssh22_sshd | length) > 0) | ternary('fail',
+                   ((tpot_verify_ssh22_lines | length) > 0
+                    and (tpot_verify_ssh22_named | length) == 0)
+                   | ternary('inconclusive', 'pass')),
+         'reason': ((tpot_verify_ssh22_sshd | length) > 0)
+                   | ternary('sshd is still listening on tcp/'
+                             ~ (tpot_verify_honeypot_ssh_port | string),
+                   ((tpot_verify_ssh22_lines | length) > 0
+                    and (tpot_verify_ssh22_named | length) == 0)
+                   | ternary('ss reported ' ~ (tpot_verify_ssh22_lines | length | string)
+                             ~ ' listener(s) on tcp/'
+                             ~ (tpot_verify_honeypot_ssh_port | string)
+                             ~ ' and named none of them; identifying the owner of a socket '
+                             ~ 'needs root, so this could not be established',
+                             'no sshd process is listening on tcp/'
+                             ~ (tpot_verify_honeypot_ssh_port | string)))}] }}
+
+- name: Assert sshd has left the honeypot SSH port
+  ansible.builtin.assert:
+    that:
+      - (tpot_verify_ssh22_sshd | length) == 0
+    fail_msg: >-
+      sshd is still listening on tcp/{{ tpot_verify_honeypot_ssh_port }}.
+      Upstream's port move is best effort -- its pattern misses lowercase
+      "port", leading whitespace, doubled spaces and "Port=" -- so a surviving
+      sshd here is the expected failure mode, not a surprising one. Real
+      administrative logins are being offered on the port this host advertises
+      to attackers.
+    success_msg: "no sshd on tcp/{{ tpot_verify_honeypot_ssh_port }}"
+    quiet: true
+
+# The functional half. It is `inconclusive` and not `fail` when the socket
+# table is empty, because absence there has an innocent explanation that this
+# check cannot rule out: with docker's userland proxy disabled a published
+# port is a netfilter DNAT rule and no host socket exists at all. The
+# container check below is what settles it in that case.
+- name: Record whether anything publishes the honeypot SSH port
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'honeypot_ssh_published', 'phase': 'post-reboot',
+         'status': ((tpot_verify_ssh22_lines | length) > 0)
+                   | ternary('pass', 'inconclusive'),
+         'reason': ((tpot_verify_ssh22_lines | length) > 0)
+                   | ternary((tpot_verify_ssh22_lines | length | string)
+                             ~ ' listener(s) on tcp/'
+                             ~ (tpot_verify_honeypot_ssh_port | string),
+                             'nothing holds a socket on tcp/'
+                             ~ (tpot_verify_honeypot_ssh_port | string)
+                             ~ '; with the docker userland proxy disabled a published '
+                             ~ 'port is a DNAT rule with no host socket, so this cannot tell '
+                             ~ 'that apart from a honeypot that did not start')}] }}
+
+# ---------------------------------------------------------------------------
+# Which container it is.
+#
+# THE EXPECTED NAME COMES FROM THE INSTALL TYPE, NOT FROM A CONSTANT. It is
+# Cowrie on the standard edition, Endlessh on the tarpit and Beelzebub on the
+# LLM edition -- so a check hard-coded to Cowrie is wrong on two of the six
+# compose files upstream ships. Where upstream's documentation does not name a
+# program for an edition, this project does not invent one either: the check
+# still asserts that a container in the compose project publishes the port,
+# and simply reports the name it found. That silence is copied from
+# lib/notice.sh, which makes the same choice for the same reason.
+# ---------------------------------------------------------------------------
+- name: Ask docker which container publishes the honeypot SSH port
+  ansible.builtin.command:
+    argv:
+      - docker
+      - ps
+      - --filter
+      - "label=com.docker.compose.project={{ tpot_verify_compose_project }}"
+      - --filter
+      - "publish={{ tpot_verify_honeypot_ssh_port }}"
+      - --format
+      - "{% raw %}{{.Names}}{% endraw %}"
+  register: tpot_verify_pot22
+  # docker's own filters, so the port is matched by docker and the project by
+  # a label rather than by reading names. `docker ps` is a read.
+  changed_when: false
+  failed_when: false
+
+- name: Note the expected and the actual honeypot on the SSH port
+  ansible.builtin.set_fact:
+    tpot_verify_pot_expected: "{{ tpot_verify_ssh_honeypot_by_type.get(tpot_install_type) | default('', true) }}"
+    tpot_verify_pot_found: "{{ (tpot_verify_pot22.stdout_lines | default([]) + [''])[0] }}"
+
+- name: Record which container publishes the honeypot SSH port
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'honeypot_ssh_container', 'phase': 'post-reboot',
+         'status': (tpot_verify_pot22.rc != 0) | ternary('skipped',
+                   ((tpot_verify_pot_found | length) == 0) | ternary('fail',
+                   ((tpot_verify_pot_expected | length) == 0
+                    or tpot_verify_pot_found == tpot_verify_pot_expected)
+                   | ternary('pass', 'fail'))),
+         'reason': (tpot_verify_pot22.rc != 0)
+                   | ternary('docker ps exited ' ~ tpot_verify_pot22.rc
+                             ~ '; the publish filter may not exist on this docker',
+                   ((tpot_verify_pot_found | length) == 0)
+                   | ternary('no container in the ' ~ tpot_verify_compose_project
+                             ~ ' compose project publishes tcp/'
+                             ~ (tpot_verify_honeypot_ssh_port | string),
+                             ((tpot_verify_pot_expected | length) == 0)
+                             | ternary('upstream does not name the tcp/'
+                                       ~ (tpot_verify_honeypot_ssh_port | string)
+                                       ~ ' honeypot for install type ' ~ tpot_install_type
+                                       ~ '; the container found is ' ~ tpot_verify_pot_found,
+                                       'expected ' ~ tpot_verify_pot_expected
+                                       ~ ', found ' ~ tpot_verify_pot_found)))}] }}
+
+- name: Assert the honeypot SSH port belongs to the honeypot this edition ships
+  ansible.builtin.assert:
+    that:
+      - tpot_verify_pot22.rc != 0
+        or ((tpot_verify_pot_found | length) > 0
+            and ((tpot_verify_pot_expected | length) == 0
+                 or tpot_verify_pot_found == tpot_verify_pot_expected))
+    fail_msg: >-
+      tcp/{{ tpot_verify_honeypot_ssh_port }} should be published by
+      "{{ tpot_verify_pot_expected | default('a container in the ' ~ tpot_verify_compose_project ~ ' project', true) }}"
+      for install type {{ tpot_install_type }}, and docker reports
+      "{{ tpot_verify_pot_found | default('nothing', true) }}". Note that the
+      compose project label is DERIVED from the directory name and is declared
+      nowhere, so a renamed checkout produces exactly this result on a healthy
+      host.
+    success_msg: "tcp/{{ tpot_verify_honeypot_ssh_port }} is published by {{ tpot_verify_pot_found }}"
+    quiet: true
+
+# ===========================================================================
+# The containers
+# ===========================================================================
+
+- name: Count the running containers of the T-Pot compose project
+  ansible.builtin.command:
+    argv:
+      - docker
+      - ps
+      - --filter
+      - "label=com.docker.compose.project={{ tpot_verify_compose_project }}"
+      - --format
+      - "{% raw %}{{.Names}}{% endraw %}"
+  register: tpot_verify_running
+  # The label is the only reliable selector: container names are upstream's
+  # and change between editions. It is DERIVED from the directory holding the
+  # compose file -- there is no COMPOSE_PROJECT_NAME in upstream's .env, no
+  # `name:` key in any compose file and no project flag on any invocation --
+  # so renaming the checkout silently empties this list on a healthy box.
+  changed_when: false
+  failed_when: false
+
+- name: List the containers that are restarting or have exited
+  ansible.builtin.command:
+    argv:
+      - docker
+      - ps
+      - -a
+      - --filter
+      - "label=com.docker.compose.project={{ tpot_verify_compose_project }}"
+      # Repeated status filters are OR-ed by docker, so this one invocation
+      # asks about both unhealthy states.
+      - --filter
+      - status=restarting
+      - --filter
+      - status=exited
+      - --format
+      - "{% raw %}{{.Names}} ({{.Status}}){% endraw %}"
+  register: tpot_verify_unstable
+  changed_when: false
+  failed_when: false
+
+- name: Count the containers docker reported as running
+  ansible.builtin.set_fact:
+    # THE FLOOR IS NOT DECIDED HERE. tpot_verify_container_floor and
+    # tpot_verify_container_floor_source are set by tasks/pre-reboot.yml, out
+    # of the installed compose file, and asserted there to be at least 1 --
+    # read the long note beside that assertion for why a floor of zero is not
+    # a floor. Only the measurement belongs on this side of the reboot.
+    #
+    # They are referenced below without a `| default(...)`, deliberately. If
+    # this file is ever reached without pre-reboot.yml having run, an
+    # undefined variable stops the run, and a stopped run is the safe
+    # direction: a default here would be the silent zero that let this check
+    # pass a box nobody had counted.
+    tpot_verify_running_n: >-
+      {{ tpot_verify_running.stdout_lines | default([]) | select('search', '.') | list | length }}
+
+# THE `skipped` BRANCH BELOW IS STILL `skipped`, AND STILL CARRIES A REASON.
+# That is the contract lib/result.sh reads and it does not change: a check
+# that could not run is never `pass`. What changed is what the ROLE then does
+# with it. `docker ps` failing here leaves the running count unestablished,
+# and on a run that asked for the post-reboot phase -- which is the caller
+# asserting the box has rebooted -- tasks/main.yml refuses to succeed on an
+# unanswered check. Before that gate existed this record was `skipped`, the
+# assertion below passed over it, the play exited 0, and install.sh mapped
+# that to EX_OK: "installed AND verified", for a box whose containers had
+# never been counted.
+#
+# The second way this used to go quiet is gone entirely: the floor can no
+# longer be zero, because pre-reboot.yml asserts one could be established
+# before the install is allowed to reach this point.
+- name: Record how many containers are running
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'containers_running', 'phase': 'post-reboot',
+         'status': (tpot_verify_running.rc != 0) | ternary('skipped',
+                   ((tpot_verify_running_n | int) >= (tpot_verify_container_floor | int))
+                   | ternary('pass', 'fail')),
+         'reason': (tpot_verify_running.rc != 0)
+                   | ternary('docker ps exited ' ~ tpot_verify_running.rc
+                             ~ ', so the running containers could not be counted',
+                             (tpot_verify_running_n | int | string) ~ ' running, at least '
+                             ~ (tpot_verify_container_floor | int | string) ~ ' expected, from '
+                             ~ tpot_verify_container_floor_source)}] }}
+
+- name: Assert enough containers are running
+  ansible.builtin.assert:
+    that:
+      # `rc != 0` still passes here, because a probe that could not run is not
+      # evidence of a bad box and this assertion is about the box. It is not a
+      # way out either: the end-of-role gate in tasks/main.yml fails the run
+      # for exactly that record when the caller asked for this phase.
+      - tpot_verify_running.rc != 0
+        or (tpot_verify_running_n | int) >= (tpot_verify_container_floor | int)
+    fail_msg: >-
+      {{ tpot_verify_running_n }} container(s) of the
+      {{ tpot_verify_compose_project }} compose project are running and at
+      least {{ tpot_verify_container_floor }} were expected, from
+      {{ tpot_verify_container_floor_source }}. Upstream's installer neither
+      sets errexit nor checks its own image pull, and ends on an echo, so it
+      exits 0 after failing to bring anything up -- this count is the check
+      that stands in for the exit status it does not give.
+    success_msg: >-
+      {{ tpot_verify_running_n }} container(s) running, floor
+      {{ tpot_verify_container_floor }}
+    quiet: true
+
+- name: Record whether any container is restarting or has exited
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'containers_stable', 'phase': 'post-reboot',
+         'status': (tpot_verify_unstable.rc != 0) | ternary('skipped',
+                   ((tpot_verify_unstable.stdout_lines | default([])
+                     | select('search', '.') | list | length) == 0)
+                   | ternary('pass', 'fail')),
+         'reason': (tpot_verify_unstable.rc != 0)
+                   | ternary('docker ps exited ' ~ tpot_verify_unstable.rc,
+                             ((tpot_verify_unstable.stdout_lines | default([])
+                               | select('search', '.') | list | length) == 0)
+                             | ternary('none restarting, none exited',
+                                       (tpot_verify_unstable.stdout_lines
+                                        | default([]) | join('; '))))}] }}
+
+- name: Assert no container is restarting or has exited
+  ansible.builtin.assert:
+    that:
+      - tpot_verify_unstable.rc != 0
+        or (tpot_verify_unstable.stdout_lines | default([])
+            | select('search', '.') | list | length) == 0
+    fail_msg: >-
+      These containers are restarting or have exited:
+      {{ tpot_verify_unstable.stdout_lines | default([]) | join('; ') }}.
+      A restart loop is the shape a missing bind mount, an unwritable data
+      directory or a too-low vm.max_map_count takes, and the running count
+      alone will not catch it -- a container that crashes and comes back is
+      counted as running for most of each cycle.
+    success_msg: no container is restarting or has exited
+    quiet: true
+
+# ===========================================================================
+# The unit, now that the box has actually booted
+# ===========================================================================
+#
+# `is-enabled` was the pre-reboot question and it is a different one: upstream
+# enables the unit and leaves it STOPPED. `is-active` is what says the boot
+# brought T-Pot up, which is the whole point of enabling it.
+
+- name: Ask systemd whether the T-Pot unit is active
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - "{{ tpot_verify_service_unit }}"
+  register: tpot_verify_unit_active
+  changed_when: false
+  failed_when: false
+
+- name: Record whether the T-Pot unit is active
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'tpot_service_active', 'phase': 'post-reboot',
+         'status': ((tpot_verify_unit_active.stdout | default('') | trim) == 'active')
+                   | ternary('pass', 'fail'),
+         'reason': 'systemctl is-active ' ~ tpot_verify_service_unit ~ ' says "'
+                   ~ (tpot_verify_unit_active.stdout | default('') | trim
+                      | default('nothing', true)) ~ '"'}] }}
+
+- name: Assert the T-Pot unit is active
+  ansible.builtin.assert:
+    that:
+      - (tpot_verify_unit_active.stdout | default('') | trim) == 'active'
+    fail_msg: >-
+      systemctl is-active {{ tpot_verify_service_unit }} says
+      "{{ tpot_verify_unit_active.stdout | default('') | trim }}". The
+      containers may still be up if somebody started them by hand, but the
+      unit is what brings them back after the daily reboot upstream installs
+      in root's crontab -- so a host in this state stops being a honeypot at
+      some point in the next 24 hours, silently.
+    success_msg: "{{ tpot_verify_service_unit }} is active"
+    quiet: true

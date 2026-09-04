@@ -1,0 +1,660 @@
+---
+# roles/tpot_user/tasks/main.yml -- create the account that owns T-Pot, and
+# then PROVE it is in the state this role just announced.
+#
+# THE DEFECT THIS ROLE EXISTS TO KILL
+#   In the installer this project replaces, a PLAINTEXT password reached
+#   ansible.builtin.user's `password:` parameter. That module does not refuse
+#   a plaintext value: it emits a non-fatal warning -- "The input password
+#   appears not to have been hashed" -- and carries on, so the literal string
+#   the operator typed was written into /etc/shadow as though it were a
+#   crypt(3) hash. Nothing can ever match it, so the account had NO WORKING
+#   PASSWORD AT ALL. The warning scrolled past in an hour-long install and
+#   nobody saw it.
+#
+#   It stayed invisible because of a second defect that cancelled the first:
+#   community.general.sudoers defaults `nopassword: true`, so the account had
+#   NOPASSWD ALL and never needed the password that did not work. Two defects
+#   masking each other, and the promise the installer made -- "the password
+#   you typed is the account's password" -- was false the whole time.
+#
+#   So this role does three things about it, and the third is the one that
+#   matters: it hashes on the way in, it STATES the sudo rule rather than
+#   inheriting it, and it then looks the shadow field up again and asserts on
+#   its SHAPE. The assertion at the foot of this file is the regression test
+#   for the defect above; everything else here is arrangement.
+#
+# WHAT THIS ROLE MUST NOT DO
+#   It must not create anything under the account's home directory. The
+#   checkout, the compose file and the .env credential all belong to the
+#   tpot_install role, which runs next and needs a home that exists and is
+#   owned by the account -- which is exactly what the proof below establishes.
+#
+# PRIVILEGE
+#   No `become` anywhere in this file. install.sh runs as uid 0 and
+#   ansible.cfg sets become = false, so the play is already root. The only
+#   escalation in this tree is tpot_install dropping DOWN to this account.
+#
+# GROUP MEMBERSHIP IS NOT MANAGED HERE, ON PURPOSE
+#   Upstream's own playbook appends this account to the `docker` and `tpot`
+#   groups (upstream installer/install/tpot.yml:1164-1172, `append: yes`). A
+#   `groups:` line in the account task below, without `append: true`, would
+#   strip both on the next run of this installer and leave a T-Pot whose
+#   owner cannot talk to its own containers. Saying nothing about groups is
+#   the correct instruction, not an omission.
+#
+#   The account does not need the docker group to install, either: upstream
+#   runs the image pull through sudo (upstream install.sh:718), which the
+#   NOPASSWD rule below already covers.
+#
+# NOTHING HERE HAS EVER RUN AGAINST A REAL BOX. No virtual machine, no root,
+# no account, no T-Pot -- not once, anywhere in this project. Every sentence
+# above describes what these tasks are SPECIFIED to do.
+#
+# What WAS actually done, so that the difference is on the record: upstream's
+# installer was opened at the pinned commit and every line cited below was
+# looked at; ansible-core's own user module and community.general's sudoers
+# module were opened for the two behaviours this file leans on (the plaintext
+# warning, and the lock prefix); and every expression in this file was
+# exercised against fabricated getent output on the machine it was written
+# on. No account was created by any of that.
+
+# ---------------------------------------------------------------------------
+# The stage marker. First task, before anything can fail: site.yml's rescue
+# maps this string to an exit code (roles/report/vars/main.yml), and `user`
+# maps to 40 -- EX_INTERNAL. That is deliberate and it is the honest code: an
+# account this project fully controls, on a box this project just prepared,
+# not reaching the state it announced is a defect here or a broken machine.
+# ---------------------------------------------------------------------------
+- name: Record the stage this role is in
+  ansible.builtin.set_fact:
+    tpot_stage: user
+
+# ---------------------------------------------------------------------------
+# THE INPUT REFUSALS. All four are assert-only and none of them touches the
+# box, so a run configured in a way this role cannot honour stops before the
+# first change rather than in the middle of one.
+# ---------------------------------------------------------------------------
+
+- name: Refuse an account name that upstream reserves or that is root
+  ansible.builtin.assert:
+    that:
+      - tpot_os_user is defined
+      - tpot_os_user | length > 0
+      - tpot_os_user not in ['tpot', 'root']
+    fail_msg: >-
+      tpot_os_user is {{ tpot_os_user | default('(not set)') }}, which cannot work.
+      `tpot` is upstream's own service account -- its playbook creates it as a system
+      account at uid/gid 2000 with shell /bin/false and home /nonexistent (upstream
+      installer/install/tpot.yml:490-523) and then refuses to run as it (tpot.yml:92-96).
+      `root` is refused by upstream's installer outright (upstream install.sh:287-292).
+      Pick any other name; the default is honeypot.
+    success_msg: "the account name {{ tpot_os_user }} collides with nothing upstream reserves"
+    quiet: true
+
+- name: Refuse a password policy this role does not implement
+  ansible.builtin.assert:
+    that:
+      - tpot_os_user_password_policy in ['locked', 'set']
+    fail_msg: >-
+      tpot_os_user_password_policy is {{ tpot_os_user_password_policy | default('(not set)') }};
+      the two this role implements are `locked` (no usable password at all) and `set`
+      (the supplied password, hashed). lib/config.py enforces the same two, so a third
+      value here means the play was started with -e rather than by install.sh.
+    success_msg: "password policy {{ tpot_os_user_password_policy }}"
+    quiet: true
+
+# tpot_os_user_password is one of the eight keys with no default, so it is
+# ABSENT rather than empty when nobody supplied it. Under `locked` that is
+# the normal case and nothing below ever mentions it; under `set` it is the
+# whole point, and an absent one has to be named here, because the account
+# task hides its own arguments (no_log) and would fail without saying why.
+- name: Refuse the set policy with no password to set
+  ansible.builtin.assert:
+    that:
+      - tpot_os_user_password is defined
+      - tpot_os_user_password | default('') | length > 0
+    fail_msg: >-
+      tpot_os_user_password_policy is `set`, but no tpot_os_user_password was supplied.
+      Supply it in the answer file, in TPOT_OS_USER_PASSWORD, or with
+      --os-user-password-file PATH -- never as a command-line value -- or leave the policy
+      at `locked`, which is the default and needs no password at all.
+    success_msg: "a password was supplied for the set policy"
+    quiet: true
+  when: tpot_os_user_password_policy == 'set'
+
+# ---------------------------------------------------------------------------
+# A PASSWORD THAT SPANS MORE THAN ONE LINE. WARNED ABOUT, NOT REFUSED -- AND
+# THE ASYMMETRY WITH THE DASHBOARD CREDENTIAL IS DELIBERATE.
+#
+# roles/tpot_install REFUSES a dashboard password containing a newline,
+# because the hasher there reads ONE LINE from standard input and would
+# silently install a truncated one -- measured, and it is the defect that
+# installer class is famous for. Nothing of the sort happens here, and that
+# was measured too: `password_hash` is handed the whole Python string, so
+# crypt(3) hashes every byte of it. On ansible-core 2.21.2, hashing
+# "first" + newline + "second" produced a DIFFERENT digest from hashing
+# "first" alone, with the salt held constant. The shadow file therefore ends
+# up holding a faithful hash of exactly what was supplied.
+#
+# So the value is right and the promise this role makes is kept. What is not
+# kept is the usefulness of it: `login`, `su` and sshd all read a password as
+# a single line from a terminal, so a password with a newline in it cannot be
+# entered at any of them. The account would have a correct password nobody can
+# type -- which is a different failure from the one at the top of this file,
+# and a quieter one, because every assertion below would pass.
+#
+# A warning rather than a refusal, because the value really is stored
+# correctly and an automated consumer -- something driving `chpasswd` -- could
+# legitimately use it. The warning reaches result.json, which is where a
+# reader looks when a login they were promised does not work.
+#
+# The measurement is under no_log because its operand is the secret; the
+# warning below names no value.
+# ---------------------------------------------------------------------------
+- name: Measure whether the account password is a single line
+  ansible.builtin.set_fact:
+    tpot_user_password_one_line: >-
+      {{ (tpot_os_user_password | default('')).splitlines() | length <= 1
+         and (tpot_os_user_password | default(''))
+             == ((tpot_os_user_password | default('')).splitlines() | first | default('', true)) }}
+  no_log: true
+  when: tpot_os_user_password_policy == 'set'
+
+- name: Say whether the account password can be typed at a login prompt
+  ansible.builtin.debug:
+    msg: >-
+      account password is a single typeable line:
+      {{ tpot_user_password_one_line | default('(not applicable under the locked policy)') }}
+
+- name: Warn that the account password cannot be entered at a login prompt
+  ansible.builtin.set_fact:
+    # Flat indentation: a more-indented continuation line in a folded scalar
+    # is kept literally, which would embed newlines in the warning itself.
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings + ['The password supplied for the account ' ~ tpot_os_user ~ ' spans
+      more than one line, or ends with a line break. It has been hashed and stored exactly as
+      supplied -- nothing was truncated -- but login, su and sshd each read a password as one
+      line from a terminal, so it cannot be entered at any of them. The account is reachable
+      only through its SSH key or through passwordless sudo until that password is changed.'] }}
+  when:
+    - tpot_os_user_password_policy == 'set'
+    - not (tpot_user_password_one_line | default(true) | bool)
+
+# The refusal that saves ninety minutes. Upstream's unattended mode probes
+# `sudo -n -k true` three times: once before it installs anything (upstream
+# install.sh:368-370), once to settle the sudo-rs question (install.sh:376),
+# and once when it chooses Ansible's become option (install.sh:529). `-k`
+# ignores a cached sudo timestamp on purpose -- upstream's own comment at
+# install.sh:101-107 explains that installing packages would otherwise
+# refresh the timestamp and hide the problem until Ansible is halfway through
+# -- so a rule that merely remembers a recent password does not satisfy it.
+# Only NOPASSWD does.
+#
+# A false here therefore does not buy a password-prompting install. It buys
+# no install: upstream aborts at minute zero. Refusing now, by name, is worth
+# more than the same failure inside upstream's transcript an hour later.
+- name: Refuse to continue without passwordless sudo for the account
+  ansible.builtin.assert:
+    that:
+      - tpot_sudo_nopasswd | bool
+    fail_msg: >-
+      tpot_sudo_nopasswd is false. Upstream's unattended mode (-s) tests `sudo -n -k true`
+      three times, the first before it installs anything, and aborts when it fails --
+      so this run would reach upstream and stop there having already changed the box.
+      The grant is what makes an unattended install possible; it is not optional, and
+      the key exists so that it is visible and recorded in result.json, not so that it
+      can be switched off.
+    success_msg: "passwordless sudo is requested, which is what upstream's unattended mode needs"
+    quiet: true
+
+# ---------------------------------------------------------------------------
+# CAN THIS BOX HASH A PASSWORD AT ALL?
+#
+# `password_hash` runs on the controller -- which here is the box itself, the
+# connection being local -- and it needs either passlib or a working
+# crypt(3) underneath it. Python 3.13 REMOVED the `crypt` stdlib module, and
+# how ansible-core copes with that depends on the version: the 2.21 on the
+# box this was written on reaches libcrypt through ctypes instead (verified
+# by opening its ansible/_internal/_encryption/_crypt.py), while
+# tpot_ansible_core_spec admits versions back to 2.15, which were NOT
+# inspected. So whether this filter works is a property of the distribution's
+# combination of Python, ansible-core and passlib, and it is not one this
+# project can settle by reading.
+#
+# That failure would otherwise land inside the account task, which is
+# no_log -- and no_log replaces the whole result, error text included, with
+# "the output has been hidden". This probe hashes a CONSTANT, so it carries
+# no credential, needs no no_log, and fails in the open with the real message
+# attached to a task whose name says what was being attempted.
+#
+# NOT VERIFIED ON ANY DISTRIBUTION: this box is not one of the supported
+# two, and nothing in this project has ever run an install. The probe is
+# reasoning about versions, and it exists so that the reasoning is tested by
+# the machine rather than trusted.
+# ---------------------------------------------------------------------------
+- name: Prove this box can hash a password before it is handed one
+  ansible.builtin.assert:
+    that:
+      - ('tpot-automation-probe' | password_hash('sha512', 'tpotprobesalt0')) is match('[$]6[$]')
+    fail_msg: >-
+      This box cannot hash a password: ansible's password_hash filter produced nothing
+      usable for a constant test string. Install passlib (python3-passlib) for the Python
+      that runs ansible-core, or set tpot_os_user_password_policy to `locked`, which needs
+      no hashing at all. Nothing has been changed on this box yet.
+    success_msg: "password hashing works on this box"
+    quiet: true
+  when: tpot_os_user_password_policy == 'set'
+
+# ---------------------------------------------------------------------------
+# WHAT WAS HERE BEFORE US.
+#
+# tpot_os_user is an input, and an input can name an account that already
+# exists -- an operator's own login, for instance. This role would then set
+# that account's password according to the policy and hand it NOPASSWD ALL.
+# Both are legitimate when they were asked for and neither should be silent,
+# so the state is measured BEFORE anything is changed and recorded as a run
+# warning that reaches result.json.
+#
+# The lookup is `getent shadow`, through command rather than the getent
+# module, for one reason that decides it: the module publishes what it finds
+# as a FACT, so the account's password hash would join the play's variable
+# namespace for the rest of the run, where any later task that templates
+# facts can print it. A registered result can be overwritten, and is, a few
+# tasks below. changed_when is false because a lookup changes nothing;
+# check_mode is false for the same reason -- a check run that skipped it
+# would report on an account it never looked at.
+#
+# KNOWN LIMIT, STATED: an account that exists in passwd but not in shadow --
+# a directory-service account, say -- looks absent here, so the adoption
+# warning does not fire for it. The proof at the foot of this file is not
+# weakened by that; only the courtesy warning is.
+# ---------------------------------------------------------------------------
+- name: Look up the account's shadow record before anything is changed
+  ansible.builtin.command:
+    argv:
+      - getent
+      - shadow
+      - "{{ tpot_os_user }}"
+  register: tpot_user_shadow_before
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Decide whether an existing account is being taken over
+  ansible.builtin.set_fact:
+    # getent exits 2 when the key is not found. Field 2 of a shadow record is
+    # the password field; the padding keeps the index valid when the lookup
+    # found nothing, so this expression cannot raise.
+    tpot_user_adopted: >-
+      {{ (tpot_user_shadow_before.rc | default(2)) == 0
+         and ((tpot_user_shadow_before.stdout | default('')).split(':') + ['', ''])[1]
+             is match('[$]') }}
+  no_log: true
+
+# The non-no_log half of the pair above: it prints the exit status and a
+# boolean and can hold no credential, so a lookup that went wrong is still
+# diagnosable in a transcript nobody was watching.
+- name: Say what the pre-existing account lookup found, without saying what it saw
+  ansible.builtin.debug:
+    msg: >-
+      getent shadow {{ tpot_os_user }} exited
+      {{ tpot_user_shadow_before.rc | default('(not run)') }};
+      an account with a working password is
+      {{ 'already present' if tpot_user_adopted | bool else 'not present' }}
+
+- name: Warn that an account that already had a password is being taken over
+  ansible.builtin.set_fact:
+    # Every continuation line sits at the SAME indent as the first, because a
+    # more-indented line in a folded scalar is NOT folded: YAML keeps it as a
+    # literal line, and the warning would reach result.json with newlines and
+    # nine spaces embedded in the middle of its sentences.
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings + ['The account ' ~ tpot_os_user ~ ' already existed with a
+      working password. This installer has replaced it according to
+      tpot_os_user_password_policy=' ~ tpot_os_user_password_policy ~ ' and granted the
+      account passwordless sudo. If that account belongs to a person, they have lost
+      their password and gained NOPASSWD ALL.'] }}
+  when: tpot_user_adopted | bool
+
+# ---------------------------------------------------------------------------
+# THE ACCOUNT ITSELF.
+#
+# password: the two branches are a Jinja conditional expression, which
+# evaluates the condition first and only then the branch it needs. That
+# laziness is load-bearing: tpot_os_user_password is undefined on an
+# ordinary `locked` run -- it is one of the eight schema keys with no default
+# -- and an eager evaluation would fail the play with an undefined-variable
+# error on the path almost every install takes.
+#
+#   set     the supplied password, hashed with sha512-crypt on the way in.
+#           NEVER the plaintext -- that is the whole defect.
+#   locked  '!', which is not a hash and can never match anything, paired
+#           with password_lock. ansible.builtin.user's useradd path prepends
+#           its own '!' to a locked password, so what lands in the shadow
+#           file is '!!'; the assertion at the foot of this file accepts
+#           either.
+#
+# password_lock is the inverse of the policy and must be, because the module
+# applies the lock by prefixing '!' to whatever `password` holds: true under
+# the `set` policy would write '!' followed by the hash, producing a LOCKED
+# account carrying a perfectly good password nobody can use. That is the same
+# class of quiet falsehood this role was written to remove, so it is stated
+# as an expression rather than left to a reader's memory.
+#
+# update_password is stated at its default, `always`, and the cost is stated
+# with it: password_hash is called without a salt, so it produces a different
+# hash on every run and this task reports `changed` on every run under the
+# `set` policy even when nothing about the password has changed. The
+# alternative, on_create, makes a re-run silently ignore a CHANGED password
+# -- the same false promise in a new place. A noisy truth beats a quiet lie.
+#
+# system: false and create_home: true are both stated rather than inherited.
+# A system account gets no home by default, and upstream clones into the
+# account's home; the proof below asserts the home exists and is owned.
+# ---------------------------------------------------------------------------
+- name: Create the account that owns the T-Pot checkout
+  ansible.builtin.user:
+    name: "{{ tpot_os_user }}"
+    shell: /bin/bash
+    system: false
+    create_home: true
+    state: present
+    update_password: always
+    password: >-
+      {{ (tpot_os_user_password | password_hash('sha512'))
+         if tpot_os_user_password_policy == 'set' else '!' }}
+    password_lock: "{{ tpot_os_user_password_policy != 'set' }}"
+  register: tpot_user_account
+  no_log: true
+
+# The non-no_log half of the pair. It names no argument and no value; it says
+# only whether the module ran and whether it altered anything, which is what
+# a transcript needs in order to be worth keeping.
+- name: Say whether the account task changed anything
+  ansible.builtin.debug:
+    msg: >-
+      account {{ tpot_os_user }}:
+      {{ 'changed' if tpot_user_account.changed | default(false) else 'already as specified' }}
+      (policy {{ tpot_os_user_password_policy }},
+      failed={{ tpot_user_account.failed | default(false) }})
+
+# ---------------------------------------------------------------------------
+# THE SUDO RULE -- STATED, NEVER INHERITED.
+#
+# `nopassword` is written out even though true is this module's default. That
+# is the whole lesson of the defect at the top of this file: the grant that
+# hid a broken /etc/shadow was one nobody had typed, in a file nobody had
+# opened, because the module's default supplied it. A reviewer of
+# THIS file can see the grant without knowing the module.
+#
+# validation: required, not the module's `detect` default. `detect` writes
+# the file unvalidated when visudo happens to be missing, and a syntax error
+# under /etc/sudoers.d makes sudo refuse to run AT ALL -- for every user on
+# the box, including the account this installer needs and the operator trying
+# to repair it. Requiring visudo turns a broken box into a failed task.
+#
+# The rule's name is also its filename, /etc/sudoers.d/<name>. sudo silently
+# IGNORES any file there whose name contains a dot or ends in a tilde, so a
+# plausible name like 99-tpot.conf would produce a rule that exists, reads
+# correctly and does nothing. tpot_os_user cannot introduce one: the schema
+# pattern for it is ^[a-z_][a-z0-9_-]{0,31}$, which admits no dot.
+#
+# Upstream writes its own /etc/sudoers.d/<user> on one path only -- the
+# Debian branch where sudo was not installed at all (upstream
+# install.sh:425-441). Where it does, the two files grant the same thing to
+# the same account and neither disturbs the other.
+# ---------------------------------------------------------------------------
+- name: Grant the account passwordless sudo, stated rather than inherited
+  community.general.sudoers:
+    name: "tpot-automation-{{ tpot_os_user }}"
+    state: present
+    user: "{{ tpot_os_user }}"
+    runas: ALL
+    commands:
+      - ALL
+    nopassword: true
+    validation: required
+  register: tpot_user_sudoers
+
+# The grant said out loud. The defect this role exists to kill survived
+# because nobody could see the rule that was masking it, so the transcript of
+# every run now names the file and what it grants. The module returns nothing
+# but `changed`, which is why this task states the rest from what was asked
+# for rather than from what came back.
+- name: Say what the sudo rule grants and where it lives
+  ansible.builtin.debug:
+    msg: >-
+      /etc/sudoers.d/tpot-automation-{{ tpot_os_user }}:
+      {{ tpot_os_user }} ALL=(ALL) NOPASSWD: ALL --
+      {{ 'written' if tpot_user_sudoers.changed | default(false) else 'already as specified' }}
+
+# ---------------------------------------------------------------------------
+# THE PROOF. Everything from here down changes nothing and asserts on what is
+# actually on the box.
+#
+# The home directory is taken from the passwd record and NEVER composed as
+# /home/<user>. useradd honours /etc/default/useradd's HOME, and a box whose
+# homes live under /srv or /export is not exotic; a composed path would send
+# the checkout, the compose file and the .env credential somewhere the
+# account does not own, and the failure would surface an hour later inside
+# upstream's git clone.
+#
+# command rather than the getent module again, for consistency with the
+# shadow lookups and for the same reason: what comes back here is parsed into
+# exactly two facts rather than published wholesale.
+# ---------------------------------------------------------------------------
+- name: Look up the account's passwd record
+  ansible.builtin.command:
+    argv:
+      - getent
+      - passwd
+      - "{{ tpot_os_user }}"
+  register: tpot_user_passwd
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Take the home directory and the login shell from the passwd record
+  ansible.builtin.set_fact:
+    # Padding again, so an empty stdout yields empty fields instead of an
+    # index error. Fields 6 and 7 of a passwd record are home and shell;
+    # neither can contain a colon, because a colon is the separator.
+    tpot_user_found: "{{ (tpot_user_passwd.rc | default(2)) == 0 }}"
+    tpot_home: >-
+      {{ ((tpot_user_passwd.stdout | default('') | trim).split(':') + ['', '', '', '', '', '', ''])[5] }}
+    tpot_user_shell: >-
+      {{ ((tpot_user_passwd.stdout | default('') | trim).split(':') + ['', '', '', '', '', '', ''])[6] }}
+
+# In a real run the account was created three tasks ago, so its absence here
+# is not a configuration problem -- it is name resolution disagreeing with
+# the account database, which nothing downstream can survive. In check mode
+# the account was never created, which is not a finding at all; that case is
+# handled by the task after this one.
+- name: Refuse to continue without an account to install as
+  ansible.builtin.assert:
+    that:
+      - tpot_user_found | bool
+    fail_msg: >-
+      getent passwd {{ tpot_os_user }} exited {{ tpot_user_passwd.rc | default('(not run)') }}
+      immediately after the account task reported success. The account database and the
+      name service switch disagree about an account this installer just created, and
+      everything downstream -- the checkout, the compose file, the credential -- is
+      addressed through this record.
+    success_msg: "the account {{ tpot_os_user }} is present in passwd"
+    quiet: true
+  when: not ansible_check_mode
+
+# A --check run over a box where the account does not exist yet cannot prove
+# anything about it, and this is the one place that says so. Recording the
+# gap as a warning rather than passing over it is the same rule the
+# verification records follow: a check that did not run is never a pass.
+- name: Note that a check run cannot prove an account it did not create
+  ansible.builtin.set_fact:
+    # Flat indentation again -- see the note on the warning above.
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings + ['Check mode: the account ' ~ tpot_os_user ~ ' does not exist on
+      this box, so nothing about its password, its home directory or its sudo rule was
+      proven. A check run over an already-installed box proves all three.'] }}
+  when:
+    - not tpot_user_found | bool
+
+- name: Prove the passwd record is the one this role asked for
+  ansible.builtin.assert:
+    that:
+      - tpot_home | length > 1
+      - tpot_home is match('/')
+      - tpot_home not in ['/', '/root', '/nonexistent']
+      - tpot_user_shell == '/bin/bash'
+    fail_msg: >-
+      The passwd record for {{ tpot_os_user }} says home={{ tpot_home | default('(empty)') }}
+      shell={{ tpot_user_shell | default('(empty)') }}; this role asked for a real home
+      directory and /bin/bash. A home of /nonexistent or / is what a SYSTEM account gets,
+      and upstream clones into this directory.
+    success_msg: "home {{ tpot_home }}, shell {{ tpot_user_shell }}"
+    quiet: true
+  when: tpot_user_found | bool
+
+- name: Look at the account's home directory
+  ansible.builtin.stat:
+    path: "{{ tpot_home }}"
+  register: tpot_user_home_stat
+  when: tpot_user_found | bool
+
+# Ownership is the half that bites. A home directory that exists but belongs
+# to root -- created by hand, or left behind by an earlier run -- lets every
+# task here succeed and then breaks upstream's git clone, ninety minutes into
+# a run, with a message about a directory and nothing about ownership.
+- name: Prove the home directory exists and belongs to the account
+  ansible.builtin.assert:
+    that:
+      - tpot_user_home_stat.stat.exists | default(false)
+      - tpot_user_home_stat.stat.isdir | default(false)
+      - tpot_user_home_stat.stat.pw_name | default('') == tpot_os_user
+    fail_msg: >-
+      {{ tpot_home }} is not a directory owned by {{ tpot_os_user }}
+      (exists={{ tpot_user_home_stat.stat.exists | default('unknown') }},
+      isdir={{ tpot_user_home_stat.stat.isdir | default('unknown') }},
+      owner={{ tpot_user_home_stat.stat.pw_name | default('unknown') }}).
+      Upstream clones into this directory as that account and would fail there instead.
+    success_msg: "{{ tpot_home }} exists and belongs to {{ tpot_os_user }}"
+    quiet: true
+  when: tpot_user_found | bool
+
+# ---------------------------------------------------------------------------
+# THE REGRESSION TEST FOR THE DEFECT AT THE TOP OF THIS FILE.
+#
+# The shape the shadow field must have, by policy:
+#
+#   set     $y$ $6$ $5$ $2b$ $2y$ -- yescrypt, sha512, sha256, bcrypt. What
+#           the module writes today is sha512 ($6$), but a box whose
+#           libcrypt prefers another is not a failure, and pinning the
+#           assertion to one prefix would make this test about the crypt
+#           library rather than about the defect.
+#   locked  ! or * -- '!' from this role, '!!' from the module's own lock
+#           prefix, '*' from a distribution that spells "no password" that
+#           way. None of them can ever match an entered password.
+#
+#   A PLAINTEXT PASSWORD MATCHES NEITHER, which is the entire point: the
+#   installer this project replaces put one there and reported success.
+#
+# The pattern is chosen in the open, in its own visible task, so a transcript
+# says which shape was required. Only the comparison is no_log, because only
+# the comparison touches the hash. The character class [$] rather than a
+# backslash escape keeps the expression free of escaping questions in two
+# languages at once.
+# ---------------------------------------------------------------------------
+- name: Choose the shadow shape this policy promises
+  ansible.builtin.set_fact:
+    tpot_user_shadow_pattern: >-
+      {{ '[$](y|6|5|2b|2y)[$]' if tpot_os_user_password_policy == 'set' else '[!*]' }}
+
+- name: Look the account's shadow record up again
+  ansible.builtin.command:
+    argv:
+      - getent
+      - shadow
+      - "{{ tpot_os_user }}"
+  register: tpot_user_shadow_after
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+  when: tpot_user_found | bool
+
+- name: Compare the shadow field against the shape the policy promises
+  ansible.builtin.set_fact:
+    tpot_user_shadow_ok: >-
+      {{ ((tpot_user_shadow_after.stdout | default('')).split(':') + ['', ''])[1]
+         is match(tpot_user_shadow_pattern) }}
+  no_log: true
+  when: tpot_user_found | bool
+
+# Both lookups are finished with, and only a boolean was wanted from them.
+# Overwriting the two registered results replaces the hash in the play's
+# variable namespace with a sentence, so no later task can template it into a
+# transcript by accident. This task is also the visible half of the no_log
+# pair above: it prints what it wrote, which is the sentence.
+- name: Discard the shadow lookups now that the answer is a boolean
+  ansible.builtin.set_fact:
+    # The exit status is kept first, and separately, because the failure
+    # message below needs it and the record it came from is about to stop
+    # existing. An exit status is not a credential.
+    tpot_user_shadow_rc: "{{ tpot_user_shadow_after.rc | default('(not run)') }}"
+    tpot_user_shadow_before: "redacted: a shadow record is not kept in this play's variables"
+    tpot_user_shadow_after: "redacted: a shadow record is not kept in this play's variables"
+
+# ---------------------------------------------------------------------------
+# THE ACCOUNTS RECORD.
+#
+# Contributed BEFORE the assertion below, deliberately: the report is written
+# from site.yml's always: block, so a run that fails on the assertion still
+# lands a document saying shadow_ok=false. Contributing after it would mean
+# the one failure this role exists to catch is the one failure the report
+# cannot describe.
+#
+# combine() rather than assignment because tpot_install adds its own keys to
+# this same accumulator later; an assignment here would be fine today and
+# would silently discard them the moment it is not.
+#
+# NEVER A CREDENTIAL. Not the password, not the hash, not the salt. This
+# document is copied into result.json, and SECURITY.md invites a reporter to
+# attach that file to a vulnerability report. roles/report carries a tripwire
+# that refuses to write a report containing the dashboard password; nothing
+# in this role should ever make it fire.
+#
+# shadow_ok is null, not false, when the proof could not run at all -- which
+# is a check run over a box where the account does not exist. False would say
+# "we looked and it is wrong"; null says "we did not look", and the run
+# warning above says why.
+# ---------------------------------------------------------------------------
+- name: Contribute the account record to the play's report
+  ansible.builtin.set_fact:
+    tpot_report_accounts: >-
+      {{ tpot_report_accounts | default({}, true) | combine({
+           'os_user': tpot_os_user,
+           'home': tpot_home | default('', true),
+           'password_policy': tpot_os_user_password_policy,
+           'sudo_nopasswd': tpot_sudo_nopasswd | bool,
+           'shadow_ok': tpot_user_shadow_ok | default(none)
+         }) }}
+
+- name: Prove the shadow field is what the password policy announced
+  ansible.builtin.assert:
+    that:
+      - tpot_user_shadow_ok | default(false) | bool
+    fail_msg: >-
+      The shadow record for {{ tpot_os_user }} does not have the shape
+      tpot_os_user_password_policy={{ tpot_os_user_password_policy }} promises
+      ({{ tpot_user_shadow_pattern }}); the lookup exited
+      {{ tpot_user_shadow_rc | default('(not run)') }}. Under `set` this means the
+      password field is not a crypt(3) hash -- a PLAINTEXT value there is accepted by
+      ansible.builtin.user with a warning and leaves an account whose password can never
+      match. Under `locked` it means the account has a usable password it was promised it
+      would not have. The value itself is deliberately not shown here or anywhere else.
+    success_msg: >-
+      the shadow field for {{ tpot_os_user }} matches the {{ tpot_os_user_password_policy }}
+      policy, so the account is in the state this role announced
+    quiet: true
+  when: tpot_user_found | bool

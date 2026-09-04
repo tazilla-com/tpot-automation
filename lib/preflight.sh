@@ -232,7 +232,15 @@ readonly _PF_SUPPORTED_ARCH="x86_64 aarch64"
 #
 # WHEN A REF IS PINNED, tools/pin-upstream.sh should read the gate out of the
 # install.sh it is pinning and extend _PF_UPSTREAM_GATE_VALID_REFS (or move
-# both of these into the per-release data file). That tool does not exist yet.
+# both of these into the per-release data file). IT NOW DOES HALF OF THAT: it
+# reads the gate at the ref it pins and writes it out row by row, with a
+# verdict and a reason per distribution, into that ref's data file under
+# roles/tpot_install/vars/. It does not touch either constant below, and this
+# file cannot read what it wrote: preflight is bash, it runs before the
+# dependency bootstrap has put ansible-core anywhere, and the only YAML it can
+# read is support-matrix.yml through lib/matrix.sh's constrained parser. So
+# the two statements of upstream's gate are not yet joined up, and the one
+# below is still what this check compares against.
 #
 # READ THE NEXT SENTENCE BEFORE TRUSTING THIS CHECK. The list below holds one
 # entry, `master`, and lib/varschema.json's pattern for tpot_upstream_ref
@@ -311,9 +319,12 @@ _PF_PORT_LAYOUT="unknown"
 #                            20.04/22.04/24.04, Mint 20/21/22: documented, and
 #                            NEVER claimed as tested, D-07), plus Ubuntu 26.04,
 #                            Kali, Raspbian, Fedora, AlmaLinux and a
-#                            versionless Debian testing. The SUPPORTED tier is
-#                            empty until a ref is pinned, so none of these is a
-#                            supported release today.
+#                            versionless Debian testing. Two of them --
+#                            Debian 13 and Ubuntu 26.04 -- are in the SUPPORTED
+#                            tier at the ref this tree pins, which means
+#                            upstream's gate accepts them and this installer
+#                            can drive them. It does not mean either has been
+#                            installed: nothing has.
 #   PF_PROC_MEMINFO          NOTHING. tests/fixtures/ does not exist.
 #   PF_PROC_CPUINFO          NOTHING. Same.
 #   PF_PROC_MAX_MAP_COUNT    NOTHING. Same.
@@ -959,9 +970,9 @@ _tpot_pf_free_gb() {
 # THE SUPPORT MATRIX
 #
 # The matrix itself is read by lib/matrix.sh, not here. That reader is the bash
-# half of a pair: the other half is Ansible's own include_vars, which the
-# preflight ROLE will use -- that role is not written yet, and neither is any
-# of roles/. What already exists is the comparison. tests/check-matrix-parse.sh
+# half of a pair: the other half is Ansible's own include_vars, which
+# roles/preflight uses on the same file later in the same run. What holds the
+# pair together is the comparison. tests/check-matrix-parse.sh
 # reads support-matrix.yml three ways -- lib/matrix.sh, ansible-core's
 # include_vars through a throwaway playbook, and PyYAML -- and fails the build
 # unless all three produce identical lists. So a second parser living in THIS
@@ -1096,9 +1107,10 @@ _tpot_pf_matrix_tier() {
 #
 #   An EMPTY tier and an UNKNOWN one are told apart with matrix_list_tier,
 #   which returns 0 printing nothing for a tier that exists and holds no rows.
-#   That is the state the supported tier ships in -- no ref pinned, so nothing
-#   claimed -- and "none yet" is the true sentence for it, where falling back
-#   to the whole matrix would quietly answer a different question.
+#   The supported tier is not empty at the ref this tree pins, but it is empty
+#   in any checkout whose pin has been cleared, and "none" is the true sentence
+#   for that, where falling back to the whole matrix would quietly answer a
+#   different question.
 # ---------------------------------------------------------------------------
 _tpot_pf_matrix_summary() {
     local tier=${1:-} out=""
@@ -1110,7 +1122,7 @@ _tpot_pf_matrix_summary() {
         fi
         if declare -F matrix_list_tier >/dev/null 2>&1; then
             if matrix_list_tier "$tier" >/dev/null 2>&1; then
-                printf '%s\n' "none yet -- the ${tier} tier is empty, which is what an unpinned tpot_upstream_ref means; set tpot_upstream_ref (tools/pin-upstream.sh is meant to derive it and has not been written yet)"
+                printf '%s\n' "none -- the ${tier} tier is empty, which is what an unpinned tpot_upstream_ref means; set it with tools/pin-upstream.sh, which derives the tier from the pinned ref's own gate"
                 return 0
             fi
         fi
@@ -1284,8 +1296,24 @@ _tpot_pf_check_os() {
             if [[ -n $sref ]]; then
                 summary="${summary}; derived from upstream ref ${sref}"
             fi
+            # WHAT "SUPPORTED" MAY AND MAY NOT CLAIM.
+            #
+            # This message used to end "...and exercised by this project's
+            # tests". That was written while the supported tier shipped EMPTY,
+            # so this branch was unreachable and nobody could read the claim.
+            # D-11 pinned a ref, the tier became two rows, and the sentence
+            # started printing on every run on a supported box -- asserting a
+            # test campaign that has never happened. Nothing in this project
+            # has ever been installed on any box, and the file that would
+            # record such a run, tests/MATRIX-STATUS.md, does not exist.
+            #
+            # So the tier means exactly two things, and the message now says
+            # only those two: the pinned upstream's own gate accepts this
+            # release, and this installer can drive it (apt, and an
+            # architecture we accept). Whether it WORKS is a separate question
+            # that a dated run has to answer.
             pf_record os ok \
-                "${_PF_OS_ID} ${_PF_OS_VERSION_ID} -- SUPPORTED tier: accepted by the pinned upstream ref's own gate and exercised by this project's tests (${summary}).${note}"
+                "${_PF_OS_ID} ${_PF_OS_VERSION_ID} -- SUPPORTED tier: the pinned upstream ref's own gate accepts this release and this installer can drive it (${summary}). NOT a claim that it has been tested: that evidence is a dated run in tests/MATRIX-STATUS.md, and no run on a real host has been made.${note}"
             return 0
             ;;
         legacy)
@@ -1595,9 +1623,9 @@ _tpot_pf_check_repo_tree() {
         if [[ ! -r "${root}/${rel}" ]]; then
             n_missing=$(( n_missing + 1 ))
             # The play slice is counted separately. See the note below the
-            # `fail` branch: an absent site.yml is a build that has not been
-            # finished, not a download that arrived broken, and telling a
-            # reader the wrong one of those wastes an hour.
+            # `fail` branch: an absent site.yml is a checkout that is partial,
+            # not a download that arrived broken, and telling a reader the
+            # wrong one of those wastes an hour.
             case $rel in
                 site.yml|verify.yml) n_play=$(( n_play + 1 )) ;;
             esac
@@ -1620,13 +1648,17 @@ _tpot_pf_check_repo_tree() {
         # and look at:
         #   * an extraction or clone that lost files -- the case this check was
         #     written for;
-        #   * this build, in which site.yml, verify.yml and roles/** have not
-        #     been written yet. Nothing is wrong with the copy on disk.
-        # The second is the state of the tree today, and a message saying only
-        # "this copy of the installer is incomplete" sends the reader to
-        # re-download something that is not damaged.
+        #   * a checkout carrying the entrypoint and its libraries and none of
+        #     the play. Nothing is wrong with the files that are on disk; the
+        #     repair is to fetch the rest, not to re-download these.
+        # THE SECOND BRANCH DOES NOT FIRE IN THIS TREE, and has not since the
+        # play slice landed on 2026-09-04: every file in the manifest is
+        # present here, so this whole block is skipped. It is kept because a
+        # partial checkout of a release still meets it, and because a message
+        # saying only "this copy of the installer is incomplete" sends that
+        # reader to re-download something that is not damaged.
         if (( n_play == n_missing )); then
-            note=" -- these are the play slice (site.yml, verify.yml and roles/**), which has not been written yet in this build. Nothing is wrong with this copy: the installer cannot install until that slice lands, and it refuses rather than pretending"
+            note=" -- these are the play slice (site.yml, verify.yml and roles/**), which a complete release carries. Nothing is wrong with the files you do have: this checkout is partial rather than damaged, so fetch the whole release rather than replacing files one at a time. The installer cannot install without the play, and it refuses rather than pretending"
         else
             note=" -- this copy of the installer is incomplete"
         fi
@@ -1983,12 +2015,13 @@ _tpot_pf_check_disk_docker() {
 # ---------------------------------------------------------------------------
 # max_map_count -- WARN ONLY, NEVER FAIL.
 #
-# Elasticsearch will not start without it, and the os_prep role is to set it
-# through /etc/sysctl.d/99-tpot-automation.conf -- that role is not written
-# yet, along with the rest of roles/. Preflight reports what the box has
-# today so that a run which later fails inside Elasticsearch has the before
-# value written down, and so that somebody reading result.json can tell a box
-# that was already tuned from one this installer tuned.
+# Elasticsearch will not start without it, and roles/os_prep sets it through
+# /etc/sysctl.d/99-tpot-automation.conf -- its own file, rather than the
+# /etc/sysctl.conf upstream writes and never reloads. Preflight runs BEFORE
+# that role, so what it records here is the box's own value: a run which later
+# fails inside Elasticsearch has the before value written down, and somebody
+# reading result.json can tell a box that was already tuned from one this
+# installer tuned.
 # ---------------------------------------------------------------------------
 _tpot_pf_check_max_map_count() {
     local want current
@@ -2048,9 +2081,12 @@ _tpot_pf_check_max_map_count() {
 #   POST-INSTALL  T-Pot is already installed. sshd has MOVED to 64295, 22 is a
 #                 honeypot container, and 25 and 53 are expected to be held by
 #                 T-Pot's containers as well -- INFERRED from upstream refusing
-#                 exactly those three before it installs; neither upstream file
-#                 states the mapping and compose/<edition>.yml has never been
-#                 read here, so re-check it at pin time. Every one of those is a
+#                 exactly those three before it installs, because neither
+#                 upstream file states the mapping. tools/pin-upstream.sh does
+#                 now fetch and read every compose file at the ref it pins, but
+#                 only for service counts, restart policies and the telemetry
+#                 service: no port mapping is extracted from them, so this
+#                 inference is still unchecked. Every one of those is a
 #                 hard failure under the pre-install rules, so the documented
 #                 recovery from exit 20 ("re-run it") used to fail at
 #                 EX_PREFLIGHT on a box where nothing was wrong.
@@ -2411,10 +2447,18 @@ _tpot_pf_check_ports() {
 #
 # Upstream's install.sh gates twice before it will do anything at all:
 # membership of /etc/os-release's NAME field in a fixed list, then an exact
-# version comparison. Both are `exit 1`. Neither has an override flag, both run
-# before its own -s handling, and tpot_force_unsupported_os relaxes OUR check
-# and cannot touch theirs. Against the copy read on 2026-09-02, exactly one of
-# this project's nine inherited releases survives them (D-07).
+# version comparison. Both are `exit 1`. Neither has an override flag, and
+# tpot_force_unsupported_os relaxes OUR check and cannot touch theirs. Against
+# the copy read on 2026-09-02, exactly one of this project's nine inherited
+# releases survives them (D-07).
+#
+# ▲ Corrected 2026-09-04. This comment used to say the gates "run before its
+# own -s handling", and that is backwards: `-s` is parsed by the getopts loop
+# at install.sh:215 and the gates are at :294-339, so the gates run AFTER `-s`
+# has been read. They simply never consult it -- which is why unattended mode
+# cannot reach past them, and why the conclusion above is unaffected. The
+# distinction is kept because "runs before" is a claim someone could go and
+# check, find false, and then reasonably doubt the rest of the paragraph.
 #
 # Pre-empting that here is worth doing because the alternative is discovering
 # it at minute 40, on a box os_prep has already changed.
@@ -2447,9 +2491,13 @@ _tpot_pf_check_ports() {
 # disjoint by construction, so every legal pin lands on `warn` or
 # `inconclusive` and this check never returns a verdict. It fails in the safe
 # direction, which is why it is written this way and not the other; but the ok
-# and fail arms are code waiting for tools/pin-upstream.sh -- which is not
-# written -- to extend the list from the install.sh it pinned. Until that
-# happens, treat every outcome of this check as advisory.
+# and fail arms are code waiting for tools/pin-upstream.sh to extend the list
+# from the install.sh it pinned. That tool exists now and still does not do
+# it: it writes the gate it read into the pinned ref's data file under
+# roles/tpot_install/vars/, and preflight cannot read that file -- it is bash,
+# it runs before the dependency bootstrap, and lib/matrix.sh is the only YAML
+# reader it has. Until the two are joined up, treat every outcome of this
+# check as advisory.
 #
 # MEMBERSHIP IS AN EXACT WHOLE-ELEMENT COMPARISON IN A LOOP. Upstream's own
 # test is `[[ ! " ${arr[@]} " =~ " ${x} " ]]` with the right-hand side quoted,
@@ -2483,7 +2531,7 @@ _tpot_pf_check_upstream_gate() {
     ref=$(_tpot_pf_cfg tpot_upstream_ref "")
     if [[ -z $ref ]]; then
         pf_record upstream_gate inconclusive \
-            "tpot_upstream_ref is not pinned, so upstream's own distribution gate could not be pre-empted. Set it to a tag or commit of upstream T-Pot; tools/pin-upstream.sh is meant to derive it and has not been written yet. Upstream applies that gate on this box, before it will do anything at all, and it has no override flag"
+            "tpot_upstream_ref is not pinned, so upstream's own distribution gate could not be pre-empted. Set it to a tag or a full 40-character commit sha of upstream T-Pot; tools/pin-upstream.sh derives it and writes everything that follows from it. Upstream applies that gate on this box, before it will do anything at all, and it has no override flag"
         return 0
     fi
     if [[ -z $_PF_OS_ID ]]; then
@@ -2621,7 +2669,7 @@ _tpot_pf_check_reachability_upstream() {
         ref=$(_tpot_pf_cfg tpot_upstream_ref "")
         if [[ -z $ref ]]; then
             pf_record reachability_upstream inconclusive \
-                "no upstream host to test: tpot_upstream_ref is not pinned. Set it to a tag or commit of upstream T-Pot; the tool meant to derive it and its per-release data file (tools/pin-upstream.sh, roles/tpot_install/vars/upstream-<ref>.yml) are not written yet"
+                "no upstream host to test: tpot_upstream_ref is not pinned. Set it with tools/pin-upstream.sh, which derives it and writes its per-release data file (roles/tpot_install/vars/upstream-<ref>.yml)"
         else
             pf_record reachability_upstream inconclusive \
                 "no upstream host to test: tpot_upstream_ref is ${ref} but tpot_upstream_url is unset"

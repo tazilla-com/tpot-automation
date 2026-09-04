@@ -1,0 +1,69 @@
+---
+# roles/tpot_verify/defaults/main.yml -- the INPUT keys this role reads, and
+# nothing else.
+#
+# WHY THIS FILE IS ALMOST EMPTY OF ORIGINAL THOUGHT
+#   install.sh always runs the play with `-e @$RUNDIR/merged.json`, and
+#   lib/config.py has already applied every schema default by then. So at run
+#   time these values are never the ones that take effect -- extra vars win
+#   over role defaults outright. The file exists for the OTHER way this play
+#   gets run: `ansible-playbook -i inventories/example/hosts.yml verify.yml`
+#   by a developer, with no merged document at all. Without these the role
+#   would die on an undefined variable instead of verifying anything.
+#
+#   tests/check-variable-surface.sh check 4 therefore requires every key here
+#   to exist in lib/varschema.json AND in inventories/example/group_vars/all.yml
+#   with a byte-equal default. That is the rule that keeps this file from
+#   quietly becoming a second, disagreeing copy of the schema. Adding a knob
+#   here that is not one of the 50 documented inputs is a build break, and
+#   correctly so.
+#
+# WHAT IS DELIBERATELY ABSENT
+#   tpot_min_containers. It is one of the eight schema keys that ship with NO
+#   default, on purpose: the example inventory says a guessed number "turns
+#   verification into either a rubber stamp or a false alarm". Defaulting it
+#   here would reintroduce exactly the guess that decision removed, so this
+#   role guards every reference to it and derives its floor from the installed
+#   compose file instead. See tasks/post-reboot.yml.
+#
+#   tpot_verify_phase is absent for a different reason: it is not an input
+#   key at all. It is a call-site argument -- verify.yml passes `both`,
+#   site.yml passes nothing -- so it lives nowhere but in the callers and in
+#   this role's `| default('pre')` guards.
+
+# The unprivileged account that owns the checkout. Read here only to find its
+# home directory and to ask what state its password is in.
+tpot_os_user: honeypot
+
+# What tpot_user was told to leave the account's password in. This role
+# re-derives the expectation from the POLICY rather than trusting another
+# role's announcement, and cross-checks the announcement separately.
+tpot_os_user_password_policy: locked
+
+# Which compose file tpot_install copied over docker-compose.yml. It decides
+# which honeypot upstream binds to tcp/22, so it is an input to an assertion
+# and not only to the closing notice.
+tpot_install_type: h
+
+# Where a finished T-Pot listens. The same three numbers preflight measured
+# against before the install, so a drift between the two would be visible as
+# one check passing and the other failing rather than as silence.
+tpot_admin_ssh_port: 64295
+tpot_dashboard_port: 64297
+tpot_elasticsearch_port: 64298
+
+# How long the post-reboot listener checks wait. The containers come up over
+# minutes, not seconds; see the note on the total in tasks/post-reboot.yml.
+tpot_verify_retries: 30
+tpot_verify_delay: 10
+
+# Quoted, because bare `off` is a boolean in YAML and this is an enum whose
+# value is the two-letter string. When it is off, the ewsposter service block
+# must be gone from docker-compose.yml -- structurally gone, which is what
+# this role asserts rather than that the edit was attempted.
+tpot_upstream_telemetry: "off"
+
+# The floor Elasticsearch needs. os_prep writes it to /etc/sysctl.d and
+# reloads; this role reads the EFFECTIVE value out of /proc, which is the only
+# reading that means anything.
+tpot_max_map_count: 262144

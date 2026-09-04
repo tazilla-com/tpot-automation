@@ -22,53 +22,65 @@ Three properties are designed to hold:
 
 ## What this build can and cannot return
 
-**The Ansible play does not exist in this tree.** `site.yml`, `verify.yml` and
-the whole of `roles/` are a separate slice and have not been written, so
-**this build has never installed anything and cannot**. There has been no
-virtual machine, no root and no network. What has been executed is the tree's
-own gate suite and `install.sh` itself, unprivileged, run to the refusal
-described below -- never past it.
+**The Ansible play is in this tree.** `site.yml`, `verify.yml` and the eight
+roles under `roles/` are on disk; they pass `ansible-playbook --syntax-check`
+and `ansible-lint`'s production profile, and `tests/check-stage-map.sh` is a
+build gate holding their stage-to-code map against the table at the foot of
+this page.
 
-`install.sh` refuses rather than pretends, and it does so **twice over**.
+**Nothing has ever been installed by them.** There has been no virtual
+machine, no root, no docker daemon, no network-facing host and no T-Pot --
+not once, in this project. What has been executed is the tree's own gate
+suite, `install.sh` itself unprivileged on a development box, and the roles
+against that same box far enough to establish that their expressions evaluate
+and their modules behave as written. Every code from `13` upwards is therefore
+the contract the play is written to, and not a report of observed behaviour.
 
-The outer refusal is the one that actually fires. Preflight stage A checks that
-the seventeen files this installer is made of are on disk; `site.yml` and
-`verify.yml` are two of them; a tree missing them fails that check and the run
-returns **`11`** at step 3 of the ten steps a run performs -- before the
-configuration is merged, and before anything on the box is touched. No
-`--force-*` flag relaxes it, and `--verify-only`, `--preflight-only` and
-`--check` are all stopped by it too.
+**What a run does today, measured on 2026-09-04 on that development box:**
+`./install.sh`, `install.sh --preflight-only` and `install.sh --verify-only`
+each return **`11`** at step 3 of the ten steps a run performs, and the
+failing check is **`root`** -- uid 1000, where this installer requires uid 0.
+Preflight runs before the first mutation, so nothing on the box was changed by
+any of them.
 
-The inner refusal is the one described in `install.sh` itself: at step 9 the
-play is looked for again, and when it is absent the run logs what is missing,
-sets the outcome to `internal_error` and returns `40`. **Step 9 is never
-reached in this build.** That arm is written, it is shadowed by the check above,
-and it has never executed.
+That is the same number this document reported before the play was written,
+and the *reason* is what changed -- worth saying, because a caller comparing
+an old transcript with a new one will see one `11` standing for two different
+faults. Preflight stage A checks this tree against a manifest of seventeen
+required files; `site.yml` and `verify.yml` were two of them and were absent,
+so `repo_tree` failed on every run. It passes now, on the same box, with a
+warning that the checkout is group-writable. `root` is what is left.
 
 So in this build:
 
 * `10` and `11` are reachable and are the real behaviour of the code in this
-  tree -- argument handling and preflight stage A are written, and both numbers
-  above were produced by running it;
-* **`11` is what every full run returns today**, with `repo_tree` named in the
-  preflight report as the check that failed -- and, on the unprivileged
-  development box these runs were made on, `root` named beside it;
-* `12` is `--preflight-only`'s code for "nothing failed, something could not be
-  measured", so it needs stage A to pass first, which cannot happen while the
-  play is missing. The unpinned upstream ref that would otherwise produce it is
-  a stage B check, and stage B is never reached;
-* `13` through `16` and `20` describe the contract and are **not exercisable
-  yet** -- every one of them names a stage that lives in the play. Nothing below
-  that describes them is a report of observed behaviour;
+  tree -- argument handling and preflight stage A are written, and both
+  numbers were produced by running it;
+* **`11` is what every run this project has made returns**, with `root` named
+  in the preflight report as the check that failed. That is a fact about where
+  the measurement was taken, not a property of the build: on a root shell the
+  check passes and the run continues into preflight stage B, which no run has
+  ever reached;
+* `12` is `--preflight-only`'s code for "nothing failed, something could not
+  be measured". It needs stage A to pass first, so nothing here has produced
+  it;
+* `13` through `16` and `20` are what the play returns, and the play has never
+  run against a host it could install. Each names a stage in the table at the
+  foot of this page; none of them has been observed;
 * `30` is written and would be produced by the exit trap on a signal; nothing
   here has exercised it;
-* `40` is written and, in this build, **unreachable**, for the reason above.
-* **So no run of this build can reach `0` or `20`.** That is the guarantee both
-  refusals exist for, and it holds whichever one of them fires.
+* `40` is written. Its playbook-absent arm -- described under `40` below --
+  can no longer fire in this tree, because the files it looks for are present.
 
-Everything else in this document is written in the present tense because it is
-the contract the codes name, not because a machine has demonstrated it. When
-the play lands, this section is what has to change.
+**Neither `0` nor `20` has ever been returned by anything.** That is a
+statement about what this project has run, not a guarantee of the build: `0`
+requires a rebooted, verified T-Pot and `20` requires a completed install, and
+no install has been attempted on any machine.
+
+Everything below is written in the present tense because it is the contract
+the codes name. For `10`, `11` and the refusals that produce them, that
+contract has been executed. For everything downstream of a real install, it
+has not.
 
 ## The table
 
@@ -131,26 +143,41 @@ The four common cases:
 * an answer file that is inside the repository, or that holds a secret while
   not being root-owned `0600`/`0400`.
 
+**One arm of `10` is the exception to "nothing on the box was changed", and it
+is the last role in the play.** `roles/ioc_forward` refuses
+`ioc_forwarding_enabled: true`, and it runs after the install. A full run
+never reaches it: `roles/preflight` refuses the same input as its first check,
+before anything is touched, and that refusal is `11`. The `ioc` arm of `10` is
+reached only when the preflight stage was skipped by tag selection --
+`--tags ioc_forward` runs the include and filters out every task inside it --
+so a `10` naming the `ioc` stage means the box *has* been installed and the
+paragraph above does not apply to it. The two codes are not two answers to one
+question: they are two statements about how far the run got, which is what
+every code on this page is.
+
 ### 11 -- `EX_PREFLIGHT`
 
 The box is not in a state this installer will act on, and **nothing was
 changed**. Preflight runs before the first mutation for exactly this reason.
 
-**In this build `11` is what you get from anything that would act on the box**
--- `--help`, `--version` and `--example-config` print and exit `0` without
-reaching preflight -- and on a box you would really install on the failing
-check is `repo_tree`: stage A verifies that the seventeen files this installer
-is made of are present, and `site.yml` and `verify.yml` have not been written
-yet. The preflight report names them and says so. Nothing is wrong with your
-copy, no flag relaxes it, and note that the one-line meaning for `11` in the
-table above does not list this condition -- the preflight report is what tells
-you which check failed.
+**`11` is what every run this project has made returns**, and on the
+unprivileged development box those runs were made on, the failing check is
+`root`. `--help`, `--version` and `--example-config` print and exit `0`
+without reaching preflight; everything that would act on the box stops here.
+Read that as an artefact of where the measurement was taken and not as a
+property of the build -- on a root shell that check passes, and no one has run
+this on a root shell.
 
-The runs behind that paragraph were made unprivileged, on a development box, so
-the report they produced names **two** failures rather than one: `root` fails
-there too, because the run was not root. Read `repo_tree` as the one that
-survives on a root shell, and `root` as an artefact of where the measurement was
-taken.
+Note that the one-line meaning for `11` in the table above does not enumerate
+every condition. The preflight report is what tells you *which* check failed,
+and it is worth reading rather than inferring from the number.
+
+**`11` is also what a run asking for IoC forwarding gets.**
+`roles/preflight`'s first check refuses `ioc_forwarding_enabled: true`,
+because this release contains no forwarding code at all -- no client, no
+pipeline, no endpoint template -- and it refuses it before anything is
+touched, which is what keeps `11`'s published meaning true for that run. See
+`10` above for the residual arm that answers the same input differently.
 
 Resource floors can be overridden with `--force-low-resources`, and the
 supported-distribution check with `--force-unsupported-os`; both are recorded
@@ -199,12 +226,26 @@ Upstream T-Pot's installer could not be fetched at the pinned ref, or its
 sha256 did not match the expected value for that ref.
 
 A mismatch is not automatically an attack -- upstream may have moved a tag --
-but it is always a reason to stop. The intended workflow is to re-derive the
-checksum with `tools/pin-upstream.sh <ref>`, read the diff, and commit the
-updated per-ref data file. **Neither that tool nor any per-ref data file
-exists yet, and no ref is pinned**, which is also why the supported tier of
-`support-matrix.yml` is empty. Never pass `--upstream-checksum` to get past a
-mismatch on a real host.
+but it is always a reason to stop. The workflow is to re-derive the checksum
+with `tools/pin-upstream.sh <ref>`, read the diff, and commit the updated
+per-ref data file; that tool writes
+`roles/tpot_install/vars/upstream-<ref>.yml` and the supported tier of
+`support-matrix.yml` from the same reading. Never pass `--upstream-checksum`
+to get past a mismatch on a real host.
+
+**The shipped pin is a commit rather than a tag, and that is not a
+preference.** No upstream tag carries the flag surface this product's
+invocation is built on; the newest one has no positional-parameter handling at
+all, so driven non-interactively it does not fail -- it **hangs**. The pin
+must also be a *full* 40-character sha, and `lib/varschema.json` refuses an
+abbreviated one with a message saying why: `ansible.builtin.git` accepts a
+short sha and checks out the full one, so upstream's own re-run check would
+compare seven characters against forty and exit 1 on every second run.
+
+**The tier that pin produces is derived, not tested.** It is what the pinned
+ref's own distribution gate accepts, intersected with what this installer can
+drive. Nothing has been installed on any of it -- see `11` above, and
+`support-matrix.yml`, which is the one place either tier is written down.
 
 **One variable pins two things.** `tpot_upstream_ref` decides both the URL
 `install.sh` is fetched from and the ref argument upstream is given, and they
@@ -223,8 +264,13 @@ always `false`. Pinning a ref pins the recipe and never the images: T-Pot's own
 pull policy defaults to `always`, so it re-pulls its container images every
 time it starts. The software running on a verified box therefore changes after
 we verified it, and changes again at every one of the daily reboots upstream's
-playbook schedules. And when `tpot_upstream_ref` is a tag rather than an
-immutable commit, the tag can still be moved at the source.
+playbook schedules. When `tpot_upstream_ref` is a tag rather than an immutable
+commit, the tag can also be moved at the source -- but pinning a commit does
+not close this either: upstream's `.env` sets `TPOT_VERSION` to a *mutable
+registry tag*, every image is `${TPOT_REPO}/<name>:${TPOT_VERSION}`, and
+`TPOT_PULL_POLICY` is `always`. Two installs from the same commit a month
+apart can run different containers. `upstream.pins_payload: false` has always
+meant this; it now has a version string behind it.
 
 ### 15 -- `EX_DRIVER`
 
@@ -263,6 +309,24 @@ This code is the point of the whole design: it separates "the installer ran"
 from "the honeypot works". A run that reaches it has changed the box, so treat
 it as a machine to inspect rather than one to re-run blindly.
 
+**There are two ways to arrive here, and they are different findings.** The
+first is a check that ran and failed -- the case above. The second is a check
+the caller asked for that **could not be run at all**: a gate at the foot of
+`roles/tpot_verify` fails a `--verify-only` run in which any post-reboot check
+the caller asked for came back `skipped`. Without that gate the run answered
+`0` -- "installed and verified" -- for a box whose containers were never
+counted, because a `docker ps` that exited non-zero left three checks with no
+verdict and nothing then acted on them. A check that could not look is not a
+pass, and this installer does not return `0` for a host it has not examined.
+The reasons are in `result.json` under `verification[]`; read those before
+the assertion text.
+
+Two kinds of `skipped` are legitimate and do not fail a run. Every post-reboot
+check in a `site.yml` run is skipped by design, because the box has not
+rebooted yet -- that run's answer is `20`. And a check this edition has
+nothing to answer for is a final answer rather than a hole: a sensor ships no
+dashboard, and the mobile edition ships no Elasticsearch.
+
 ### 20 -- `EX_REBOOT`
 
 **Not a failure.** T-Pot is installed, every pre-reboot assertion passed, and
@@ -274,36 +338,74 @@ reboot
 install.sh --verify-only             #  -> 0, or 16 naming the failing check
 ```
 
-That is the specified sequence. In this build both invocations return `11`
-instead, and neither of them reaches the play at all: `site.yml` and
-`verify.yml` are two of the seventeen files preflight stage A requires, so the
-run refuses there, at step 3 of ten.
+That is the sequence, and nobody has performed it. On this project's own
+development box both invocations stop at `11` on the `root` check, at step 3
+of ten, and there has never been an installed host to run the second one
+against.
 
 `--verify-only` is the documented recovery, and it is the one to use.
 
-**A caller that never runs it is meant to get a true outcome file anyway**, by
-way of a post-boot systemd oneshot that re-runs verification on the next boot
-and rewrites `result.json`. **That unit is designed and not built**; when it
-lands it carries one requirement that is easy to miss:
+**A caller that never runs it gets a true outcome file anyway**, by way of a
+post-boot systemd oneshot that re-runs verification on the next boot and
+rewrites `result.json`. `roles/finalize` writes and enables that unit. Two of
+its properties decide whether you can trust what it leaves behind:
 
-> **The unit must disarm itself after its first successful verification.**
-> Upstream T-Pot's playbook installs a root cron job that reboots the host
-> every day at 02:42. A unit left armed therefore fires every night and
-> rewrites `result.json` daily -- so a file that should record one dated,
-> verified install instead re-asserts itself indefinitely against a box nobody
-> has looked at since, and its timestamp stops meaning anything. Disarming on
-> first success is part of the unit's contract, not an optimisation.
+> **It disarms itself after its first successful verification.** Upstream
+> T-Pot's playbook installs a root cron job that reboots the host every day,
+> so a unit left armed would fire on every one of those boots and rewrite
+> `result.json` nightly -- a file that should record one dated, verified
+> install instead re-asserting itself indefinitely against a box nobody has
+> looked at since, its timestamp meaning nothing. The unit is gated on a
+> marker file under `tpot_state_dir` and deletes that marker from
+> `ExecStartPost`, which systemd runs only after a successful `ExecStart`: a
+> failed verification keeps the marker and is retried, a successful one is the
+> last.
+
+> **It verifies the box that was actually installed, because it is handed the
+> configuration that installed it.** `roles/finalize` writes
+> `{{ tpot_state_dir }}/verify-config.json` -- root-owned, mode `0600` -- and
+> the unit's `ExecStart` passes `--config` to it. A post-boot run given
+> nothing re-derives every input from the schema defaults, so an install that
+> changed the OS account, the install type, a port or the telemetry setting
+> would be verified against a box that does not exist -- and the failure mode
+> is quiet rather than loud: the unit fails, retries until it has burned
+> `StartLimitBurst`, never removes the marker, and `result.json` goes on
+> saying `post_boot_verify_armed: true` for the life of the machine. That was
+> the arrangement before this file existed. When it cannot be written --
+> because the state directory resolves inside the installer tree, where this
+> installer refuses an answer file -- the unit is armed without it, and
+> `result.json` says so in its warnings.
+
+The unit's own command is the manual recovery path, and running it by hand
+reproduces exactly what the unit runs:
+
+```sh
+install.sh --verify-only --json --config /var/lib/tpot-automation/verify-config.json
+```
+
+That file carries no credential. It is built from the merged **public**
+document, from which `lib/config.py` removes every secret-typed key, and
+`--verify-only` does not ask for a dashboard password -- so nothing has to be
+supplied alongside it.
 
 **A full re-run of `install.sh` on an installed host is not idempotent, and
-this is the trap to know about.** Two independent things break it. Preflight
-wants port 22 free or held by the host's own sshd, and after a successful
-install sshd is on 64295 while 22 belongs to a honeypot, so a re-run fails at
-`11` on a perfectly healthy box. And upstream refuses to reuse an existing
-checkout whose branch does not match what was requested; a pinned tag is a
-detached HEAD, which resolves to a commit hash and never equals the tag name,
-so every second run against a pinned tag stops and tells you to remove the
-checkout. Re-installing means removing upstream's checkout first, not passing
-a flag. Verifying means `--verify-only`.
+this is the trap to know about.** Preflight wants port 22 free or held by the
+host's own sshd, and after a successful install sshd is on 64295 while 22
+belongs to a honeypot -- so a re-run fails at `11` on a perfectly healthy box.
+Verifying means `--verify-only`; that is what it is for.
+
+The second half of this trap changed shape when the ref was pinned to a full
+commit sha, and it is worth stating in the new form. Upstream refuses to reuse
+a checkout whose HEAD is not the one it asked for, which is what made every
+second run against a pinned *tag* stop -- a tag resolves to a commit hash and
+never equals the tag name. A full-sha pin **matches**, and the match is not
+good news: upstream clones with update disabled and compares HEAD and the
+origin URL and nothing else, so a checkout whose `docker-compose.yml` has been
+edited and whose `env.example` has been deleted passes that comparison
+unchanged. The play therefore warns, every time, that an existing checkout is
+being reused unrefreshed. `tpot_force_reinstall` is the switch that gets you a
+fresh one, and it really is `rm -rf` on `~/tpotce` -- including any captured
+attack data underneath it.
 
 With `--reboot always` or `--reboot if-required` the host reboots after
 `result.json` has been written and flushed to disk. In that mode the exit code
@@ -323,7 +425,7 @@ see how far it got.
 ### 40 -- `EX_INTERNAL`
 
 A bug in this installer, not in your input or your box. Three things produce
-it:
+it, and only the first two can occur in this tree:
 
 * an unhandled error -- the `ERR` trap fired somewhere no failure class was
   set, or `$RUNDIR/failure-class` was missing or unreadable after the play
@@ -333,31 +435,42 @@ it:
   `"outcome": "credential_leaked_to_log"`, and the run ends here. That
   outcome is a defect in this project's redaction, and a bug report for it is
   worth more than any other;
-* **the play is not in this build.** `site.yml` and `verify.yml` have not been
-  written, and the step that would run them refuses and returns `40` rather than
-  reporting a success it cannot have had. **That arm is unreachable today**, and
-  this is the correction worth carrying: the same two files are part of the
-  manifest preflight stage A checks, so a run stops at `11` six steps earlier
-  and never gets there. If you do see `40` from this build it is one of the two
-  causes above, and it is worth an issue -- it is not the missing play.
+* **a play that is not on disk.** Step 9 looks for `site.yml` or `verify.yml`
+  before running it, and when the file is absent it logs what is missing, sets
+  the outcome to `internal_error` and returns `40` rather than reporting a
+  success it cannot have had. Both files are present in this tree, so that arm
+  cannot fire here and never has. It stays as the *last* guard rather than the
+  first: preflight's seventeen-file manifest is the other statement of the same
+  rule, and the thing that must never happen -- a build with no play reporting
+  success -- is refused by both. A `40` from this build is therefore one of the
+  two causes above, and worth an issue.
 
 For the first two, please file an issue with the transcript attached. It is
 redacted by construction and mode `0600`; read it before you attach it anyway.
 
 ## How a failure inside Ansible becomes one of these codes
 
-**This describes the play, which is not in this tree.** The mapping is
-specified; nothing has exercised it.
+**The play writes the code and the shell reads it. Both halves are written,
+and neither has been exercised by a real failure on a real host**, because no
+run has ever reached the play.
 
 `ansible-playbook` has a coarse exit status of its own, so the play does the
 mapping and the shell reads the answer rather than guessing it. Each role's
-first task records which stage it is, the play's single `rescue:` writes
-`<code> <stage>` to `$RUNDIR/failure-class`, and `install.sh` reads that file.
-The reading half is written; the writing half is not.
+first task records which stage it is in, the play's single `rescue:` runs
+`roles/report`, which writes `<code> <stage>` to `$RUNDIR/failure-class`, and
+`install.sh` reads that file.
+
+The map the machine acts on is `roles/report/vars/main.yml`; the table below
+is the copy a reader acts on; `tests/check-stage-map.sh` is a build gate that
+holds the two together in both directions and fails when a role claims a stage
+no row covers. A stage the map does not know becomes `40` deliberately -- "the
+play failed somewhere this installer has no name for" is a defect here, and
+`40` is what says so.
 
 | Stage | Code | Why that code |
 |---|---|---|
-| `preflight` | 11 `EX_PREFLIGHT` | the same conditions as stage A/B, re-asserted where `--check` can see them |
+| `init` | 40 `EX_INTERNAL` | the play failed before any role had claimed a stage. The true answer rather than a gap: it broke before it got far enough to have a better one |
+| `preflight` | 11 `EX_PREFLIGHT` | the same conditions as stage A/B, re-asserted where `--check` can see them -- plus the IoC refusal, which is this role's first check and runs before anything is touched |
 | `os_prep` | 13 `EX_DEPS` | everything it does is package and system preparation |
 | `user` | 40 `EX_INTERNAL` | an account this project fully controls did not reach the state it announced; that is a defect here or a broken box, and either way the transcript is required |
 | `upstream` | 14 `EX_UPSTREAM` | fetch or checksum |
@@ -365,7 +478,7 @@ The reading half is written; the writing half is not.
 | `env` | 15 `EX_DRIVER` | T-Pot's `.env` is missing or unwritable, which means the install did not finish |
 | `verify` | 16 `EX_VERIFY` | installed, assertion failed |
 | `finalize` | 16 `EX_VERIFY` | T-Pot is installed but the run never reached a verified state |
-| `ioc` | 10 `EX_USAGE` | `ioc_forwarding_enabled` was set true and forwarding is not implemented in this release |
+| `ioc` | 10 `EX_USAGE` | `ioc_forwarding_enabled` was set true and forwarding is not implemented in this release. THE SECOND GATE ONLY: a full run is refused at `preflight` with 11 before the first mutation, and this arm is reached only when that stage was skipped by tag selection |
 
 If the play fails and no failure class was written -- a syntax error, an
 inventory that does not parse, `ansible-playbook` not found -- the code is

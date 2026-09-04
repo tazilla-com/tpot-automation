@@ -1,0 +1,159 @@
+---
+# roles/tpot_install/tasks/workspace.yml -- the two directories upstream is
+# about to use, and the state each of them is allowed to be in.
+#
+# STAGE: upstream. Nothing here executes anything of upstream's.
+#
+# THERE ARE TWO DIRECTORIES AND THEY ARE NOT THE SAME PLACE
+#
+#   the run directory   ours. Upstream's installer is fetched into it and run
+#                       from it, and upstream downloads its playbook into it.
+#                       Nothing else lives there.
+#   the checkout        upstream's. Its own playbook clones T-Pot into
+#                       ~/tpotce, and every later task in this role edits
+#                       files inside it.
+#
+# WHY A RE-RUN IS THE INTERESTING CASE
+#   Upstream clones with `update: no`, so an existing checkout is kept exactly
+#   as it is: not refreshed, not reset, not looked at beyond one comparison.
+#   That comparison -- check_tpot_clone, install.sh:74-99 -- reads HEAD and
+#   the origin URL and nothing else. With a full-sha pin it MATCHES, which is
+#   the outcome the pin was chosen for, and it is also the reason a re-run
+#   needs thinking about: a checkout whose docker-compose.yml has been edited
+#   and whose env.example has been deleted passes that comparison unchanged.
+#   Verified 2026-09-04 by reading upstream's source at the pinned commit.
+#
+#   So the refusal a re-run needs is not upstream's. It is ours, and it is
+#   deliberately a WARNING rather than a failure: reusing a checkout is a
+#   legitimate thing to do and is much faster, and the run that must not
+#   happen silently is the one where somebody expected a fresh install and got
+#   a modified old one. tpot_force_reinstall is the switch, and it really is
+#   `rm -rf`.
+#
+# NOTHING HERE HAS EVER RUN. No checkout has ever existed to examine.
+
+- name: Look for an existing T-Pot checkout
+  ansible.builtin.stat:
+    path: "{{ tpot_install_clone_dir }}"
+  register: tpot_install_clone_stat
+  check_mode: false
+
+- name: Look for the git metadata that would make it a checkout rather than a directory
+  ansible.builtin.stat:
+    path: "{{ tpot_install_clone_dir }}/.git"
+  register: tpot_install_clone_git_stat
+  check_mode: false
+
+# `already_installed` describes what this run FOUND, and it keeps saying so
+# even when the checkout is removed a few tasks below. A run that deleted a
+# T-Pot and installed a new one is not a first install, and result.json should
+# not read as though it were.
+- name: Record whether T-Pot was already present
+  ansible.builtin.set_fact:
+    tpot_already_installed: "{{ tpot_install_clone_stat.stat.exists | default(false) }}"
+
+- name: Report what was found where upstream will clone
+  ansible.builtin.debug:
+    msg: >-
+      {{ tpot_install_clone_dir }}
+      {{ 'does not exist: this is a first install'
+         if not (tpot_install_clone_stat.stat.exists | default(false))
+         else ('exists and is a git checkout' if (tpot_install_clone_git_stat.stat.exists | default(false))
+               else 'exists and is NOT a git checkout') }}
+
+# ---------------------------------------------------------------------------
+# The destructive branch. It is guarded twice over: the path is asserted to be
+# a plausible home-relative directory before anything is removed, because it
+# is composed from tpot_home, and a tpot_home of `/` would turn this task into
+# something very different.
+# ---------------------------------------------------------------------------
+- name: Refuse to remove a checkout path that does not look like one
+  ansible.builtin.assert:
+    that:
+      - tpot_install_clone_dir is match('^/.+/tpotce$')
+    fail_msg: >-
+      {{ tpot_install_clone_dir }} is not a path this role is willing to
+      delete. It is composed from the T-Pot account's home directory, so a
+      value this shape means tpot_home is wrong rather than that the checkout
+      is somewhere unusual.
+    success_msg: "{{ tpot_install_clone_dir }} is a checkout path this role may remove"
+    quiet: true
+  when:
+    - tpot_force_reinstall | bool
+    - tpot_install_clone_stat.stat.exists | default(false)
+
+- name: Remove the existing T-Pot checkout because a reinstall was asked for
+  ansible.builtin.file:
+    path: "{{ tpot_install_clone_dir }}"
+    state: absent
+  when:
+    - tpot_force_reinstall | bool
+    - tpot_install_clone_stat.stat.exists | default(false)
+  register: tpot_install_clone_removed
+
+- name: Record that a reinstall removed an existing checkout
+  ansible.builtin.set_fact:
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings + ['tpot_force_reinstall was set and '
+         ~ tpot_install_clone_dir ~ ' was deleted before this install. Anything that was in it, '
+         ~ 'including captured attack data under the T-Pot data directory if it lived there, is gone.'] }}
+  when: tpot_install_clone_removed is defined and (tpot_install_clone_removed.changed | default(false))
+
+# The warning that matters, and the reason it is worth its noise: upstream
+# will keep this checkout and will not tell anybody it did.
+- name: Warn that an existing checkout will be reused unrefreshed
+  ansible.builtin.set_fact:
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings + [tpot_install_clone_dir ~ ' already existed and was reused. Upstream '
+         ~ 'clones with update disabled, so it is not refreshed, and the only check it makes is '
+         ~ 'that HEAD and the origin URL are the ones it asked for -- a modified compose file '
+         ~ 'passes that unchanged. Set tpot_force_reinstall to delete it and install fresh.'] }}
+  when:
+    - tpot_install_clone_stat.stat.exists | default(false)
+    - not (tpot_force_reinstall | bool)
+
+# A checkout directory that is not a git checkout is upstream's own worst
+# case: check_tpot_clone prints a note and RETURNS (install.sh:79-84), so the
+# install proceeds and the git module then fails inside upstream's playbook,
+# forty minutes in, with a message about a destination that already exists.
+- name: Warn that the checkout path exists but is not a git checkout
+  ansible.builtin.set_fact:
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings + [tpot_install_clone_dir ~ ' exists but has no git metadata. Upstream '
+         ~ 'notes this and carries on, and its own playbook then fails when it tries to clone into '
+         ~ 'a directory that is already there. Set tpot_force_reinstall, or move it aside.'] }}
+  when:
+    - tpot_install_clone_stat.stat.exists | default(false)
+    - not (tpot_install_clone_git_stat.stat.exists | default(false))
+    - not (tpot_force_reinstall | bool)
+
+# ---------------------------------------------------------------------------
+# THE STALE PAYLOAD. This is the quiet one.
+#
+# Upstream downloads its playbook only when there is not one already:
+# install.sh:502 tests for a local tpot.yml first and uses it if it finds one,
+# printing "Using local T-Pot Ansible Installation Playbook". A copy left in
+# the run directory by a PREVIOUS run at a DIFFERENT ref is therefore the
+# payload of this one -- silently, and while result.json names the new ref.
+# The branch flag pins what upstream would DOWNLOAD; it says nothing about
+# what upstream finds lying around.
+#
+# So both names it looks at are removed before every run. They cost nothing to
+# re-download and they are the difference between a pinned install and one
+# that merely reports a pin.
+# ---------------------------------------------------------------------------
+- name: Remove any playbook left in the run directory by an earlier run
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ tpot_install_payload }}"
+    - "{{ tpot_install_payload_alt }}"
+  register: tpot_install_payload_cleared
+
+- name: Report whether a stale payload was found
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'a playbook from an earlier run was removed, so this run downloads the pinned one'
+         if (tpot_install_payload_cleared.results | default([]) | selectattr('changed') | list | length) > 0
+         else 'no playbook was left in the run directory; upstream will download the pinned one' }}

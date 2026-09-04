@@ -1,0 +1,896 @@
+---
+# roles/tpot_verify/tasks/pre-reboot.yml -- what can be checked while T-Pot is
+# still stopped.
+#
+# WHAT BELONGS IN THIS FILE AND WHAT DOES NOT
+#   Everything here is a statement about FILES AND CONFIGURATION: the account,
+#   the sshd listener set, T-Pot's .env, the compose file, the docker daemon,
+#   the unit, and one kernel setting. None of it needs a container to be
+#   running, which is what makes it the half that can run inside site.yml,
+#   before the reboot T-Pot requires.
+#
+#   Anything that needs a listening socket or a running container belongs in
+#   post-reboot.yml, and putting it here would turn the pre-reboot half into a
+#   guaranteed failure on the ordinary path.
+#
+# EVERY CHECK IS THREE TASKS: probe, record, assert.
+#   The record comes BEFORE the assert, always. site.yml's rescue writes the
+#   failure class and its `always:` writes the report, so a run that stops on
+#   a failed assertion still carries the failing record into result.json --
+#   which is the difference between "verification failed" and "verification
+#   failed at env_web_user because .env has no WEB_USER line".
+#
+# NOTHING IN THIS FILE HAS EVER RUN AGAINST AN INSTALLED BOX.
+
+# ===========================================================================
+# The T-Pot account
+# ===========================================================================
+
+- name: Record whether the T-Pot account exists
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'os_user_present', 'phase': 'pre-reboot',
+         'status': (tpot_verify_passwd.rc == 0) | ternary('pass', 'fail'),
+         'reason': (tpot_verify_passwd.rc == 0)
+                   | ternary('home directory ' ~ tpot_verify_home,
+                             'getent passwd found no entry for ' ~ tpot_os_user)}] }}
+
+- name: Assert the T-Pot account exists and has a home directory
+  ansible.builtin.assert:
+    that:
+      - tpot_verify_passwd.rc == 0
+      - tpot_verify_home | length > 0
+    fail_msg: >-
+      There is no passwd entry for "{{ tpot_os_user }}", or it carries no home
+      directory. Everything else this role checks lives under that directory,
+      so there is nothing further to verify. On a --verify-only run this
+      usually means tpot_os_user does not name the account the install
+      actually used.
+    success_msg: "{{ tpot_os_user }} exists, home {{ tpot_verify_home }}"
+    quiet: true
+
+# ---------------------------------------------------------------------------
+# The shadow field.
+#
+# WHY `passwd -S` AND NOT `getent shadow`
+#   `getent shadow` returns the HASH. This check does not need it and must not
+#   have it: a hash in a register is a hash in the transcript the moment
+#   somebody runs with -vvv, and the transcript is the artefact SECURITY.md
+#   invites people to attach to a report. `passwd -S` answers the question
+#   that was actually asked -- L (locked), P (a usable password), NP (no
+#   password at all) -- and cannot print a credential because it never reads
+#   one out.
+#
+#   That is also why this task carries no no_log: there is nothing here to
+#   hide, and hiding it would cost the diagnosis when it fails.
+#
+# WHAT IS COMPARED AGAINST WHAT
+#   The expectation is derived from tpot_os_user_password_policy, the declared
+#   INTENT, and not from what another role says it did. Verification that
+#   checks a role against its own announcement proves the announcement, not
+#   the box. The announcement is cross-checked separately, below, as its own
+#   record -- so a disagreement between the two is visible as a disagreement
+#   rather than as one of them quietly winning.
+#
+#   `NP` is a failure under BOTH policies. Under `locked` it is obviously
+#   wrong; under `set` it means the password write did not take, and an
+#   account that can be logged into with an empty password is worse than
+#   either intended outcome.
+# ---------------------------------------------------------------------------
+- name: Ask what state the T-Pot account's password is in
+  ansible.builtin.command:
+    argv:
+      - passwd
+      - -S
+      - "{{ tpot_os_user }}"
+  register: tpot_verify_shadow
+  # Reading a status changes nothing, and a box without shadow-utils is a
+  # finding to record rather than an error that stops the role.
+  changed_when: false
+  failed_when: false
+
+- name: Take the status letter out of the answer
+  ansible.builtin.set_fact:
+    # Field 2 of `passwd -S`. The trailing empties keep the index in range
+    # when the command produced nothing at all.
+    tpot_verify_shadow_state: >-
+      {{ ((tpot_verify_shadow.stdout | default('') | trim).split() + ['', ''])[1] }}
+    tpot_verify_shadow_expected: "{{ (tpot_os_user_password_policy == 'set') | ternary('P', 'L') }}"
+
+- name: Record the state of the T-Pot account's password
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'os_user_shadow', 'phase': 'pre-reboot',
+         'status': (tpot_verify_shadow.rc != 0) | ternary('skipped',
+                   (tpot_verify_shadow_state == tpot_verify_shadow_expected)
+                   | ternary('pass', 'fail')),
+         'reason': (tpot_verify_shadow.rc != 0)
+                   | ternary('passwd -S exited ' ~ tpot_verify_shadow.rc
+                             ~ '; the shadow state could not be read',
+                             'policy ' ~ tpot_os_user_password_policy
+                             ~ ' expects ' ~ tpot_verify_shadow_expected
+                             ~ ', passwd -S reports ' ~ tpot_verify_shadow_state)}] }}
+
+- name: Assert the T-Pot account's password is in the state the policy declares
+  ansible.builtin.assert:
+    that:
+      - tpot_verify_shadow.rc != 0 or tpot_verify_shadow_state == tpot_verify_shadow_expected
+    fail_msg: >-
+      tpot_os_user_password_policy is "{{ tpot_os_user_password_policy }}", so
+      the account should report "{{ tpot_verify_shadow_expected }}", and
+      passwd -S reports "{{ tpot_verify_shadow_state }}". "NP" here means the
+      account has NO password and can be logged into without one, which is the
+      one outcome neither policy asks for.
+    success_msg: "password state {{ tpot_verify_shadow_state }}, as the policy declares"
+    quiet: true
+
+# ---------------------------------------------------------------------------
+# The cross-check against what the tpot_user role announced.
+#
+# tpot_user contributes to tpot_report_accounts, which is free-form and is
+# passed through to result.json verbatim. If it announced a password state,
+# comparing it against the box costs nothing and catches a role that reported
+# one thing and did another.
+#
+# WHEN THE ANNOUNCEMENT IS ABSENT THIS IS `skipped`, WITH A REASON. It is
+# absent on every --verify-only run, because tpot_user did not run: verify.yml
+# initialises tpot_report_accounts to an empty mapping and nothing fills it.
+# Recording that as `pass` would be claiming a comparison that never happened.
+# ---------------------------------------------------------------------------
+- name: Take the announced password state out of the accounts record
+  ansible.builtin.set_fact:
+    tpot_verify_shadow_announced: >-
+      {{ ((tpot_report_accounts | default({}, true)).get('os_user') | default({}, true))
+         .get('password_state') | default('', true) }}
+
+- name: Record the announced password state against the box
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'os_user_shadow_announced', 'phase': 'pre-reboot',
+         'status': (tpot_verify_shadow_announced | length == 0) | ternary('skipped',
+                   (tpot_verify_shadow_announced == tpot_os_user_password_policy)
+                   | ternary('pass', 'fail')),
+         'reason': (tpot_verify_shadow_announced | length == 0)
+                   | ternary('no role in this run announced a password state for the account, '
+                             ~ 'so there was nothing to compare the box against',
+                             'announced ' ~ tpot_verify_shadow_announced
+                             ~ ', policy ' ~ tpot_os_user_password_policy)}] }}
+
+- name: Assert the announced password state matches the declared policy
+  ansible.builtin.assert:
+    that:
+      - tpot_verify_shadow_announced | length == 0
+        or tpot_verify_shadow_announced == tpot_os_user_password_policy
+    fail_msg: >-
+      The account was announced as "{{ tpot_verify_shadow_announced }}" and the
+      declared policy is "{{ tpot_os_user_password_policy }}". Two parts of
+      this run disagree about what the account was meant to be, which is a
+      defect in the installer rather than a fault on this host.
+    success_msg: the announced password state agrees with the declared policy
+    quiet: true
+
+# ===========================================================================
+# sshd -- where the administrative listener actually is
+# ===========================================================================
+#
+# WHY THIS ASKS sshd AND DOES NOT READ sshd_config
+#   Upstream's port move is BEST EFFORT and its regex misses more than it
+#   catches. Measured 2026-09-04 against the pinned commit: its
+#   `^(Port (?!64295$)[0-9]+)` (installer/install/tpot.yml:621) does not match
+#   lowercase `port`, a line with leading whitespace, `Port  2226` with two
+#   spaces, `Port=2227`, or `ListenAddress 0.0.0.0:2228` -- and every one of
+#   those was then validated by sshd itself as a REAL extra listener.
+#
+#   The ListenAddress case is the worst of them, because it is not additive:
+#   sshd binds 2228 and does NOT bind 64295 at all. A check that only asked
+#   "is 64295 configured?" would pass on a box whose administrative port is
+#   somewhere else entirely, which is precisely the box an unattended
+#   installer must not hand back as finished.
+#
+#   So the assertion is not "64295 is configured". It is "64295 is bound AND
+#   NOTHING ELSE IS", and it is answered by `sshd -T` -- sshd's own effective
+#   configuration, with every include resolved and every spelling normalised.
+#   Re-implementing that resolution over sshd_config and sshd_config.d/*.conf
+#   is how the parser above got it wrong in the first place.
+#
+#   A non-zero exit from `sshd -T` is itself a finding, and a specific one: a
+#   sshd_config ending in a Match block takes upstream's appended `Port 64295`
+#   INSIDE the block, sshd -t returns 255, and Debian's unit carries
+#   RestartPreventExitStatus=255 -- so sshd comes back on neither port.
+
+- name: Find the sshd binary
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ tpot_verify_sshd_binaries }}"
+  register: tpot_verify_sshd_stat
+
+- name: Note which sshd binary answers
+  ansible.builtin.set_fact:
+    tpot_verify_sshd_bin: >-
+      {{ (tpot_verify_sshd_stat.results | selectattr('stat.exists', 'defined')
+          | selectattr('stat.exists') | map(attribute='item') | list + [''])[0] }}
+
+- name: Ask sshd for its effective configuration
+  ansible.builtin.command:
+    argv:
+      - "{{ tpot_verify_sshd_bin }}"
+      - -T
+  register: tpot_verify_sshd
+  # -T is extended test mode: it parses the configuration and prints it. It
+  # writes nothing, starts nothing and binds nothing. No module reads sshd's
+  # RESOLVED configuration, and reading the files instead is the mistake this
+  # whole section exists to avoid.
+  changed_when: false
+  failed_when: false
+  when: tpot_verify_sshd_bin | length > 0
+
+- name: Record whether sshd's configuration parses at all
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'sshd_config_valid', 'phase': 'pre-reboot',
+         'status': (tpot_verify_sshd_bin | length == 0) | ternary('skipped',
+                   ((tpot_verify_sshd.rc | default(1)) == 0) | ternary('pass', 'fail')),
+         'reason': (tpot_verify_sshd_bin | length == 0)
+                   | ternary('no sshd binary was found at any of '
+                             ~ (tpot_verify_sshd_binaries | join(', ') | default('the known locations', true)),
+                             ((tpot_verify_sshd.rc | default(1)) == 0)
+                             | ternary(none,
+                                       'sshd -T exited '
+                                       ~ (tpot_verify_sshd.rc | default('?')) ~ ': '
+                                       ~ ((tpot_verify_sshd.stderr | default('')) | truncate(300, true))))}] }}
+
+- name: Assert sshd's configuration parses
+  ansible.builtin.assert:
+    that:
+      - tpot_verify_sshd_bin | length == 0 or (tpot_verify_sshd.rc | default(1)) == 0
+    fail_msg: >-
+      sshd -T exited {{ tpot_verify_sshd.rc | default('?') }}, so sshd itself
+      refuses this configuration and the effective listener set cannot be
+      established. SSHD'S OWN MESSAGE IS THE AUTHORITY ON WHY, and it is
+      quoted below. The cause to suspect first on a host upstream has just
+      touched is a sshd_config that ends in a Match block: upstream appends
+      "Port {{ tpot_admin_ssh_port }}" with insertafter EOF, the line lands
+      inside the block, and on Debian the unit's RestartPreventExitStatus=255
+      then leaves sshd started on neither port. Other causes -- a missing host
+      key, a directive this build does not know -- land here too and say so.
+      sshd said: {{ (tpot_verify_sshd.stderr | default('')) | truncate(300, true) }}
+    success_msg: sshd -T parsed the configuration
+    quiet: true
+
+- name: Read the port and listenaddress directives out of sshd's own answer
+  ansible.builtin.set_fact:
+    tpot_verify_sshd_ports: >-
+      {{ tpot_verify_sshd.stdout_lines | default([])
+         | select('match', '^port [0-9]+$')
+         | map('regex_replace', '^port ', '') | map('int') | list }}
+    tpot_verify_sshd_addrs: >-
+      {{ tpot_verify_sshd.stdout_lines | default([])
+         | select('match', '^listenaddress ')
+         | map('regex_replace', '^listenaddress ', '') | list }}
+
+- name: Reduce those directives to the set of ports sshd will bind
+  ansible.builtin.set_fact:
+    # sshd's own rule, reproduced: a ListenAddress that names a port binds
+    # that port; a ListenAddress with no port is expanded with every Port
+    # directive; and the Port directives apply on their own only when there is
+    # no ListenAddress at all. That is why `ListenAddress 0.0.0.0:2228` takes
+    # the box off 64295 rather than adding to it.
+    tpot_verify_sshd_bound: >-
+      {{ ((tpot_verify_sshd_addrs | select('match', tpot_verify_listenaddr_port_re)
+           | map('regex_replace', '^.*:', '') | map('int') | list)
+          + (tpot_verify_sshd_ports
+             if (tpot_verify_sshd_addrs | length == 0
+                 or (tpot_verify_sshd_addrs | reject('match', tpot_verify_listenaddr_port_re)
+                     | list | length > 0))
+             else [])) | unique | sort }}
+
+- name: Record whether the administrative SSH port is one sshd will bind
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'sshd_admin_port', 'phase': 'pre-reboot',
+         'status': ((tpot_verify_sshd.rc | default(1)) != 0) | ternary('skipped',
+                   ((tpot_admin_ssh_port | int) in tpot_verify_sshd_bound)
+                   | ternary('pass', 'fail')),
+         'reason': ((tpot_verify_sshd.rc | default(1)) != 0)
+                   | ternary('sshd -T did not answer, so the effective listener set is unknown',
+                             'sshd will bind ' ~ (tpot_verify_sshd_bound | join(', ') | default('nothing', true)))}] }}
+
+- name: Assert sshd will bind the administrative SSH port
+  ansible.builtin.assert:
+    that:
+      - (tpot_verify_sshd.rc | default(1)) != 0
+        or (tpot_admin_ssh_port | int) in tpot_verify_sshd_bound
+    fail_msg: >-
+      sshd will bind {{ tpot_verify_sshd_bound | join(', ') | default('nothing', true) }}
+      and tpot_admin_ssh_port is {{ tpot_admin_ssh_port }}. After the reboot
+      tcp/{{ tpot_verify_honeypot_ssh_port }} belongs to a honeypot, so a host
+      that is not listening on {{ tpot_admin_ssh_port }} is a host nobody can
+      log in to.
+    success_msg: "sshd will bind the administrative port {{ tpot_admin_ssh_port }}"
+    quiet: true
+
+- name: Record whether any other sshd listener survived
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'sshd_extra_listeners', 'phase': 'pre-reboot',
+         'status': ((tpot_verify_sshd.rc | default(1)) != 0) | ternary('skipped',
+                   ((tpot_verify_sshd_bound | difference([tpot_admin_ssh_port | int])) | length == 0)
+                   | ternary('pass', 'fail')),
+         'reason': ((tpot_verify_sshd.rc | default(1)) != 0)
+                   | ternary('sshd -T did not answer, so the effective listener set is unknown',
+                             ((tpot_verify_sshd_bound | difference([tpot_admin_ssh_port | int])) | length == 0)
+                             | ternary(none,
+                                       'sshd will also bind '
+                                       ~ (tpot_verify_sshd_bound
+                                          | difference([tpot_admin_ssh_port | int]) | join(', '))))}] }}
+
+- name: Assert no sshd listener other than the administrative one survived
+  ansible.builtin.assert:
+    that:
+      - (tpot_verify_sshd.rc | default(1)) != 0
+        or (tpot_verify_sshd_bound | difference([tpot_admin_ssh_port | int])) | length == 0
+    fail_msg: >-
+      sshd will also bind
+      {{ tpot_verify_sshd_bound | difference([tpot_admin_ssh_port | int]) | join(', ') }}.
+      Upstream's port move is best effort and its pattern misses lowercase
+      "port", leading whitespace, doubled spaces, "Port=" and
+      "ListenAddress host:port"; a surviving listener either takes a port a
+      honeypot wants or, in the ListenAddress case, replaces the
+      administrative port outright.
+    success_msg: "sshd binds {{ tpot_admin_ssh_port }} and nothing else"
+    quiet: true
+
+# ===========================================================================
+# T-Pot's .env
+# ===========================================================================
+#
+# THIS SECTION MUST EMIT NOTHING. WEB_USER holds a base64-wrapped htpasswd
+# record -- a bcrypt/APR1 hash of the dashboard password, keyed to a username.
+# It is a credential, and the two credential incidents this platform has had
+# were both an artefact printing something it held rather than a secrets
+# system failing.
+#
+# So nothing here slurps the file. Each probe is `grep -c`, which prints a
+# COUNT and never a line, and each carries no_log so that not even the
+# invocation object reaches a -vvv transcript. Each is followed by a task that
+# is NOT no_log and prints the rc, so a failure is still diagnosable: "the
+# check could not be run" and "the check ran and failed" must stay
+# distinguishable, and no_log on its own destroys that distinction.
+
+- name: Check whether T-Pot's .env exists
+  ansible.builtin.stat:
+    path: "{{ tpot_verify_env_file }}"
+  register: tpot_verify_env_stat
+
+- name: Record whether T-Pot's .env exists
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'env_file_present', 'phase': 'pre-reboot',
+         'status': (tpot_verify_env_stat.stat.exists | default(false)) | ternary('pass', 'fail'),
+         'reason': (tpot_verify_env_stat.stat.exists | default(false))
+                   | ternary(none, tpot_verify_env_file ~ ' does not exist')}] }}
+
+- name: Assert T-Pot's .env exists
+  ansible.builtin.assert:
+    that:
+      - tpot_verify_env_stat.stat.exists | default(false)
+    fail_msg: >-
+      {{ tpot_verify_env_file }} does not exist. It is git-tracked upstream and
+      ships in the checkout byte-identical to env.example, so it is present
+      from the moment the clone lands -- its absence means the clone did not
+      land, or something removed it. An install that did not produce this file
+      did not happen.
+    success_msg: T-Pot's .env is present
+    quiet: true
+
+- name: Count the WEB_USER lines that carry a base64 htpasswd value
+  ansible.builtin.command:
+    argv:
+      - grep
+      - -c
+      - -E
+      # Anchored at both ends and restricted to the base64 alphabet, so a line
+      # that is `WEB_USER=` followed by nothing, or by a bare carriage return
+      # left behind by a CRLF checkout, cannot satisfy it: CR is not in the
+      # class and `$` does not skip it. Eight characters is far below any real
+      # htpasswd record and is there only to reject debris.
+      - '^WEB_USER=[A-Za-z0-9+/=]{8,}$'
+      - "{{ tpot_verify_env_file }}"
+  register: tpot_verify_web_user_strict
+  # grep is the right tool here precisely because it does not return the line.
+  # A lineinfile or slurp would put the credential in a register.
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: tpot_verify_env_stat.stat.exists | default(false)
+
+- name: Report that the WEB_USER probe ran
+  # Not no_log. It prints an exit status and nothing else, and without it a
+  # failure in the task above is a silent one.
+  ansible.builtin.debug:
+    msg: >-
+      WEB_USER probe rc={{ tpot_verify_web_user_strict.rc | default('not run') }}
+      (0 found, 1 no match, 2 could not read)
+
+- name: Count the WEB_USER lines of any shape
+  ansible.builtin.command:
+    argv:
+      - grep
+      - -c
+      - -E
+      - '^WEB_USER='
+      - "{{ tpot_verify_env_file }}"
+  register: tpot_verify_web_user_any
+  # The second count exists to tell two different failures apart: upstream's
+  # own `sed -i "s|^WEB_USER=.*|...|"` FAILS OPEN -- with no WEB_USER line it
+  # matches nothing, changes nothing and exits 0 -- so "no line at all" and
+  # "a line with nothing usable in it" have different causes and different
+  # fixes.
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: tpot_verify_env_stat.stat.exists | default(false)
+
+- name: Report that the second WEB_USER probe ran
+  ansible.builtin.debug:
+    msg: "WEB_USER shape probe rc={{ tpot_verify_web_user_any.rc | default('not run') }}"
+
+- name: Note what the two WEB_USER counts were
+  ansible.builtin.set_fact:
+    tpot_verify_web_user_n: "{{ (tpot_verify_web_user_strict.stdout | default('0') | trim | int) }}"
+    tpot_verify_web_user_lines: "{{ (tpot_verify_web_user_any.stdout | default('0') | trim | int) }}"
+    tpot_verify_wants_web_user: "{{ tpot_install_type in tpot_verify_dashboard_types }}"
+
+- name: Record whether the dashboard credential reached T-Pot's .env
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'env_web_user', 'phase': 'pre-reboot',
+         'status': (not (tpot_verify_wants_web_user | bool)) | ternary('skipped',
+                   (not (tpot_verify_env_stat.stat.exists | default(false))) | ternary('skipped',
+                   ((tpot_verify_web_user_n | int) == 1) | ternary('pass', 'fail'))),
+         'reason': (not (tpot_verify_wants_web_user | bool))
+                   | ternary('install type ' ~ tpot_install_type
+                             ~ ' has no dashboard, so no WEB_USER is written for it',
+                   (not (tpot_verify_env_stat.stat.exists | default(false)))
+                   | ternary('.env does not exist, so its contents were not examined',
+                             (tpot_verify_web_user_n | int | string)
+                             ~ ' line(s) carry a value, out of '
+                             ~ (tpot_verify_web_user_lines | int | string)
+                             ~ ' WEB_USER line(s)'))}] }}
+
+- name: Assert exactly one WEB_USER line carries a credential
+  ansible.builtin.assert:
+    that:
+      - not (tpot_verify_wants_web_user | bool)
+        or not (tpot_verify_env_stat.stat.exists | default(false))
+        or (tpot_verify_web_user_n | int) == 1
+    fail_msg: >-
+      {{ tpot_verify_env_file }} has {{ tpot_verify_web_user_lines }} WEB_USER
+      line(s) and {{ tpot_verify_web_user_n }} of them carry a base64 value; it
+      must be exactly one. Zero lines at all means upstream's own sed failed
+      open -- it changes nothing and exits 0 when the key is absent. One empty
+      line means the credential write did not take. More than one means the
+      dashboard credential is ambiguous. A file with CRLF line endings fails
+      here too, and correctly so: the carriage return becomes part of the
+      value compose hands on, and tpot_normalize_line_endings exists to stop
+      exactly that. Nothing is printed here: the value is a password hash.
+    success_msg: exactly one WEB_USER line carries a value
+    quiet: true
+
+# ---------------------------------------------------------------------------
+# LS_WEB_USER -- the line this project must never have touched.
+#
+# It is upstream-managed sensor-to-hive state: a hive joins a sensor by
+# writing it, through upstream's own deploy.sh. This release writes it never,
+# under any setting, and the example inventory says so beside
+# tpot_web_env_force.
+#
+# THE VERDICT IS `warn` AND NOT `fail`, DELIBERATELY. A non-empty LS_WEB_USER
+# did not come from this installer -- but it may perfectly well have come from
+# the operator, from upstream's deploy.sh, or from an earlier hive join, and
+# this role cannot tell those apart from a defect. Failing the run would mean
+# refusing to verify a legitimately joined sensor. Warning says the true
+# thing: it is set, we did not set it, look at it.
+# ---------------------------------------------------------------------------
+- name: Count the LS_WEB_USER lines that carry a value
+  ansible.builtin.command:
+    argv:
+      - grep
+      - -c
+      - -E
+      # `[^[:space:]]` after the `=` rather than an anchored empty match, so a
+      # file with CRLF line endings is not mistaken for a set value: a bare
+      # carriage return is whitespace and does not satisfy it.
+      - '^LS_WEB_USER=[^[:space:]]'
+      - "{{ tpot_verify_env_file }}"
+  register: tpot_verify_ls_web_user
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: tpot_verify_env_stat.stat.exists | default(false)
+
+- name: Report that the LS_WEB_USER probe ran
+  ansible.builtin.debug:
+    msg: "LS_WEB_USER probe rc={{ tpot_verify_ls_web_user.rc | default('not run') }}"
+
+- name: Record whether LS_WEB_USER was left alone
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'env_ls_web_user_untouched', 'phase': 'pre-reboot',
+         'status': (not (tpot_verify_env_stat.stat.exists | default(false))) | ternary('skipped',
+                   ((tpot_verify_ls_web_user.stdout | default('0') | trim | int) == 0)
+                   | ternary('pass', 'warn')),
+         'reason': (not (tpot_verify_env_stat.stat.exists | default(false)))
+                   | ternary('.env does not exist, so its contents were not examined',
+                             ((tpot_verify_ls_web_user.stdout | default('0') | trim | int) == 0)
+                             | ternary('empty, as this release always leaves it',
+                                       'set; this release never writes it, so something else did'))}] }}
+
+- name: Warn when LS_WEB_USER carries a value this release did not write
+  ansible.builtin.set_fact:
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings + ['LS_WEB_USER is set in ' ~ tpot_verify_env_file
+         ~ '. This installer never writes it -- it is upstream-managed sensor-to-hive '
+         ~ 'state -- so it came from upstream deploy.sh, from an earlier hive join, or by hand.'] }}
+  when:
+    - tpot_verify_env_stat.stat.exists | default(false)
+    - (tpot_verify_ls_web_user.stdout | default('0') | trim | int) > 0
+
+# ===========================================================================
+# The compose file
+# ===========================================================================
+#
+# WHY THE FILE ITSELF IS THE FIRST CHECK IN THIS SECTION
+#   Everything this role says about containers is derived from this one file:
+#   which services exist, whether the telemetry block was really removed, and
+#   -- when tpot_min_containers was not supplied -- how many containers a
+#   healthy install of this edition has.
+#
+#   An unreadable file does not FAIL those checks. It EMPTIES them. An empty
+#   service list makes the telemetry check `skipped`, and the floor it would
+#   have produced falls through to zero, which made the post-reboot running
+#   count `skipped` as well -- so the two checks that would have noticed went
+#   quiet together, the play succeeded, and `install.sh --verify-only`
+#   returned 0, "installed AND verified", for a box whose container count was
+#   never established. That is the first property docs/exit-codes.md promises,
+#   broken silently by a missing file.
+#
+#   So the file gets its own record and its own assertion, before anything is
+#   read out of it. A check whose input is absent must fail loudly at the
+#   input rather than quietly at each of its consumers.
+#
+#   Note that this is not a guess about a box we have never seen: upstream's
+#   own clone ships docker-compose.yml, and roles/tpot_install copies
+#   compose/<edition>.yml over it. An install that reaches verification
+#   without this file did not finish.
+
+- name: Check whether the installed compose file exists
+  ansible.builtin.stat:
+    path: "{{ tpot_verify_compose_file }}"
+  register: tpot_verify_compose_stat
+
+- name: Read the installed compose file
+  ansible.builtin.slurp:
+    src: "{{ tpot_verify_compose_file }}"
+  register: tpot_verify_compose_raw
+  # It carries no values, only ${VARIABLE} references into .env, so reading it
+  # into a register cannot expose a credential the way reading .env would.
+  failed_when: false
+  # Guarded on the stat rather than left to fail. slurp on a missing path
+  # fails the task, and under failed_when: false that outcome is
+  # indistinguishable in the register from a file that is present and empty.
+  # Those two have different causes and different fixes, and the record below
+  # names which one happened.
+  when: tpot_verify_compose_stat.stat.exists | default(false)
+
+- name: Note which services the installed compose file declares
+  # A block with a rescue, because parsing is the step that can RAISE rather
+  # than merely return something unhelpful: `from_yaml` raises on input that
+  # is not YAML, and `.get('services')` raises again on a document whose top
+  # level is not a mapping. Either raise inside a bare set_fact would leave
+  # this role through the play's own rescue carrying a Jinja error message,
+  # when what the caller is owed is a named record saying the compose file did
+  # not parse. The rescue turns the raise into exactly that.
+  block:
+    - name: Parse the installed compose file
+      ansible.builtin.set_fact:
+        # Parsed as YAML, not grepped. D-09 requires the telemetry removal to
+        # be STRUCTURAL: the block is 22 lines and byte-identical across the
+        # editions but sits at six different line ranges, so a line-based
+        # check answers a question about text rather than about what compose
+        # will start.
+        tpot_verify_compose_services: >-
+          {{ ((tpot_verify_compose_raw.content | default('') | b64decode | from_yaml)
+              | default({}, true)).get('services') | default({}, true) | list }}
+        tpot_verify_compose_parsed: true
+  rescue:
+    - name: Note that the installed compose file did not parse
+      ansible.builtin.set_fact:
+        tpot_verify_compose_services: []
+        tpot_verify_compose_parsed: false
+
+- name: Record whether the installed compose file is readable and declares services
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'compose_file_present', 'phase': 'pre-reboot',
+         'status': ((tpot_verify_compose_stat.stat.exists | default(false))
+                    and (tpot_verify_compose_parsed | bool)
+                    and (tpot_verify_compose_services | length) > 0)
+                   | ternary('pass', 'fail'),
+         'reason': (not (tpot_verify_compose_stat.stat.exists | default(false)))
+                   | ternary(tpot_verify_compose_file ~ ' does not exist',
+                   (not (tpot_verify_compose_parsed | bool))
+                   | ternary(tpot_verify_compose_file ~ ' could not be read, or is not YAML',
+                   ((tpot_verify_compose_services | length) == 0)
+                   | ternary(tpot_verify_compose_file ~ ' parses but declares no services',
+                             (tpot_verify_compose_services | length | string)
+                             ~ ' service(s) declared')))}] }}
+
+- name: Assert the installed compose file is readable and declares services
+  ansible.builtin.assert:
+    that:
+      - tpot_verify_compose_stat.stat.exists | default(false)
+      - tpot_verify_compose_parsed | bool
+      - (tpot_verify_compose_services | length) > 0
+    fail_msg: >-
+      {{ tpot_verify_compose_file }} is missing, unreadable, or declares no
+      services. Upstream's clone ships docker-compose.yml and this installer
+      copies compose/{{ tpot_install_type }}'s edition over it, so an install
+      that got this far without it did not finish. Everything this role says
+      about containers is read out of that file -- the telemetry opt-out and
+      the number of containers a healthy install has -- and without it those
+      checks do not fail, they go silent, which would let a box nobody has
+      counted be reported as verified.
+    success_msg: >-
+      {{ tpot_verify_compose_file }} declares
+      {{ tpot_verify_compose_services | length }} service(s)
+    quiet: true
+
+- name: Record whether the telemetry service is absent
+  # The `(services | length) == 0` guard below is unreachable as this file is
+  # ordered today -- the assertion above refuses to continue with a compose
+  # file that yielded no services. It is kept rather than deleted because
+  # without it an empty service list reads as `pass` here: `x in []` is false,
+  # which is the fail-open shape this section exists to remove. It is a guard
+  # against a future reordering, not a live branch.
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'compose_telemetry_absent', 'phase': 'pre-reboot',
+         'status': ((tpot_verify_compose_services | length) == 0) | ternary('skipped',
+                   (tpot_upstream_telemetry != 'off') | ternary('skipped',
+                   ((tpot_verify_telemetry_service in tpot_verify_compose_services)
+                    | ternary('fail', 'pass')))),
+         'reason': ((tpot_verify_compose_services | length) == 0)
+                   | ternary(tpot_verify_compose_file ~ ' could not be read or declares no services',
+                   (tpot_upstream_telemetry != 'off')
+                   | ternary('tpot_upstream_telemetry is "' ~ tpot_upstream_telemetry
+                             ~ '", so upstream telemetry is left in place on purpose',
+                             (tpot_verify_compose_services | length | string)
+                             ~ ' service(s) declared, '
+                             ~ (tpot_verify_telemetry_service in tpot_verify_compose_services)
+                               | ternary(tpot_verify_telemetry_service ~ ' among them',
+                                         tpot_verify_telemetry_service ~ ' not among them')))}] }}
+
+- name: Assert the telemetry service is gone when telemetry is off
+  ansible.builtin.assert:
+    that:
+      - (tpot_verify_compose_services | length) == 0
+        or tpot_upstream_telemetry != 'off'
+        or tpot_verify_telemetry_service not in tpot_verify_compose_services
+    fail_msg: >-
+      tpot_upstream_telemetry is "off" but {{ tpot_verify_compose_file }} still
+      declares the {{ tpot_verify_telemetry_service }} service. Upstream offers
+      no .env key for this: removing the service block is the only opt-out, so
+      the block being present means the box will submit captured attack data
+      to the community dashboard.
+    success_msg: "the {{ tpot_verify_telemetry_service }} service is not in the compose file"
+    quiet: true
+
+# ---------------------------------------------------------------------------
+# The container floor -- decided here, before the reboot, and asserted here.
+#
+# WHY IT IS DECIDED IN THE PRE-REBOOT HALF AND USED IN THE POST-REBOOT ONE
+#   The floor is a property of the installed compose file, which is a
+#   pre-reboot fact. Deciding it where its input is read means the run refuses
+#   to continue without one at the moment the input is in front of it, instead
+#   of reaching the count check after a reboot, finding nothing to compare
+#   against, and recording that as `skipped`.
+#
+# WHY A FLOOR OF ZERO IS NOT A FLOOR
+#   tpot_min_containers is one of the eight schema keys with NO default, and
+#   the example inventory is explicit about why: a guessed number turns
+#   verification into either a rubber stamp or a false alarm. So when it is
+#   absent this does not guess -- it COUNTS, from the compose file that was
+#   actually installed. Every service in every upstream compose file is
+#   `restart: always` and none is a one-shot, so one service block is one
+#   running container, and the file already has the telemetry block removed or
+#   not according to how this run was configured.
+#
+#   What it must never do is fall through to zero. "At least zero containers
+#   are running" is satisfied by every box in the world, including one where
+#   upstream's installer pulled no images and started nothing -- and upstream
+#   exits 0 either way, which is the whole reason the count check exists.
+#   lib/varschema.json says the same thing about the supplied value:
+#   tpot_min_containers has "min": 1. This assertion applies that rule to the
+#   derived value as well.
+# ---------------------------------------------------------------------------
+- name: Decide how many containers a healthy install of this edition has
+  ansible.builtin.set_fact:
+    tpot_verify_container_floor: >-
+      {{ tpot_min_containers | default(tpot_verify_compose_services | default([]) | length, true) }}
+    # `| default(0, true) > 0` rather than `is defined`, because the floor
+    # above uses the same truthiness: a supplied zero is falsy, so it does NOT
+    # take effect and the service count is used instead. Naming
+    # tpot_min_containers as the source in that case would name a value the
+    # run did not use.
+    tpot_verify_container_floor_source: >-
+      {{ ((tpot_min_containers | default(0, true) | int) > 0)
+         | ternary('tpot_min_containers',
+                   'the ' ~ (tpot_verify_compose_services | default([]) | length | string)
+                   ~ ' service block(s) in the installed compose file') }}
+
+- name: Record the container floor this run will verify against
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'container_floor', 'phase': 'pre-reboot',
+         'status': ((tpot_verify_container_floor | int) >= 1) | ternary('pass', 'fail'),
+         'reason': ((tpot_verify_container_floor | int) >= 1)
+                   | ternary('at least ' ~ (tpot_verify_container_floor | int | string)
+                             ~ ' running container(s) expected, from '
+                             ~ tpot_verify_container_floor_source,
+                             'no floor could be established: tpot_min_containers was not supplied '
+                             ~ 'and ' ~ tpot_verify_compose_file ~ ' yielded no service count')}] }}
+
+- name: Assert a container floor could be established
+  ansible.builtin.assert:
+    that:
+      - (tpot_verify_container_floor | int) >= 1
+    fail_msg: >-
+      The container floor came out as {{ tpot_verify_container_floor | int }}:
+      tpot_min_containers was not supplied and {{ tpot_verify_compose_file }}
+      yielded no service count. The post-reboot check would then compare the
+      running containers against zero, which every box satisfies -- including
+      one where upstream's installer pulled no images and started nothing, and
+      exited 0 anyway, as it does whether or not it worked. Supply
+      tpot_min_containers, or find out why the installed compose file declares
+      no services.
+    success_msg: >-
+      container floor {{ tpot_verify_container_floor | int }}, from
+      {{ tpot_verify_container_floor_source }}
+    quiet: true
+
+# ===========================================================================
+# docker, the unit, and the one kernel setting Elasticsearch needs
+# ===========================================================================
+
+- name: Ask the docker daemon for its version
+  ansible.builtin.command:
+    argv:
+      - docker
+      - info
+      - --format
+      # Escaped from Jinja: the braces are Go template syntax for docker, not
+      # a template for Ansible to expand.
+      - "{% raw %}{{.ServerVersion}}{% endraw %}"
+  register: tpot_verify_docker
+  # `docker info` is the cheapest question that requires the DAEMON to answer.
+  # `docker --version` does not: it prints the client version happily with no
+  # daemon running at all, which is the check that looks right and proves
+  # nothing.
+  changed_when: false
+  failed_when: false
+
+- name: Record whether the docker daemon answered
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'docker_daemon', 'phase': 'pre-reboot',
+         'status': (tpot_verify_docker.rc == 0
+                    and (tpot_verify_docker.stdout | default('') | trim | length) > 0)
+                   | ternary('pass', 'fail'),
+         'reason': (tpot_verify_docker.rc == 0)
+                   | ternary('server ' ~ (tpot_verify_docker.stdout | default('') | trim),
+                             'docker info exited ' ~ tpot_verify_docker.rc)}] }}
+
+- name: Assert the docker daemon is reachable
+  ansible.builtin.assert:
+    that:
+      - tpot_verify_docker.rc == 0
+      - (tpot_verify_docker.stdout | default('') | trim | length) > 0
+    fail_msg: >-
+      The docker daemon did not answer (docker info exited
+      {{ tpot_verify_docker.rc }}). Every container assertion after the reboot
+      depends on it, and upstream's own installer exits 0 whether or not its
+      image pull worked -- so this is one of the checks that has to stand in
+      for an exit status that means nothing.
+    success_msg: "docker daemon reachable, server {{ tpot_verify_docker.stdout | default('') | trim }}"
+    quiet: true
+
+- name: Ask systemd whether the T-Pot unit is enabled
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-enabled
+      - "{{ tpot_verify_service_unit }}"
+  register: tpot_verify_unit_enabled
+  # `is-enabled` is a one-word answer to exactly this question. service_facts
+  # collects every unit on the box to answer it less precisely, and
+  # ansible.builtin.systemd would be a state-changing module used as a reader.
+  changed_when: false
+  failed_when: false
+
+- name: Record whether the T-Pot unit is enabled
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'tpot_service_enabled', 'phase': 'pre-reboot',
+         'status': ((tpot_verify_unit_enabled.stdout | default('') | trim) == 'enabled')
+                   | ternary('pass', 'fail'),
+         'reason': 'systemctl is-enabled '
+                   ~ tpot_verify_service_unit ~ ' says "'
+                   ~ (tpot_verify_unit_enabled.stdout | default('') | trim
+                      | default('nothing', true)) ~ '"'}] }}
+
+- name: Assert the T-Pot unit is enabled
+  ansible.builtin.assert:
+    that:
+      - (tpot_verify_unit_enabled.stdout | default('') | trim) == 'enabled'
+    fail_msg: >-
+      systemctl is-enabled {{ tpot_verify_service_unit }} says
+      "{{ tpot_verify_unit_enabled.stdout | default('') | trim }}". Upstream
+      enables this unit from a HANDLER that fires only when its template
+      changes, so a re-run over an existing installation will not re-enable it
+      -- and a unit that is not enabled means a rebooted host comes back with
+      no T-Pot on it and nothing in any log to say why.
+    success_msg: "{{ tpot_verify_service_unit }} is enabled"
+    quiet: true
+
+# ---------------------------------------------------------------------------
+# vm.max_map_count, read where it counts.
+#
+# UPSTREAM NEVER APPLIES THIS. Its playbook writes vm.max_map_count=262144 to
+# /etc/sysctl.conf (installer/install/tpot.yml:525) and never runs `sysctl -w`
+# for it -- and Debian 13's systemd-sysctl does not read /etc/sysctl.conf at
+# all. So on the pre-reboot path the file says one thing and the kernel does
+# another, and only os_prep writing /etc/sysctl.d and reloading makes the
+# value real.
+#
+# This check therefore reads /proc, the EFFECTIVE value. Reading the file back
+# would confirm the write and prove nothing about Elasticsearch, which is the
+# process that dies when the value is too low.
+# ---------------------------------------------------------------------------
+- name: Read the effective vm.max_map_count
+  ansible.builtin.slurp:
+    src: /proc/sys/vm/max_map_count
+  register: tpot_verify_max_map_raw
+  failed_when: false
+
+- name: Note the effective vm.max_map_count
+  ansible.builtin.set_fact:
+    tpot_verify_max_map: >-
+      {{ (tpot_verify_max_map_raw.content | default('') | b64decode | trim | default('0', true)) }}
+
+- name: Record the effective vm.max_map_count
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'max_map_count', 'phase': 'pre-reboot',
+         'status': ((tpot_verify_max_map | int) == 0) | ternary('skipped',
+                   ((tpot_verify_max_map | int) >= (tpot_max_map_count | int))
+                   | ternary('pass', 'fail')),
+         'reason': ((tpot_verify_max_map | int) == 0)
+                   | ternary('/proc/sys/vm/max_map_count could not be read',
+                             'effective ' ~ (tpot_verify_max_map | int | string)
+                             ~ ', required ' ~ (tpot_max_map_count | int | string))}] }}
+
+- name: Assert vm.max_map_count is effective, not merely written down
+  ansible.builtin.assert:
+    that:
+      - (tpot_verify_max_map | int) == 0
+        or (tpot_verify_max_map | int) >= (tpot_max_map_count | int)
+    fail_msg: >-
+      vm.max_map_count is {{ tpot_verify_max_map | int }} and
+      tpot_max_map_count requires {{ tpot_max_map_count | int }}. Upstream
+      writes this setting to a file nothing on this distribution reads and
+      never applies it live, so a low value here means Elasticsearch will not
+      start and the dashboard will be empty on a box that otherwise looks
+      installed.
+    success_msg: "vm.max_map_count is {{ tpot_verify_max_map | int }}"
+    quiet: true

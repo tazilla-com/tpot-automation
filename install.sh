@@ -28,11 +28,18 @@
 #    10  failure class -> exit code; result.json; reboot;    yes
 #        the notice
 #
-#   STEP 9 IS THE ONE THAT DOES NOT EXIST YET. site.yml, verify.yml and
-#   roles/** are a separate slice and have not been written, so no run of this
-#   file has ever installed anything. The banner above step 9 says what stands
-#   in for it, and what a reader observes today instead -- which is a preflight
-#   refusal at step 3, not step 9.
+#   STEP 9 HAS A PLAY TO RUN. site.yml, verify.yml and roles/** landed on
+#   2026-09-04. The banner above step 9 says what still guards a release that
+#   ships without them, and why that guard is not redundant with the file
+#   manifest preflight checks at step 3.
+#
+#   WHAT HAS NOT CHANGED IS THAT NO RUN OF THIS FILE HAS EVER INSTALLED
+#   ANYTHING, here or anywhere. Step 1 is `am I root`, and the machine this
+#   was written on is not. Measured 2026-09-04, fully unattended -- the
+#   password in the environment, no controlling terminal, stdin from
+#   /dev/null -- the run stops in preflight stage A and exits 11 on the ROOT
+#   check, having changed nothing. So "the play is written" is a statement
+#   about the tree, and not about an install that finished.
 #
 #   Steps 1 to 5 leave the machine byte-identical to how they found it. That
 #   is a property, not an aspiration: preflight writes only inside $RUNDIR,
@@ -186,10 +193,21 @@ _TPOT_IN_EXIT_TRAP=0
 # than dropped because the underlying evidence is real and checkable: it is
 # upstream T-Pot's own install.sh, read from source at the ref recorded there.
 #
-# THIS IS LATENT, NOT BROKEN, TODAY: no driver task exists yet -- there is no
-# site.yml and no roles/ in this tree -- so nothing has ever inherited these.
-# The note is here because whoever writes that task will be reading the task,
-# not this preamble, and has no other way to learn that the exports are set.
+# THE DRIVER TASK DOES THAT NOW, in roles/tpot_install, and it removes the
+# names rather than blanking them: Ansible's `environment:` keyword cannot
+# remove anything -- measured 2026-09-04, a null value arrives in the child
+# as the literal string "None" -- so the removal is done by /usr/bin/env with
+# its unset option and is visible in the argv the run records. PATH is the
+# one handled the other way round: it is SET to a fixed system PATH rather
+# than unset, because upstream needs one and an absent PATH is not a safer
+# answer than a stated one.
+#
+# IT HAS NOT BEEN WATCHED AGAINST THE REAL UPSTREAM. No run of this file has
+# reached step 9. What was verified, on 2026-09-04, is the scrub itself,
+# against a stand-in for upstream with all five names set in the parent: the
+# child reported every one of them absent. The note stays here because the
+# exports are set in THIS file, and whoever adds a sixth will be reading that
+# task, not this preamble.
 #
 # No TPOT_* or IOC_* name is exported at any point. That is a correctness
 # rule, not style: an exported internal would be read back by lib/config.py as
@@ -707,55 +725,61 @@ _tpot_write_inventory() {
 #
 # ############################################################################
 # #                                                                          #
-# #  THE PLAY DOES NOT EXIST IN THIS BUILD.                                  #
+# #  THE PLAY IS IN THIS TREE. THE REFUSING ARM STAYS ANYWAY.                #
 # #                                                                          #
-# #  site.yml, verify.yml and roles/** are a separate slice and have not     #
-# #  been written yet. tpot_run_playbook below therefore has two arms:       #
+# #  site.yml, verify.yml and roles/** landed on 2026-09-04, so in any       #
+# #  complete copy of this repository tpot_run_playbook selects the          #
+# #  first of its two arms:                                                  #
 # #                                                                          #
-# #    * _tpot_exec_playbook -- the REAL invocation. It is written in        #
-# #      full, it holds no placeholder, and no edit is needed to enable      #
-# #      it: it is what runs the moment site.yml appears in the tree.        #
-# #      It has also NEVER BEEN EXECUTED -- there has never been a play      #
-# #      to run, on this box or any other -- so "written in full" is a       #
-# #      statement about the code and not about a passing test.              #
+# #    * _tpot_exec_playbook -- the REAL invocation, and the only place      #
+# #      ansible-playbook is run. It holds no placeholder and needs no       #
+# #      edit to enable: the play file being on disk is what selects it.     #
+# #      It has NEVER BEEN EXECUTED, because no run of install.sh has        #
+# #      reached step 9 -- so "written in full" is still a statement         #
+# #      about the code and not about a passing install.                     #
 # #                                                                          #
-# #    * _tpot_playbook_absent -- the refusing arm. It logs what is          #
-# #      missing, sets the outcome to internal_error and returns             #
-# #      EX_INTERNAL (40), so a build without a play CANNOT report           #
-# #      success, cannot reach exit 0, and cannot reach exit 20.             #
+# #    * _tpot_playbook_absent -- the refusing arm, and it is not dead       #
+# #      code left behind by the slice landing. It is what a PARTIAL         #
+# #      checkout meets. It logs what is missing, sets the outcome to        #
+# #      internal_error and returns EX_INTERNAL (40), so a tree with no      #
+# #      play CANNOT report success, cannot reach exit 0, and cannot         #
+# #      reach exit 20.                                                      #
 # #                                                                          #
-# #  IN THIS BUILD THAT ARM IS SHADOWED, AND NOBODY WILL SEE IT FIRE.        #
+# #  IT IS THE LAST GUARD RATHER THAN THE FIRST, AND THAT IS THE POINT.      #
 # #  Preflight stage A checks this tree against a manifest of 17             #
 # #  required files, and site.yml and verify.yml are two of the              #
-# #  seventeen -- so a run stops at step 3 with EX_PREFLIGHT (11) and        #
-# #  never reaches step 9 at all. Measured here on 2026-09-03: a fully       #
-# #  unattended run -- the password in the environment, no controlling       #
-# #  terminal, stdin from /dev/null -- exits 11 on the root check and        #
-# #  the repo_tree check, having changed nothing. So the 40 above is         #
-# #  what this guard RETURNS, not what a reader observes today. Today        #
-# #  the observable answer is 11, and it comes from preflight.               #
+# #  seventeen -- so a checkout missing them stops at step 3 with            #
+# #  EX_PREFLIGHT (11) and this arm never fires. Two independent             #
+# #  statements of one rule is the right number here. Deleting the           #
+# #  second because the first happens to fire first leaves the rule          #
+# #  standing only for as long as nobody reorders the steps, skips a         #
+# #  stage or teaches preflight a new manifest; the thing that must          #
+# #  never happen -- a tree with no play reporting success -- is             #
+# #  refused by both, from different information.                            #
 # #                                                                          #
-# #  The arm stays as it is, and it is not redundant. It is the LAST         #
-# #  guard rather than the first, and which of the two fires is an           #
-# #  ordering this file must not depend on: preflight's manifest and         #
-# #  this presence test are two statements of one rule, and the thing        #
-# #  that must never happen -- a build with no play reporting success        #
-# #  -- is refused by both.                                                  #
+# #  WHAT A READER OBSERVES TODAY IS NEITHER OF THOSE NUMBERS.               #
+# #  Measured here on 2026-09-04, with the manifest complete and the         #
+# #  run fully unattended -- the password in the environment, no             #
+# #  controlling terminal, stdin from /dev/null -- it exits 11 on the        #
+# #  ROOT check, on an unprivileged box where nothing about the play is      #
+# #  wrong. The 40 above is what this guard RETURNS; no exit code from       #
+# #  step 9 has been observed from this file at all.                         #
 # #                                                                          #
 # #  There is no flag, no variable and no environment value that selects     #
-# #  between them: the switch is whether the play file is present on disk.   #
-# #  That is what "it cannot ship enabled" means here -- a release that      #
-# #  contains site.yml never reaches the refusing arm, and a release that    #
-# #  does not contain it can never claim to have installed anything.         #
+# #  between the arms: the switch is whether the play file is present on     #
+# #  disk. A release that contains site.yml never reaches the refusing       #
+# #  arm, and a release that does not contain it can never claim to have     #
+# #  installed anything.                                                     #
 # #                                                                          #
 # ############################################################################
 
 _tpot_playbook_absent() {
     local playbook=$1
     log_error '%s is not present in this checkout, so nothing was installed.' "$playbook"
-    log_error 'This build contains the entrypoint and its libraries; the play and its'
-    log_error 'roles are a separate slice and have not landed yet. The box has not been'
-    log_error 'changed by this step, and no run without a play can report success.'
+    log_error 'A release carries the play and its roles beside the entrypoint, so this'
+    log_error 'copy is partial rather than damaged: fetch the whole release instead of'
+    log_error 'replacing files one at a time. The box has not been changed by this step,'
+    log_error 'and no run without a play can report success.'
     TPOT_OUTCOME='internal_error'
     return "$EX_INTERNAL"
 }
@@ -807,9 +831,10 @@ _tpot_exec_playbook() {
 
 # tpot_run_playbook PLAYBOOK
 #   The single seam: which arm runs is decided by whether the play file is on
-#   disk, and nothing above or below it needs an edit when one appears. That
-#   is a property of how it is written, not a tested one -- neither arm has
-#   ever had a play to run.
+#   disk, and nothing above or below it needs an edit either way. In this tree
+#   that selects the real invocation. It is still a property of how this is
+#   written rather than a tested one: no run has reached step 9, so neither
+#   arm has ever been called.
 tpot_run_playbook() {
     local playbook=$1
     local path="$REPO_DIR/$playbook"
@@ -922,7 +947,11 @@ _tpot_print_notice() {
 _tpot_perform_reboot() {
     log_info 'rebooting now. result.json has been written and flushed; the exit code of'
     log_info 'this process is meaningless from here on. After the reboot, verification'
-    log_info 'runs from the systemd unit, or run: install.sh --verify-only'
+    log_info 'runs from the systemd unit, which passes the settings this run used:'
+    log_info '  install.sh --verify-only --config %s/verify-config.json' "$TPOT_STATE_DIR"
+    log_info 'is the same command by hand. --verify-only with no answer file re-derives'
+    log_info 'every setting from the shipped defaults, so on a box that changed any of'
+    log_info 'them it verifies the wrong thing.'
     sync
 
     # The run directory is deliberately NOT destroyed here. `systemctl reboot`

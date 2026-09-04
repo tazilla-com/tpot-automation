@@ -12,11 +12,13 @@ terminal, and is not a fork of T-Pot.
 >
 > There has never been a real T-Pot install from this repository: no VM, no
 > root, no network, no box that afterwards ran a honeypot. The only things ever
-> executed are unit-level runs on an unprivileged developer machine. Large parts
-> of the product — the Ansible play and every role, the verification step, the
-> pinning tool, the unit-test suite and CI — **are not written yet**, and no
-> upstream ref is pinned. A full run therefore refuses inside preflight and
-> exits `11`, before it changes anything — measured on this tree, not predicted.
+> executed are unit-level runs on an unprivileged developer machine. What is new
+> is that the Ansible play, its eight roles, the verification split across the
+> reboot and the pinning tool are now written, and an upstream ref is pinned —
+> so what stops a run today is the machine you point it at, not a hole in the
+> tree. Still missing: the unit-test suite, CI, the dated per-release record,
+> and four documents this tree cites. **Written is not the same as proven**, and
+> this file is careful about the difference throughout.
 > [What exists and what does not](#status--what-exists-and-what-does-not) is the
 > third section of this file. Read it before you plan anything around this.
 
@@ -115,8 +117,9 @@ on port 22 come from your own configuration.
 **Nothing in this repository has ever installed T-Pot.** There has been no VM,
 no root, no network access, and no host that became a honeypot. Everything that
 has been executed was executed unprivileged, on a developer box, at the level of
-individual functions and build gates. Where this README describes a component
-that is designed but not built, it says so in the same breath.
+individual functions and build gates. Where this README describes something that
+is written but has never run against a real machine, it says so in the same
+breath — and that is now most of the product.
 
 **What exists today**
 
@@ -124,22 +127,24 @@ that is designed but not built, it says so in the same breath.
 |---|---|
 | `install.sh` | the entrypoint: flag parsing, the four-channel config merge, two non-mutating preflight stages, dependency bootstrap, the tmpfs secret channel, exit-code mapping, `result.json`, the reboot decision and the notice |
 | `lib/` | the libraries the entrypoint is made of — exit codes, logging and redaction, the preflight checks, the support-matrix reader, the notice, the result writer, the config merger and its schema |
+| `site.yml`, `verify.yml` | the install play and the verification play — the two playbooks `install.sh` invokes |
+| `roles/` | eight roles — `preflight`, `os_prep`, `tpot_user`, `tpot_install`, `tpot_verify`, `finalize`, `ioc_forward` and `report`. Everything that would change the box is here: the OS preparation, the upstream driver, the compose swap, the `.env` credential write, the telemetry removal, verification either side of the reboot, and the post-boot systemd unit |
+| `tools/pin-upstream.sh` | the only supported way to pin an upstream ref, and the tool that derives everything which follows from one: the sha256, the per-edition container floor, upstream's own distribution gate, and the supported tier of `support-matrix.yml` |
 | `support-matrix.yml` | the two tiers of distribution releases, and the only place either is written down |
 | `examples/`, `inventories/example/` | the complete input surface as commented placeholders, in YAML and JSON |
-| `tests/` | ten build gates and the `/etc/os-release` fixtures they run against |
+| `tests/` | the build gates and the `/etc/os-release` fixtures they run against |
 | `docs/exit-codes.md`, `docs/firewall.md` | the exit contract, and the firewall position with a worked example ruleset nobody here has ever loaded on a host |
 | `SECURITY.md`, `CHANGELOG.md` | the security position, and the change log |
 
-**What does not exist yet** — none of these files are in the tree:
+**What does not exist yet** — none of these are in the tree:
 
-* `site.yml` and `verify.yml`, the two playbooks `install.sh` invokes;
-* **all of `roles/`** — OS preparation, the upstream driver, the compose swap,
-  the `.env` credential write, the telemetry removal, the verification role, and
-  the post-boot systemd oneshot that would verify the host after its reboot;
-* `tools/pin-upstream.sh`, which is the only supported way to pin an upstream ref
-  and to derive the supported tier from it;
-* the unit-test suite (bats), `.github/workflows/` (CI), `tests/MATRIX-STATUS.md`
-  (which release was proven at which ref, with dates) and `tests/fixtures/`;
+* the unit-test suite (`bats`) and `tests/fixtures/`, the `/proc` and
+  configuration fixtures it would read;
+* `.github/` — the CI workflows, including the release gate that refuses a tag
+  while the matrix record is missing or stale;
+* `tests/MATRIX-STATUS.md`, where a dated record of which (ref × distribution)
+  pair was proven on a real box would live. **Nothing has been proven, so there
+  is no file** — and that absence is why nothing on this page is called tested;
 * **four referenced documents**, none of them written and every one of them
   cited by a file that does ship: `docs/answer-file.md` and `docs/variables.md`
   (cited by `lib/config.py`), `docs/verification.md` (by `lib/preflight.sh`)
@@ -147,61 +152,75 @@ that is designed but not built, it says so in the same breath.
   inventory). `docs/firewall.md` was the fifth entry on this list until it was
   written; it is in the tree now, and the table above carries it.
 
+That list is not prose. `tests/check-references.sh` holds it as a registry and
+fails the build in both directions: a path this tree names that is neither on
+disk nor declared absent, **and a path declared absent that has since been
+written**. `site.yml`, `verify.yml`, `roles/` and `tools/pin-upstream.sh` were
+on it until the play landed. The second direction is why this section was
+rewritten rather than left to rot: a list of what does not exist is falsified by
+somebody doing the work, which is the one event nobody thinks to check prose
+over.
+
 **What that means if you run it right now**
 
-* **It stops in stage A of preflight and exits `11` (`EX_PREFLIGHT`)**, for
-  every invocation that would act on the box. `--help`, `--version` and
-  `--example-config` are unaffected: they print and exit `0` without ever
-  reaching preflight, and a bad flag or a missing required input is still `10`,
-  before preflight runs at all. Stage A checks that the seventeen files this
-  installer is made of are all present, and `site.yml` and `verify.yml` are two
-  of them. A build without the play therefore refuses at **step 3 of the ten**
-  `install.sh` performs — before the configuration is merged, before any
-  dependency is installed, and before one byte of the machine is changed. No
-  `--force-*` flag relaxes that check; `--verify-only`, `--preflight-only` and
-  `--check` all stop in the same place for the same reason; and pinning a ref by
-  hand with `--upstream-ref` does not get past it either. Measured on this tree,
-  every one of those invocations: `11`, with `repo_tree` naming the two missing
-  files — and, because the measuring was done unprivileged, `root` failing in
-  the same report. `repo_tree` is the one that would still fail on a root
-  shell.
-* **Exit `40` is not what this build returns**, and any sentence you find
-  claiming it is has been overtaken. `install.sh` does carry a refusing arm for
-  a missing play — it logs what is absent, records `internal_error` and returns
-  `40` (`EX_INTERNAL`) — but that arm is step 9, preflight stops the run at step
-  3, and so it is **shadowed and has never executed**. What holds either way is
-  the guarantee both mechanisms exist for: **no run of this build can reach `0`
-  or `20`**, so it can never claim to have installed anything.
-* **No upstream ref is pinned**, which would stop a run one stage later.
-  `tpot_upstream_ref` ships empty on purpose — nothing may be claimed as
-  supported until something is pinned — and the upstream reachability check is
-  *hard*, so with no ref it can only report `inconclusive`, which is `11` in a
-  full run and `12` (`EX_INCONCLUSIVE`) under `--preflight-only`. That is the
-  designed behaviour and not a bug. It is simply not what you hit first today,
-  because stage B is never reached.
-* **Neither support tier has a real run behind it.** Not one row, at any ref.
+* **On this project's own developer box it stops in stage A of preflight and
+  exits `11` (`EX_PREFLIGHT`), on the `root` check** — because that box is not
+  root, which is the first thing stage A asks. Measured today, on this tree, for
+  every invocation that would act on a machine: a full install with the password
+  in the environment, `--preflight-only`, `--verify-only` and `--check`, each
+  under `setsid --wait` with stdin closed. All four exited `11`, all four wrote
+  their `result.json` when given a writable `--state-dir`, and the supplied
+  password appeared in none of the artefacts any of them produced. `--help`,
+  `--version` and `--example-config` are unaffected: they print and exit `0`
+  without ever reaching preflight, and a bad flag or a missing required input is
+  still `10`, before preflight runs at all.
+* **The file manifest is no longer the thing that refuses.** Stage A also checks
+  that the seventeen files this installer is made of are present, and until the
+  play landed `site.yml` and `verify.yml` were two of the seventeen it could not
+  find — which is what every earlier version of this section described. They are
+  there now and that check passes. What changed is which check you hit first, not
+  the guarantee.
+* **What stops a run today is the machine, not the tree.** Root, an `apt`-based
+  release the pinned upstream ref accepts, and a working internet connection are
+  all genuinely required, and no `--force-*` flag conjures any of them. **No box
+  with all three has ever been offered to this code**, so the furthest it has
+  ever got is preflight, and everything past that point is written and
+  unobserved.
+* **Exit `40` for a missing play is now unreachable in a release, which is what
+  it was always for.** `install.sh` still refuses at step 9 if `site.yml` is
+  absent from the checkout it is running from — it logs what is missing, records
+  `internal_error` and returns `40` (`EX_INTERNAL`) — so that a build without a
+  play cannot report success. A release that contains `site.yml` never reaches
+  that arm, and it has never executed.
+* **Neither support tier has a run behind it.** Not one row, at any ref. The pin
+  decides which releases may be called *supported*; only a dated run recorded in
+  `tests/MATRIX-STATUS.md` could call one *tested*, and there is no such file.
 
 **What has actually been exercised**, all of it unprivileged and on one
-developer machine: the build gates in `tests/`, the support-matrix readers
-cross-checked against PyYAML and against `ansible-core`'s own `include_vars`,
+developer machine: the build gates in `tests/`; the support-matrix readers
+cross-checked against PyYAML and against `ansible-core`'s own `include_vars`;
 upstream's distribution gate replayed against the `/etc/os-release` fixtures in
-`tests/os-release/`, and `install.sh` itself — run to its refusal under
-`setsid --wait` with stdin closed, as an install, as `--verify-only`, as
-`--preflight-only`, as `--check` and with a ref pinned by hand. Every one of
-those exited `11` and wrote its `result.json`; in the four of them that were
-given a dashboard password, that password appears nowhere in the terminal
-output, the transcript or the result file.
+`tests/os-release/`; the play and its roles put through `yamllint` (clean),
+`ansible-lint --offline` (0 failures, and the stricter `production` profile
+passes) and `ansible-playbook --syntax-check` on both playbooks; and
+`install.sh` itself, run to its refusal in every mode it offers, as described
+above.
 
-Run `tests/run-gates.sh` to see the state of the tree for yourself:
-**all ten gates pass today and the runner exits `0`**, listing
-the five `gate-allow` exemptions under its summary. No gate skips; a gate that
-could not run would report `SKIP`, which is its own verdict in that summary and
-is never shown as a pass — the runner says in words that the run was not clean,
-and `--strict` turns it into a failing exit status. `tests/run-gates.sh
---self-test` asks the harder question — it points each gate at a deliberately
-violating tree and requires it to fail — and answers `PROVEN` for nine of the
-ten. `check-matrix-parse.sh` is the one exception, reported as `UNPROVEN` rather
-than folded in; the note in the CHANGELOG says what it carries instead.
+**A syntax check is not a run.** Nothing in that list executed a single task
+against a machine, and `--check` — which would at least walk the play — has
+never got past preflight either, for the same reason everything else has not.
+
+Run `tests/run-gates.sh` to see the state of the tree for yourself: **every gate
+passes today and the runner exits `0`**, listing the five `gate-allow`
+exemptions under its summary. No gate skips; a gate that could not run would
+report `SKIP`, which is its own verdict in that summary and is never shown as a
+pass — the runner says in words that the run was not clean, and `--strict` turns
+it into a failing exit status. `tests/run-gates.sh --self-test` asks the harder
+question — it points each gate at a deliberately violating tree and requires it
+to fail — and reports `PROVEN` only for the gates the runner has a negative
+fixture for. The rest come back `UNPROVEN` rather than being quietly counted as
+passes; `check-matrix-parse.sh` is one of them, and the note in the CHANGELOG
+says what it carries instead.
 
 None of that is evidence about a host. A green gate suite says this repository
 keeps its own promises; it does not say a honeypot has ever come up.
@@ -227,14 +246,18 @@ verifies and reports a machine-readable outcome.
 * **Not an IoC forwarder.** The `ioc_*` namespace is reserved and documented,
   and there is no forwarding code in the tree at all: with the default
   (`ioc_forwarding_enabled: false`) this installer opens no connection to any
-  endpoint of yours. The design is that setting it `true` *refuses to run*
-  rather than silently doing nothing — **and that refusal is not implemented in
-  this build.** Setting it `true` today is accepted: the configuration merge
-  takes it, exits `0` and records the value, and the only thing it then reaches
-  is one line of the end-of-run notice — which belongs to the last step of a run
-  and is itself never printed, because no run gets that far. Do not rely on the
-  setting to stop you. The mock receiver the roadmap
-  describes is not in this repository either.
+  endpoint of yours. Setting it `true` **refuses to run** rather than silently
+  doing nothing — and it is refused twice, deliberately. `roles/preflight` stops
+  the play on its very first check, in a couple of seconds, with `11`, whose
+  published meaning is *nothing on this box was changed*. `roles/ioc_forward`
+  keeps its own assertion as the last line of defence and answers `10`,
+  reachable only when the preflight stage was skipped by tag selection. Two
+  codes for one input, because by the time the second one can fire, "nothing
+  happened" has stopped being true — and the earlier design, where the only
+  refusal was the last role in the play, would have installed a complete T-Pot
+  over ninety minutes and *then* reported that nothing had happened. Neither
+  refusal has ever run on a real box, and the mock receiver the roadmap
+  describes is not in this repository.
 
 ---
 
@@ -273,17 +296,91 @@ which is what the warning band is for. Below the floor the run stops;
 
 ---
 
+## The upstream pin, and what it does not pin
+
+```text
+tpot_upstream_ref   fdafa483e1e0f36b0a7b0cbb6bae1031fe06fc37
+sha256(install.sh)  0e0b893b86aeca80f4ef43c30b851850b0370f43ced37bcda36ecee52faeda50
+```
+
+**That is a commit, and not for want of looking for a tag.** Upstream grew its
+unattended flags on `master` and has not cut a release since: `-s`, `-t`, `-u`
+and `-p` landed there on 2025-07-05, `-b` and `-r` thirteen and a half months
+later, and no tag contains either group. The newest tag, `24.04.1`
+(2024-12-11), has no positional-parameter handling at all — driven
+non-interactively it does not fail, it **hangs**, which for an unattended
+installer is the worst of the available outcomes. Ten much older tags, `18.11`
+through `22.04.0`, do offer an unattended mechanism, but a different one
+(`--conf=`) that would mean a different design. A commit is the only ref at
+which the invocation this installer makes exists at all.
+
+**It must be the full 40-character sha**, and `lib/varschema.json` refuses an
+abbreviated one with a message saying why: `git` accepts a short sha and checks
+out the full one, so upstream's own re-run check compares your seven characters
+against its forty, concludes the checkout is somebody else's, and exits `1` on
+every second run.
+
+**A pin pins the recipe. It does not pin the software.** One variable pins two
+things — the `install.sh` this project fetches and verifies against the sha256
+above, and the `-b` argument deciding which payload upstream then clones — and
+that is where it stops. What upstream clones names a *mutable* image tag: its
+`.env` sets `TPOT_VERSION=24.04.1`, every service is
+`${TPOT_REPO}/<name>:${TPOT_VERSION}`, and `TPOT_PULL_POLICY=always`. Two
+installs from this same commit, a month apart, can run different containers, and
+the daily 02:42 reboot upstream installs re-pulls them again on a box nobody has
+touched. `result.json` reports that as `upstream.pins_payload: false`, which is
+permanent rather than a placeholder. **Wherever this project says a ref is
+pinned, this paragraph is the other half of the sentence.**
+
+**A pinned sha also makes re-running less safe, not more.** With a sha, upstream's
+own `check_tpot_clone` *matches* an existing checkout and skips the clone — over
+a tree it never refreshes (`update: no`) and never integrity-checks, so a
+modified `docker-compose.yml` or a deleted `env.example` passes it silently.
+That is why `tpot_force_reinstall` is documented as what it actually does:
+`rm -rf ~/tpotce`.
+
+Everything else this project needs to know about a ref is **measured once, at
+pin time**, by `tools/pin-upstream.sh`, and written into
+`roles/tpot_install/vars/upstream-<ref>.yml` beside the role that reads it: the
+sha256, the compose file each edition copies, the container floor verification
+compares against (counted from upstream's own compose files, after the telemetry
+service is removed), and upstream's distribution gate row by row with a reason
+for each. That file is generated — move the pin and read the diff, never edit
+it — and **none of it is evidence that anything was installed.** It is a careful
+reading of upstream's source at one commit, done on 2026-09-04.
+
+---
+
 ## Supported releases
 
-There are **two tiers**, and only one of them is a claim.
+There are **two tiers**, and neither of them says anything has been tested.
 
-**Supported and tested** — releases the *pinned* upstream ref accepts, that this
-installer can also drive, **and** that have a dated real run behind them.
-**This tier is empty.** Not because nothing works: because no upstream ref is
-pinned yet, so there is no ref whose gate could have been consulted and no run
-that could have been made. An empty list is the honest answer; a list of
-plausible releases would be a claim with no evidence under it. It is *derived*
-from the pin by `tools/pin-upstream.sh` (not yet written), never edited by hand.
+**Supported** — the releases the *pinned* upstream ref's own gate accepts and
+this installer can also drive. At the commit pinned above, that is two:
+
+```text
+debian:13        ubuntu:26.04
+```
+
+**Derived, and not tested — the distinction is the whole point of the tier.**
+Nobody here chose that list. `tools/pin-upstream.sh` reads it out of upstream's
+`install.sh` at the pinned commit and intersects it with what this installer can
+drive at all: of the eight releases upstream's gate names there, four Red Hat
+family entries and openSUSE Tumbleweed drop out because upstream installs their
+packages with `dnf`, `yum` or `zypper` while this installer requires `apt-get`,
+and Raspberry Pi OS drops out because no T-Pot has ever been installed on it
+here. The gate is recorded row by row, with the reason for each verdict, in the
+per-ref data file under `roles/tpot_install/vars/`.
+
+**Not one of the two rows has a run behind it.** A run would be recorded with
+its date in `tests/MATRIX-STATUS.md`, and that file does not exist — which is
+why preflight, on recognising your release, says the pinned ref's gate accepts it
+and this installer can drive it, and then says in the same message that this is
+not a claim it has been tested. That message used to end *"and exercised by this
+project's tests"*. It was written while the tier shipped empty and no box could
+reach that branch of the check; pinning a ref made it reachable, and it began
+printing on every run on a supported release, asserting a test campaign that has
+never happened.
 
 **Legacy** — nine releases the automation this project replaces was installed on:
 `debian:11`, `debian:12`, `debian:13`, `ubuntu:20.04`, `ubuntu:22.04`,
@@ -338,12 +435,49 @@ ssh -p 64295 you@your-host
 and exits `0`, `11` or `12`. Run it first. `--check` goes further — preflight
 plus the playbook in check mode — and still changes nothing on the box.
 
-**Today this example does not complete**, and the [Status](#status--what-exists-and-what-does-not)
-section says exactly where it stops: in stage A of preflight, with `11`, because
-`site.yml` and `verify.yml` are part of the file manifest that stage checks and
-neither has been written. Pinning a ref by hand does not move that; nor does
-`--verify-only`. The contract above is what the finished product owes you; it is
-not a transcript of something that has happened.
+**Nobody has ever completed this sequence.** The reason is no longer that a file
+is missing — the play, its roles and the pin are all in the tree. It is that this
+project has never had a machine to point at: no root, no network, no guest
+running a release the pinned ref accepts. On the developer box where all of this
+was written, every one of those invocations stops in stage A of preflight and
+exits `11` on the `root` check. The contract above is what the finished product
+owes you; it is not a transcript of something that has happened, and
+[Status](#status--what-exists-and-what-does-not) has the measurements.
+
+**If you never make the second invocation, the box is specified to finish
+verifying itself.** `roles/finalize` installs a systemd unit that re-runs
+verification on the next boot, rewrites `result.json`, and then disarms itself —
+which it must, because upstream's own cron job reboots this host every night at
+02:42 and a unit left armed would re-assert a dated record daily against a box
+nobody has looked at since.
+
+**That unit does not re-derive its inputs, and the file it reads is part of the
+product's permanent on-disk surface.** It reads the configuration this box was
+installed with from `{{ tpot_state_dir }}/verify-config.json` —
+`/var/lib/tpot-automation/verify-config.json` by default, root-owned `0600` —
+which `roles/finalize` writes for it from the merged **public** document: every
+secret-typed key already removed by `lib/config.py`, which owns that rule, and
+then the three keys `lib/varschema.json` marks `config_file: false`
+(`tpot_state_dir`, `tpot_log_dir`, `tpot_runtime_dir`) filtered out on top,
+because a verbatim copy of the merged document is refused by `config.py` with
+exit `10` — measured, not assumed. Without that file the unit would verify a box
+that does not exist: the shipped default OS account, the shipped default
+edition, the shipped default ports. It would fail, burn its `StartLimitBurst`,
+never clear the arming marker, and leave `result.json` reporting
+`post_boot_verify_armed: true` for ever.
+
+The same file is the documented manual recovery path, because it is exactly what
+the unit runs:
+
+```sh
+install.sh --verify-only --config /var/lib/tpot-automation/verify-config.json
+```
+
+It lives under the state directory rather than beside `install.sh` because both
+`lib/config.py` and `lib/preflight.sh` refuse an answer file that resolves inside
+the installer tree — and the permanent copy the unit runs, at
+`/usr/local/lib/tpot-automation`, is an installer tree. That refusal was measured
+too. Like everything else in this section, the unit has never run.
 
 ---
 
@@ -447,16 +581,17 @@ a T-Pot install runs for thirty to ninety minutes. So:
   password may also come from the environment or from an answer file, and
   `--set` refuses a secret key outright.
 * **The merged configuration reaches Ansible as a file reference** (`-e @PATH`),
-  never as `key=value` on a command line. That is written into the single place
-  `ansible-playbook` is invoked — a place no run has reached yet, because the
-  play is not in this tree — and it is held statically meanwhile:
-  `tests/check-argv-hygiene.sh` fails the build on `--extra-vars` followed by
-  anything that is not `@`.
+  never as `key=value` on a command line. That is how `install.sh` invokes
+  `ansible-playbook`, in the single place it does so — a line no run has reached
+  yet, because no run has got past preflight — and `tests/check-argv-hygiene.sh`
+  holds the rule statically meanwhile, failing the build on `--extra-vars`
+  followed by anything that is not `@`.
 * **The transcript is redacted as it is written**, and then searched for each
   supplied secret; a hit truncates the log and fails the run.
-* **The dashboard password is to reach `htpasswd` on standard input** — that
-  step lives in a role that is not written yet, and the paragraph below says so
-  again because it is the one part of this list that is design rather than code.
+* **The dashboard password reaches `htpasswd` on standard input.**
+  `roles/tpot_install` hands it to the task as `stdin`, never as an argument;
+  `htpasswd -b`, which would take it on the command line, is forbidden and the
+  argv gate looks for it by name. That task is written and has never run.
 
 **The divergence worth explaining.** Upstream's installer takes the dashboard
 password only as a command-line argument, and then passes it on the command line
@@ -470,12 +605,12 @@ dashboard user into upstream's `.env` as the base64 of an `htpasswd` record.
 Both are operations upstream documents for its users. The flags that carry a
 username or a password are never passed.
 
-The cost is that this installer now *owns* those two steps, and both are
-**designed but not built** — they live in the roles that do not exist yet.
+The cost is that this installer now *owns* those two steps. Both are written, in
+`roles/tpot_install`, and neither has ever run against upstream's real checkout.
 Upstream's own `.env` edit silently does nothing when the target line is absent,
-so ours must check that the write landed rather than assume it. Upstream also
-manages `LS_WEB_USER` itself, which is sensor-to-hive state; this installer must
-never write it.
+so ours checks that the write landed rather than assuming it. Upstream also
+manages `LS_WEB_USER` itself, which is sensor-to-hive state; this installer never
+writes it.
 
 `SECURITY.md` carries the full position, including the passwordless `sudo` grant
 that upstream's unattended mode requires.
@@ -492,12 +627,14 @@ nothing should leave that machine to a third party unless it was asked for.
 
 **How the opt-out works, and why it is unusual.** There is no `.env` key and no
 upstream flag for it. Upstream's documented opt-out is to remove the `ewsposter`
-service block from the `docker-compose.yml` in its checkout. So `off` is
-specified to do exactly that, with verification then asserting the block is
-**gone** rather than that the edit was attempted — **and both halves live in
-roles that are not written yet.** `"on"` leaves upstream's file untouched.
-Either way, the end-of-install notice, this README and `result.json` state which
-it is.
+service block from the `docker-compose.yml` in its checkout. So `off` does
+exactly that: `roles/tpot_install` removes the service — and the network only it
+uses — by rewriting the parsed compose document rather than by editing text, and
+then asserts it is gone; `roles/tpot_verify` asserts the same absence again on
+the installed box. What is checked is that the block is **not there**, never that
+an edit was attempted. `"on"` leaves upstream's file untouched. Either way, the
+end-of-install notice, this README and `result.json` state which it is. Neither
+role has run on a real box.
 
 Two limitations, stated rather than glossed:
 
@@ -533,13 +670,15 @@ upstream's own list:
 defaults to `always`, so the container images are re-pulled at **every** start —
 including the daily 02:42 reboot. Pinning the upstream ref pins the recipe; it
 does not pin the images, so the software running on a box is not necessarily the
-software that was verified on it. `result.json` carries that as a field —
-`upstream.pins_payload`, which is `false` and stays `false` — rather than
-implying otherwise.
+software that was verified on it — see
+[The upstream pin](#the-upstream-pin-and-what-it-does-not-pin), which names the
+mutable image tag and the pull policy that make it true. `result.json` carries
+that as a field — `upstream.pins_payload`, which is `false` and stays `false` —
+rather than implying otherwise.
 
 Two messages point at `docs/firewall.md` — the closing notice, and the exposure
 line in the preflight report — and neither has ever been printed, because no run
-of this build gets to either one. The file itself is in the tree: it carries
+has yet got as far as either one. The file itself is in the tree: it carries
 this section's evidence, the ports, why no default firewall is shipped, and a
 worked `nftables` example. **Nothing on that page has been applied to a running
 T-Pot by this project**, and it opens by saying so.
@@ -578,6 +717,8 @@ unaffected by any of the above.
 | `examples/tpot.example.yml` | a commented answer file — the same content as `--example-config` |
 | `inventories/example/group_vars/all.yml` | every setting, documented once |
 | `support-matrix.yml` | the two tiers, and why each release is in the one it is in |
+| `roles/tpot_install/vars/` | the per-ref data file: everything measured about the pinned upstream ref, and upstream's own distribution gate row by row |
+| `tools/pin-upstream.sh` | how that file and the supported tier are produced, and why they may never be written by hand |
 | `CHANGELOG.md` | what has changed, per version |
 
 Upstream T-Pot's own documentation is at
@@ -585,7 +726,10 @@ Upstream T-Pot's own documentation is at
 upstream's behaviour was read from upstream's `master` branch as it stood on
 2026-09-02**, and `master` moves. Those claims are why this installer is built
 the way it is, and each one has to be re-checked against whichever ref is
-actually pinned here — which, today, is none.
+actually pinned here. Today that ref is commit `fdafa483`, which *is* that
+branch at that moment, so the reading and the pin are the same bytes;
+`tools/pin-upstream.sh` recorded the parts a machine needs beside the role that
+consumes them. Move the pin and the re-check is owed again.
 
 **Where a file here cites `notes/upstream-facts.md`, it is citing a project
 record kept outside this repository, which does not ship with it and which no

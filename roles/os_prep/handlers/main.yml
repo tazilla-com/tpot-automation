@@ -1,0 +1,82 @@
+---
+# roles/os_prep/handlers/main.yml -- one handler, and it is load-bearing.
+#
+# It is notified by the task that writes /etc/sysctl.d/99-tpot-automation.conf
+# and it is flushed immediately afterwards, inside tasks/main.yml, rather than
+# at the end of the play. A handler that fired at the usual time would apply
+# the setting after upstream's installer had already failed for want of it.
+#
+# WHY --system AND NOT --load=<our file>
+#   `sysctl --load=<file>` would apply only what this role wrote, which is
+#   both narrower and less honest. --system reads every sysctl.d directory in
+#   the same order systemd-sysctl does at boot, so what it leaves in the
+#   running kernel is what the box will have after the reboot T-Pot requires.
+#   If some other file sorting after ours sets vm.max_map_count lower, --system
+#   reproduces that and the read-back in tasks/main.yml catches it; --load
+#   would have reported success about a value the next boot discards.
+#
+#   The cost is stated rather than hidden: --system re-applies every sysctl
+#   file on the box, so a parameter that was set at boot and hand-tuned since
+#   goes back to what the files say. That is what a reboot would do anyway,
+#   and this box is going to be rebooted.
+#
+# WHY IT DOES NOT FAIL THE RUN ON A NON-ZERO EXIT
+#   --system exits non-zero when ANY file it reads has a bad key, including
+#   files this project never touched. Treating that as fatal would let an
+#   unrelated leftover in /etc/sysctl.d block an install for no reason. The
+#   authority on whether this role's own setting took is the read-back of
+#   /proc/sys/vm/max_map_count in tasks/main.yml, which does fail the run --
+#   and a non-zero exit here is recorded as a warning in result.json, so it
+#   is visible rather than swallowed.
+#
+# Nothing here has ever been run against a real box.
+
+- name: Reload the kernel parameters
+  # command rather than a module on purpose. ansible.posix.sysctl is the
+  # module for this, and ansible.posix is not a dependency of this project --
+  # requirements.yml pins community.general and nothing else, and adding a
+  # whole collection to run one binary would be a dependency the tree does
+  # not otherwise need. It would also want to write the file itself, which
+  # would duplicate the copy task in tasks/main.yml and lose the explanatory
+  # header that file carries for whoever finds it in six months.
+  ansible.builtin.command:
+    argv:
+      - sysctl
+      - --system
+  register: os_prep_sysctl_reload
+  # It applied kernel parameters. That is a change, and reporting it as one
+  # is what makes `--diff` output and the changed count mean anything.
+  changed_when: true
+  # See the header: the read-back in tasks/main.yml is what decides.
+  failed_when: false
+
+- name: Report how the kernel-parameter reload went
+  # Deliberately not silent, and deliberately separate from the task above.
+  # The reload's own failure is suppressed so that an unrelated broken file
+  # cannot stop an install; a suppressed failure that printed nothing would
+  # be indistinguishable from one that never happened.
+  #
+  # Each branch is ONE string literal on ONE line. A Jinja literal broken
+  # across lines keeps the newline and the indentation that follows it, and
+  # the result reaches the transcript with both in it -- observed here on
+  # 2026-09-04 while writing this file, which is why it reads as it does.
+  #
+  # THE CHECK-RUN BRANCH KEYS ON `skipped`, NOT ON A MISSING rc, AND THAT IS
+  # THE CORRECTION. ansible.builtin.command is skipped under --check, but a
+  # check-mode skip is not a `when` skip: measured on ansible-core 2.21.2, the
+  # skipped result still carries rc: 0 and an empty stdout. So `rc is not
+  # defined` is FALSE in a check run, and the earlier spelling of this task
+  # printed "the running kernel now matches /etc/sysctl.d" about a reload that
+  # never happened. `skipped` is the only field that tells the two apart.
+  ansible.builtin.debug:
+    msg: >-
+      {{
+        'sysctl --system did not run: nothing was written for it to load (a --check run)'
+        if (os_prep_sysctl_reload.rc is not defined
+            or (os_prep_sysctl_reload.skipped | default(false)))
+        else ('sysctl --system exited 0; the running kernel now matches /etc/sysctl.d'
+              if os_prep_sysctl_reload.rc == 0
+              else 'sysctl --system exited ' ~ os_prep_sysctl_reload.rc
+                   ~ '; a sysctl file was rejected. Not fatal here: the effective'
+                   ~ ' vm.max_map_count is checked next, and that check does fail the run')
+      }}

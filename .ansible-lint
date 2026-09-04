@@ -50,3 +50,37 @@ skip_list:
   # "Load the knowledge for upstream ref {{ tpot_upstream_ref }}" is more use
   # in a transcript than the same sentence with the ref left out.
   - name[template]
+
+  # This rule wants every variable a role sets to carry that ROLE's name as a
+  # prefix -- `finalize_dest`, `tpot_verify_results` renamed per role, and so
+  # on. It is good advice for a library of independently reusable roles. It is
+  # wrong here, in both directions, and following it would break two things
+  # that are load-bearing:
+  #
+  #   * THE INPUT SURFACE IS A PRODUCT CONTRACT, NOT ROLE-PRIVATE STATE. The
+  #     50 `tpot_*`/`ioc_*` keys are defined once in lib/varschema.json,
+  #     documented once in inventories/example/group_vars/all.yml, and settable
+  #     by answer file, environment variable and flag. Several roles read the
+  #     same key on purpose -- tpot_admin_ssh_port is checked by preflight,
+  #     asserted by tpot_verify and printed by the notice, and the whole point
+  #     is that the number cannot drift between them. Per-role prefixes would
+  #     make that one key into four, and tests/check-variable-surface.sh --
+  #     which requires role defaults to BE the schema keys -- would fail on
+  #     every one of them.
+  #
+  #   * THE ACCUMULATORS ARE SHARED BY DESIGN. tpot_stage, tpot_verify_results,
+  #     tpot_run_warnings, tpot_report_* and tpot_reboot_required are how a
+  #     role contributes to the run's report and to the exit code. They are
+  #     initialised in site.yml and appended to by whichever role has something
+  #     to say. A prefix per role is precisely the thing they must not have.
+  #
+  # The rule's underlying concern -- that a role should not scribble on names
+  # nobody expects -- is met a different and stricter way here: the namespace
+  # is `tpot_`/`ioc_`, it is enumerated in lib/varschema.json, and a role
+  # default outside that list FAILS THE BUILD. Role-internal values that are
+  # not input live in vars/ under a `tpot_<role>_` prefix, which satisfies the
+  # spirit of the rule while keeping the project's one namespace.
+  #
+  # Skipped here rather than with 27 scattered `# noqa` markers: an exemption
+  # repeated in every file is a rule nobody has actually decided about.
+  - var-naming[no-role-prefix]

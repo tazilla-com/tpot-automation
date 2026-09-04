@@ -669,11 +669,32 @@ if matrix_supports debian 13 "$MATRIX_PINNED"; then
 else
     fail "matrix_supports debian 13 -> false against a pin that accepts it"
 fi
-if matrix_supports debian 13 "$MATRIX_SHIPPED"; then
-    fail "matrix_supports debian 13 -> true against the SHIPPED file, whose supported tier is"\
-         "empty -- nothing may be called supported while nothing is pinned"
+# The shipped file's answer for debian:13 depends on whether a ref is pinned,
+# so this asserts the RULE rather than a snapshot of the day it was written.
+#
+# It used to hardcode "false, because nothing is pinned", which was true until
+# D-11 pinned a commit and then became a test failure reporting a correct tree.
+# A test that has to be edited every time the thing it describes legitimately
+# changes teaches people to edit tests, so this one now derives its expectation
+# the same way lib/matrix.sh does: pinned and carrying debian:13 -> supported;
+# unpinned -> nothing may be called supported at all. check_pin_invariant above
+# separately guarantees the ref and the tier are empty together, so these two
+# between them leave no state unchecked.
+_shipped_ref=$(matrix_supported_ref "$MATRIX_SHIPPED" 2>/dev/null) || _shipped_ref=''
+if [[ -n $_shipped_ref ]]; then
+    if matrix_supports debian 13 "$MATRIX_SHIPPED"; then
+        pass "matrix_supports debian 13 -> true against the SHIPPED file, pinned at ${_shipped_ref}"
+    else
+        fail "matrix_supports debian 13 -> false against the SHIPPED file, which is pinned at"\
+             "${_shipped_ref} and lists debian:13 as supported"
+    fi
 else
-    pass "matrix_supports debian 13 -> false while nothing is pinned"
+    if matrix_supports debian 13 "$MATRIX_SHIPPED"; then
+        fail "matrix_supports debian 13 -> true against the SHIPPED file, whose supported tier is"\
+             "empty -- nothing may be called supported while nothing is pinned"
+    else
+        pass "matrix_supports debian 13 -> false while nothing is pinned"
+    fi
 fi
 if matrix_known debian 13 "$MATRIX_SHIPPED"; then
     pass "matrix_known debian 13 -> true against the shipped file (legacy is reachable)"

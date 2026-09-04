@@ -39,14 +39,22 @@
 #     x86_64 and aarch64 only, so an upstream-accepted RHEL-family or openSUSE
 #     release is still not a row we may claim. See the table further down.
 #
-#     IT SHIPS EMPTY, AND EMPTY IS AN HONEST ANSWER. tpot_upstream_ref ships
-#     unset and install.sh hard-fails naming tools/pin-upstream.sh, so until a
-#     ref is pinned there is no ref whose gate could have been consulted and no
-#     run that could have been made. `[]` says exactly that. It does not say
-#     "nothing works"; it says "nobody has pinned anything, so nobody may
-#     claim anything." A list of plausible releases here would be an assertion
-#     with no evidence under it, which is the failure this project treats as
-#     its worst.
+#     IT SHIPPED EMPTY UNTIL A REF WAS PINNED, AND EMPTY WAS AN HONEST ANSWER.
+#     Before a pin existed, tpot_upstream_ref was unset and install.sh
+#     hard-failed naming tools/pin-upstream.sh, so there was no ref whose gate
+#     could have been consulted and no run that could have been made. `[]` said
+#     exactly that. It did not say "nothing works"; it said "nobody has pinned
+#     anything, so nobody may claim anything." A list of plausible releases
+#     would have been an assertion with no evidence under it, which is the
+#     failure this project treats as its worst.
+#
+#     A REF IS NOW PINNED (D-11) and the tier below is DERIVED FROM IT, by
+#     tools/pin-upstream.sh, from that ref's own distribution gate intersected
+#     with what this installer can drive. It is still not a claim that either
+#     row has been TESTED: that evidence is a dated run in
+#     tests/MATRIX-STATUS.md, which does not exist, because no run on a real
+#     guest has ever been made. Supported here means "the pinned upstream will
+#     accept this release and we can drive it", and nothing more.
 #
 #     tpot_support_matrix_supported_ref carries the ref the list was derived
 #     from. The invariant, asserted by tests/check-matrix-parse.sh: the ref is
@@ -218,10 +226,14 @@
 
 # The upstream ref the supported tier below was derived from. Empty if and only
 # if that tier is empty. Written by tools/pin-upstream.sh, never by hand.
-tpot_support_matrix_supported_ref: ""
+tpot_support_matrix_supported_ref: "fdafa483e1e0f36b0a7b0cbb6bae1031fe06fc37"
 
-# SUPPORTED AND TESTED at the ref above. Empty because no ref is pinned yet.
-tpot_support_matrix_supported: []
+# SUPPORTED at the ref above -- DERIVED from its gate by tools/pin-upstream.sh,
+# never edited by hand. Not yet TESTED: no dated run exists in
+# tests/MATRIX-STATUS.md, because nothing has ever been installed.
+tpot_support_matrix_supported:
+  - "debian:13"
+  - "ubuntu:26.04"
 
 # LEGACY -- documented, reachable only by pinning an older upstream ref, and
 # never described as tested. The nine releases the automation this project

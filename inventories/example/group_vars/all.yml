@@ -7,23 +7,24 @@
 # a line here makes it authoritative for this inventory only -- which is not
 # how the product is meant to be configured.
 #
-# WHAT IS BUILT AND WHAT IS NOT, AND IT IS MOST OF WHAT THIS FILE DESCRIBES.
-# This is version 0.1.0, unreleased. NOTHING HAS EVER BEEN INSTALLED WITH THIS
-# TOOL: there has been no virtual machine, no root, no network and no T-Pot,
-# and not one behaviour described below has been observed happening to a real
-# box. What exists today is install.sh, the shell library beside it, the
-# configuration merge, the documentation and the build gates. So a setting
-# below is READ, TYPED, VALIDATED AND RECORDED exactly as described -- that
-# half runs, and is tested -- and is then acted on by ANSIBLE ROLES THAT DO
-# NOT EXIST YET. Neither do site.yml and verify.yml, the two plays those roles
-# would run from, nor tools/pin-upstream.sh and docs/roadmap-ioc.md, which the
-# prose names below because they are where each subject is to be written up.
-# docs/firewall.md, also named below, does exist -- and opens by saying that
-# nothing on it has been observed on an installed honeypot either.
+# WHAT IS BUILT AND WHAT HAS NEVER BEEN RUN, AND IT IS MOST OF WHAT THIS FILE
+# DESCRIBES. This is version 0.1.0, unreleased. NOTHING HAS EVER BEEN
+# INSTALLED WITH THIS TOOL: there has been no virtual machine, no root, no
+# network and no T-Pot, and not one behaviour described below has been
+# observed happening to a real box. What exists today is install.sh, the shell
+# library beside it, the configuration merge, the Ansible play -- site.yml,
+# verify.yml and eight roles -- the documentation and the build gates. So a
+# setting below is READ, TYPED, VALIDATED AND RECORDED exactly as described --
+# that half runs, and is tested -- and is then acted on by tasks that are
+# written, linted, syntax-checked and gated, and that have been exercised only
+# against an unprivileged development box. docs/roadmap-ioc.md, which the
+# prose names below, is still unwritten. docs/firewall.md, also named below,
+# does exist -- and opens by saying that nothing on it has been observed on an
+# installed honeypot either.
 #
-# SO READ EVERY PARAGRAPH BELOW AS AN INTENDED BEHAVIOUR unless it says
+# SO READ EVERY PARAGRAPH BELOW AS A SPECIFIED BEHAVIOUR unless it says
 # otherwise. Where a description would mislead about what a reader gets today
-# -- a refusal that does not refuse yet, a file that is not there -- it says
+# -- a claim nobody has watched happen, a file that is not there -- it says
 # so in place, rather than leaving the reader to find out.
 #
 # ONE THING HERE IS NOT DOCUMENTATION: lib/args.sh READS THIS FILE AT RUN
@@ -65,14 +66,15 @@
 #
 # THE WIDER CLAIM -- THAT NO SECRET REACHES A COMMAND LINE ANYWHERE IN THIS
 # PRODUCT, upstream's own installer included -- IS A PROPERTY OF THE DESIGN,
-# and the half of it that faces upstream is not built. It rests on driving
-# upstream as a sensor install and then writing the dashboard credential into
-# T-Pot's .env with `htpasswd -n -i` reading it from standard input, and both
-# of those live in the roles that do not exist yet. What holds it up today is
-# a build gate, tests/check-argv-hygiene.sh, which fails the build on any line
-# that would put a credential on a command line -- including a line of
-# documentation that merely claims we do. SECURITY.md says how the whole
-# arrangement is meant to work.
+# and the half of it that faces upstream is now written as tasks rather than
+# as a plan: roles/tpot_install drives upstream as a sensor install, so
+# upstream is never handed a credential flag at all, and then writes the
+# dashboard credential into T-Pot's .env with `htpasswd -n -i` reading it from
+# standard input. Nothing has ever performed either of those against a real
+# box. What holds the claim up mechanically is a build gate,
+# tests/check-argv-hygiene.sh, which fails the build on any line that would
+# put a credential on a command line -- including a line of documentation that
+# merely claims we do. SECURITY.md says how the whole arrangement works.
 
 
 # ============================================================================
@@ -124,16 +126,18 @@
 # SECRET, AND THE ONLY REQUIRED INPUT IN THE WHOLE PRODUCT.
 # The dashboard password. Supply it by answer file, by TPOT_WEB_PASSWORD, or
 # by --web-password-file /root/.tpot-web-pw (root-owned, 0600).
-# IT NEVER REACHES A COMMAND LINE -- BY DESIGN, AND THE DESIGN IS NOT BUILT.
-# The arrangement is that upstream is driven as a SENSOR install, which is the
-# one install type whose code path never asks for a web credential, and that
-# this project then writes the credential into T-Pot's own .env itself --
-# hashing it with `htpasswd -n -i`, which reads the password from standard
-# input. Both halves live in roles that do not exist yet, so nothing has ever
-# performed them. What is built is the part that gets the value here: --set is
-# refused for this key, no flag takes it as a value, and a build gate fails on
-# any line that would put it on a command line. SECURITY.md carries the detail
-# and the one deviation that would reintroduce the exposure.
+# IT NEVER REACHES A COMMAND LINE. Upstream is driven as a SENSOR install,
+# which is the one install type whose code path never asks for a web
+# credential, and this project then writes the credential into T-Pot's own
+# .env itself -- hashing it with `htpasswd -n -i`, which reads the password
+# from standard input, and refusing to run the hasher at all if the argument
+# vector it is about to use turns out to contain the password. Both halves are
+# written, in roles/tpot_install, and neither has ever been performed against
+# a real box. The part that gets the value here is older and runs on every
+# invocation: --set is refused for this key, no flag takes it as a value, and
+# a build gate fails on any line that would put it on a command line.
+# SECURITY.md carries the detail and the one deviation that would reintroduce
+# the exposure.
 # tpot_web_password: "..."
 
 
@@ -190,8 +194,24 @@
 # UPSTREAM T-POT
 # ============================================================================
 
-# REQUIRED, AND SHIPPED UNSET. A tag or a commit of upstream T-Pot -- never
-# `master`, `main` or `HEAD`.
+# REQUIRED, AND SHIPPED UNSET: the key has no built-in default, so a run given
+# no ref refuses rather than choosing one. The value shown at the foot of this
+# block is the ref this release carries data for.
+#
+# IT IS A COMMIT, NOT A TAG, AND THAT IS NOT A PREFERENCE. No upstream tag
+# carries the flag surface this installer drives -- the unattended flags
+# landed on upstream's master branch after the newest tag was cut, and no tag
+# contains them. Driven non-interactively, that newest tag (24.04.1, December
+# 2024) does not fail: it HANGS, waiting for a prompt nobody is there to
+# answer. Ten much older tags have an unattended mechanism of their own, and
+# adopting it would be a different product.
+#
+# IT MUST BE THE FULL 40-CHARACTER LOWERCASE SHA. `master`, `main`, `HEAD` and
+# an abbreviated sha are refused by the configuration merge, which says why in
+# the refusal; a tag is refused by the play, before anything of upstream's is
+# fetched. An abbreviated sha is the one that looks harmless: git checks out
+# the full sha, so upstream's own re-run check compares seven characters
+# against forty and exits 1 on every run after the first.
 #
 # ONE VARIABLE PINS TWO DIFFERENT THINGS, AND THEY MAY NEVER BE SET APART:
 #
@@ -213,18 +233,30 @@
 # IT ALSO DECIDES WHICH DISTRIBUTIONS ARE SUPPORTED. Upstream gates on
 # /etc/os-release before it will do anything at all, and the gate is a
 # property of the pinned ref, not of this project. So the support matrix has
-# two tiers: SUPPORTED AND TESTED is whatever the pinned ref's own gate
-# accepts, and LEGACY is the older releases in support-matrix.yml, reachable
-# only by pinning an older ref and never claimed as tested. Changing the pin
+# two tiers: SUPPORTED is what the pinned ref's own gate accepts, intersected
+# with what this installer can drive, and LEGACY is the older releases in
+# support-matrix.yml, reachable only by pinning an older ref. Changing the pin
 # changes the supported tier; the two are coupled on purpose.
 #
-# tools/pin-upstream.sh is meant to fetch the ref, print its sha256, count the
-# containers of the pinned edition and scaffold the data file. IT HAS NOT BEEN
-# WRITTEN, so there is nothing to run yet and no pinned ref to hand you. An
-# unpinned ref does not get you a default install: preflight records the
-# upstream checks as inconclusive and the run stops there, before anything on
-# the box has been changed.
-# tpot_upstream_ref: "24.04.1"
+# SUPPORTED IS NOT TESTED. tools/pin-upstream.sh derived the supported tier --
+# debian:13 and ubuntu:26.04 -- from this ref's own gate, read out of
+# upstream's source, and wrote the ref it came from beside it. That says what
+# upstream will accept and what this installer can drive, and nothing more:
+# the evidence for a tested row would be a dated run in
+# tests/MATRIX-STATUS.md, which does not exist, because no T-Pot has ever been
+# installed by this project on any release at any ref.
+#
+# AND PINNING A COMMIT DOES NOT PIN THE SOFTWARE THAT RUNS. T-Pot's own .env
+# names a mutable image tag and sets a pull policy of `always`, so every
+# container is re-pulled each time T-Pot starts -- including at the daily
+# reboot upstream's playbook puts in root's crontab. Two installs from this
+# one commit, a month apart, can run different containers. result.json records
+# `upstream.pins_payload: false` for exactly that.
+#
+# An unpinned ref does not get you a default install: preflight records the
+# upstream checks as inconclusive, and the play refuses at the upstream stage
+# before anything of upstream's has been fetched.
+# tpot_upstream_ref: "fdafa483e1e0f36b0a7b0cbb6bae1031fe06fc37"
 
 # Where upstream's install.sh is fetched from. DERIVED from the ref, and that
 # is the safe state. Override it only to fetch the SAME ref from a mirror or a
@@ -268,9 +300,12 @@
 # default, and it should stay empty: it exists so that a new upstream flag can
 # be used before this project cuts a release, not as a general escape hatch.
 # NO SECRET MAY BE PUT HERE -- these values become command-line arguments.
-# Do not put -s, -t, -u, -p, -b or -r here either: this project sets all six
-# from the settings above, and a second copy of one of them would either be
-# ignored or would quietly undo an invariant the product depends on.
+# Do not put -s, -t, -b or -r here: this project sets those four itself, from
+# the settings above, and a second copy would either be ignored or would
+# quietly undo an invariant the product depends on. Do not put -u or -p here
+# either: those are upstream's credential flags, which this installer never
+# uses at all, and a password in this list is a password in the process
+# argument list. All six are refused before upstream is invoked.
 # tpot_upstream_extra_flags: []
 
 # Non-secret environment for upstream's installer. Merged over LANG=C.UTF-8
@@ -359,17 +394,22 @@
 # tpot_dashboard_port: 64297
 # tpot_elasticsearch_port: 64298
 
-# The number of running containers a healthy T-Pot has. SHIPPED UNSET, and it
-# comes from the per-release data file: the count is a property of the pinned
-# upstream edition and not of this project.
-# IT IS COUNTED AT PIN TIME, NEVER GUESSED. Neither upstream's installer nor
-# its README states a number -- the README says "a selection of the available
-# honeypots based on the selected docker-compose.yml" and then enumerates
-# every image across all editions, which is a different quantity. The only
-# authoritative source is compose/<edition>.yml at the pinned ref, which is
-# what tools/pin-upstream.sh is to read -- when it is written; it is not, yet.
-# A guessed number here turns verification into either a rubber stamp or a
-# false alarm, which is why this ships unset rather than with a plausible one.
+# The number of running containers a healthy T-Pot has. SHIPPED UNSET, and for
+# most installs it should stay that way: when it is not supplied, verification
+# counts the service blocks in the compose file that was actually installed,
+# which is the same file the number would have come from.
+# IT IS COUNTED, NEVER GUESSED. Neither upstream's installer nor its README
+# states a number -- the README says "a selection of the available honeypots
+# based on the selected docker-compose.yml" and then enumerates every image
+# across all editions, which is a different quantity. The only authoritative
+# source is compose/<edition>.yml at the pinned ref. tools/pin-upstream.sh
+# read those files at pin time, with the telemetry service removed, and
+# recorded the counts in roles/tpot_install/vars/upstream-<ref>.yml: h 39,
+# s 32, l 14, i 22, m 29, t 17. A run reaches the same floor from the box
+# itself, so the two agree unless the box does not match the pin.
+# A floor of zero is refused outright rather than passed: "at least zero
+# containers are running" is satisfied by a box where upstream pulled no
+# images and started nothing, and upstream exits 0 either way.
 # tpot_min_containers:
 
 # How long verification waits for listeners after a reboot. They come up over
@@ -422,6 +462,14 @@
 # pinned ref refuses gets you a mutated box and an upstream failure, not an
 # install. The way to reach an older release is the legacy tier -- pin an
 # older ref -- not this flag.
+#
+# THE THIRD ONE DELETES. tpot_force_reinstall removes the existing T-Pot
+# checkout before installing, and everything under it goes with it, captured
+# attack data included if it lived there. Left false, a re-run reuses the
+# checkout it finds and warns that it did -- which it must, because upstream's
+# own re-run check reads only HEAD and the origin URL, so a checkout whose
+# compose file was edited and whose env.example was deleted passes it
+# unchanged.
 # tpot_force_unsupported_os: false
 # tpot_force_low_resources: false
 # tpot_force_reinstall: false
@@ -447,7 +495,15 @@
 # tpot_install_deps: true
 
 # Where this installer keeps its own things.
-#   - state:    result.json (0600) and the post-boot verification marker
+#   - state:    result.json (0600), the marker saying a post-boot
+#               verification is still pending, and verify-config.json --
+#               this run's settings with every secret removed, root-owned
+#               0600, which the post-boot unit hands back to install.sh with
+#               --config so that the verification after the reboot is aimed
+#               at the box this run actually built rather than at schema
+#               defaults. `install.sh --verify-only --config
+#               /var/lib/tpot-automation/verify-config.json` is the same
+#               check by hand.
 #   - log:      one transcript per run, 0600 in a 0750 directory
 #   - runtime:  a 0700 directory on tmpfs, holding the merged configuration
 #               for the length of the run and shredded by an exit trap.
@@ -459,26 +515,33 @@
 
 
 # ============================================================================
-# IoC FORWARDING -- RESERVED, DECLARED, AND NOT YET REFUSING
+# IoC FORWARDING -- RESERVED, DECLARED, AND REFUSED TWICE
 # ============================================================================
 #
 # These five names are reserved so that an answer file written today stays
-# valid when forwarding lands. Nothing implements them in this release.
+# valid when forwarding lands. Nothing in this release implements them, and
+# the switch below refuses rather than being quietly ignored.
+
+# THE REFUSAL IS THE FIRST THING THE PLAY DOES, WHICH IS THE POINT OF IT.
+# roles/preflight asks whether forwarding was asked for before it measures
+# anything else, and a run that asked for it stops there with exit 11 -- whose
+# published meaning is that nothing on this box was changed. That is true at
+# preflight and false anywhere later, which is why the check is there. The
+# same assertion also stands in roles/ioc_forward, which runs last: it is the
+# other end of a defence that tag selection could otherwise route around, and
+# refused there the run reports exit 10, because by then the install has
+# happened and 11 would be a lie about the state of the machine.
 #
-# THE REFUSAL IS DESIGNED, NOT BUILT, AND TODAY IT DOES NOT REFUSE. The
-# intention is that setting ioc_forwarding_enabled to true stops the run with a
-# message naming docs/roadmap-ioc.md -- a reservation that refuses, rather than
-# a flag that quietly does nothing. Measured on this build, it does not: the
-# configuration merge accepts the key set to true, exits 0, and carries the
-# value into the merged document unchallenged. The refusal belongs to the role
-# that would read the key, and no role exists yet. docs/roadmap-ioc.md has not
-# been written yet either.
+# Both refusals name docs/roadmap-ioc.md. THAT DOCUMENT IS NOT WRITTEN YET, so
+# there is nothing behind the name to read.
 #
 # What is true today is narrower, and it is the part that matters: nothing in
 # this installer opens a connection to an IoC endpoint. Not because it declines
 # to, but because no code that could has ever been written -- there is no
-# forwarding client, no role and no template anywhere in the tree.
-
+# forwarding client, no pipeline and no endpoint template anywhere in the
+# tree. Fill the other values in with forwarding off and the run proceeds,
+# warning by name about each one it can tell from its default, so that a
+# setting nothing reads is never silently accepted.
 # ioc_forwarding_enabled: false
 
 # Where indicators would be sent. One whole URL; no base-plus-identifier

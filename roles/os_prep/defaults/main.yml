@@ -1,0 +1,67 @@
+---
+# roles/os_prep/defaults/main.yml -- the four documented inputs this role reads.
+#
+# WHY THERE ARE ONLY FOUR, AND WHY THEY LOOK REDUNDANT
+#   At run time nothing here is ever consulted. install.sh merges the answer
+#   file, the environment and the flags through lib/config.py, which applies
+#   every schema default itself and hands the whole document to
+#   ansible-playbook as extra-vars -- and extra-vars beat role defaults
+#   outright. So these values are what the role does when somebody runs
+#   `ansible-playbook site.yml` by hand, with no merged document at all.
+#
+#   That case is worth supporting: it is how a reviewer reads what a role
+#   does without reading the shell first, and it is how a role is debugged.
+#   A role whose defaults are absent behaves differently under that reading
+#   than it does in production, which makes the reading worthless.
+#
+# THESE VALUES ARE CHECKED AGAINST TWO OTHER FILES
+#   tests/check-variable-surface.sh check 4 requires every tpot_*/ioc_* key
+#   defaulted in any role to exist in lib/varschema.json AND in
+#   inventories/example/group_vars/all.yml, with the same default after
+#   whitespace and one layer of quotes are normalised. Three copies of a
+#   default drift silently otherwise: the installer behaves one way and
+#   documents another, and nothing says so.
+#
+#   The consequence for anyone editing this file: a value here may not be
+#   changed alone. Change the schema, the example inventory and this file in
+#   one commit, or the gate fails -- which is the point of it.
+#
+# WHAT IS DELIBERATELY NOT HERE
+#   The base package list, the sysctl file path and the apt environment are
+#   internal to this role and live in vars/main.yml. They are not user input,
+#   they are not documented anywhere a user reads, and putting them here
+#   would either break the gate above or -- much worse -- get "fixed" by
+#   documenting a knob nobody should ever turn. roles/report/vars/main.yml
+#   carries the same reasoning at more length.
+#
+#   tpot_locale is not here either, and that is a sequencing decision rather
+#   than a tidiness one: the locale is set by roles/finalize, AFTER upstream's
+#   installer has run, so that a non-English locale can never precede an
+#   English-output installer whose messages this project quotes back.
+
+# none | safe | full. Mapped in tasks/main.yml onto the apt module's own
+# `upgrade` values: none skips the task entirely, safe is `apt upgrade`, full
+# is `apt dist-upgrade`. `safe` is the default because a honeypot host is
+# exposed by design and shipping it with known-unpatched packages is a worse
+# failure than a slow install; `full` is not the default because dist-upgrade
+# may remove packages to satisfy a dependency, and doing that unattended on
+# somebody else's box is not a decision this installer gets to make for them.
+tpot_os_upgrade: "safe"
+
+# The timezone to set, or null to leave the box alone. UTC by default because
+# a honeypot's timestamps are evidence: every log line this box produces may
+# end up correlated against somebody else's, and a local timezone is the
+# cheapest way to get that correlation wrong by an hour twice a year.
+tpot_timezone: "Etc/UTC"
+
+# The vm.max_map_count the search engine inside T-Pot requires. Elasticsearch
+# refuses to start below it. See the long comment in tasks/main.yml for why
+# this role writes it AND reloads it, rather than trusting upstream to.
+tpot_max_map_count: 262144
+
+# Whether this installer may install packages. False is `--no-install-deps`,
+# documented as "install no prerequisites; fail instead if one is missing" --
+# so this role honours it by checking for the packages and failing with a
+# list of what is absent, never by quietly skipping the check and letting the
+# run die later inside upstream's installer.
+tpot_install_deps: true

@@ -1,0 +1,97 @@
+---
+# roles/ioc_forward/defaults/main.yml -- five reserved names, and nothing
+# behind them.
+#
+# ===========================================================================
+# WHAT THIS FILE IS
+# ===========================================================================
+#   A namespace reservation. A later slice of this project adds forwarding of
+#   indicators of compromise to an endpoint the operator owns, together with
+#   the mock receiver to test it against. This release ships the NAMES only,
+#   so that an answer file written today is still valid on the day forwarding
+#   lands and nobody has to migrate a key or learn a second spelling.
+#
+#   Nothing in this repository reads these values for their meaning. There is
+#   no forwarding client, no pipeline, no template and no outbound connection
+#   anywhere in the tree, and tasks/main.yml refuses the run outright when the
+#   switch is turned on rather than accepting it and quietly doing nothing.
+#
+# ===========================================================================
+# WHY THE PREFIX IS ioc_ AND NOT THE NAME OF A PRODUCT
+# ===========================================================================
+#   The namespace is named after the THING it carries -- an indicator of
+#   compromise -- and never after a vendor, a product, a customer or a city.
+#   That is not a style preference. This installer was re-derived from one
+#   built for a single organisation, whose settings were prefixed with the
+#   name of the commercial platform they were forwarded to; a generic knob
+#   therefore read as an integration with one company, and the file could not
+#   be published as it stood. tests/check-no-vendor.sh fails the build on any
+#   of those strings, anywhere -- code, comment, example or file name, and
+#   deliberately with no exemption marker, including for a comment written to
+#   explain that they are forbidden. So this paragraph names none of them, and
+#   the rule it states is the short one: a name that only means something
+#   inside one organisation is a name this repository cannot carry.
+#
+#   ioc_ is also the reason the schema types the pieces the way it does: one
+#   whole endpoint URL rather than a base plus an identifier, an opaque sensor
+#   string rather than an account id, and a header split into a name and a
+#   value so that Bearer, ApiKey and a bare token are all just values -- none
+#   of which assumes whose receiver is at the other end.
+#
+# ===========================================================================
+# WHY THESE KEYS ARE HERE AT ALL, AND WHY THE DEFAULTS ARE COPIES
+# ===========================================================================
+#   tests/check-variable-surface.sh check 4 requires every tpot_*/ioc_* key
+#   defaulted in a role to exist in lib/varschema.json AND in
+#   inventories/example/group_vars/all.yml, with a byte-equal default after
+#   whitespace and one layer of quotes are normalised. That makes this file a
+#   promise rather than a convenience: what is written here is documented,
+#   supported input, and the three copies cannot drift without the build
+#   saying so.
+#
+#   Two consequences a reader should not have to discover by breaking the
+#   build. Nothing internal to this role may be added here -- there is no
+#   vars/main.yml either, because this role has no internal state to keep. And
+#   a default below may not carry a trailing comment, because the gate
+#   compares the whole rest of the line.
+#
+#   In a real run these values are never read: lib/config.py applies the
+#   schema defaults and passes the merged document in as extra-vars, so every
+#   key below arrives already set. They exist so that `ansible-playbook
+#   site.yml` run by hand, with no merged document, refuses in exactly the way
+#   the documentation says it does instead of dying on an undefined name.
+
+# The switch. false is the only value this release accepts; true is refused by
+# tasks/main.yml with exit 10 (EX_USAGE), because the input was the problem.
+ioc_forwarding_enabled: false
+
+# Where indicators would be sent. One whole URL -- no base plus identifier --
+# so that any shape of receiver is expressible without this installer knowing
+# anything about it.
+ioc_endpoint_url: null
+
+# Which sensor sent an indicator. An opaque string: deliberately not typed as
+# a UUID, and deliberately not an account identifier.
+ioc_sensor_id: null
+
+# The authentication header, split in two so that any scheme is expressible
+# without an enumeration for somebody to extend later.
+ioc_auth_header_name: "Authorization"
+
+# ioc_auth_header_value IS DELIBERATELY NOT DEFAULTED HERE, and its absence is
+# the fifth reserved name rather than an omission.
+#
+#   * It is one of the three secret-typed keys in lib/varschema.json, and the
+#     schema gives it no default. It is also one of the eight keys that are
+#     simply ABSENT from the merged document when nobody supplied one, so a
+#     default here would make it permanently defined and quietly destroy the
+#     "is it defined" test that is the only honest way to ask whether an
+#     operator supplied a credential. tasks/main.yml asks exactly that, and
+#     never looks at the value.
+#   * A default for a credential is a credential in a file that ships. Even
+#     null in this position invites the next editor to put a placeholder there
+#     and the one after that to put a real token.
+#
+# It is documented for a user in inventories/example/group_vars/all.yml and in
+# examples/tpot.example.yml, which is where an input surface belongs; check 1
+# of tests/check-variable-surface.sh is satisfied by those, not by this file.

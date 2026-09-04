@@ -5,9 +5,10 @@ preflight report, and the closing notice after an install. This is what they
 point at.
 
 **Neither has ever been printed.** The exposure line is a preflight stage B
-check and every run of this build stops in stage A; the closing notice belongs
-to the end of a completed install, and no install has ever been completed. Both
-are written, both name this file, and neither is reachable in this build.
+check, and every run this project has made was unprivileged, so stage A fails
+on the `root` check and stage B is never reached; the closing notice belongs to
+the end of a completed install, and no install has ever been completed on any
+machine. Both are written, both name this file, and nobody has seen either.
 
 **Read the short version first, because it is the whole of this project's
 position:** this installer adds no firewall rules, upstream T-Pot's own
@@ -64,10 +65,10 @@ Two honest details about that refusal:
   read about it. If that is worth fixing it is a change to `lib/varschema.json`
   and `lib/config.py`, neither of which is in this document's scope.
 * **On a box that cannot install anyway you will not reach it.** Preflight
-  stage A runs before the configuration merge, so on a host that is not root,
-  or in this build — where the Ansible play does not exist yet — the run stops
-  at `11` (`EX_PREFLIGHT`) and the value is never validated. On a host that
-  gets as far as the merge, a bad value is `10` (`EX_USAGE`).
+  stage A runs before the configuration merge, so on a host that is not root
+  the run stops at `11` (`EX_PREFLIGHT`) and the value is never validated —
+  which is what happens on this project's own development box, every time. On
+  a host that gets as far as the merge, a bad value is `10` (`EX_USAGE`).
 
 So: no rules are added, none are removed, and no packet filter is installed,
 configured or enabled by anything in this tree.

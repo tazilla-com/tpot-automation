@@ -1,0 +1,166 @@
+---
+# roles/tpot_install/tasks/main.yml -- fetch upstream T-Pot, drive it, and
+# configure the two things its unattended path leaves undone.
+#
+# THIS IS THE ROLE A REVIEWER SHOULD READ CLOSELY, and it is the only one that
+# runs anything of somebody else's. Everything it does rests on four facts
+# about upstream's own installer, all read from its source at the pinned
+# commit and none of them obvious:
+#
+#   1. UPSTREAM REFUSES TO RUN AS ROOT. A EUID test, exit 1, no override
+#      (install.sh:287-292). Our install.sh is root, so this is the one role
+#      in the tree that escalates, and it escalates DOWNWARDS.
+#   2. UPSTREAM'S INSTALL TYPE IS NOT THE EDITION THE USER ASKED FOR. It is
+#      always the sensor type, because that is the one code path that never
+#      asks for a credential. The edition is applied afterwards, by us. The
+#      long version is at the top of vars/main.yml.
+#   3. UPSTREAM EXITS 0 WHEN IT HAS FAILED. It has no `set -e` and its last
+#      statement is an echo, so a failed image pull still exits 0. Its return
+#      code is recorded and a NON-zero one is fatal, but a zero is never
+#      treated as proof of anything. Only the verification role establishes
+#      success.
+#   4. UPSTREAM READS ITS OWN SOURCE REF AND REPOSITORY OUT OF WHATEVER GIT
+#      WORK TREE IT FINDS ITSELF IN. So it is run from a clean directory of
+#      our own, with both stated explicitly.
+#
+# THREE STAGES, AND WHY THE BOUNDARIES ARE WHERE THEY ARE
+#   The play's rescue turns `tpot_stage` into an exit code, so a stage
+#   boundary is a promise about what a number means to whoever reads it:
+#
+#     upstream (14)  nothing of upstream's has been executed. The pin was
+#                    missing or malformed, the download failed, or the sha256
+#                    did not match. The box is unchanged apart from one
+#                    directory in the T-Pot account's home.
+#     driver   (15)  upstream's own installer ran and failed, or exceeded its
+#                    time budget. The box has been changed by upstream and the
+#                    transcript is required reading.
+#     env      (15)  upstream finished, and the configuration this project
+#                    owns could not be applied. Same class, because a T-Pot
+#                    whose dashboard has no login is not an installed T-Pot.
+#
+#   The stage strings are written as LITERALS, never assembled from a
+#   variable: tests/check-stage-map.sh finds them by matching the literal, and
+#   a stage it cannot see is one that silently reports 40.
+#
+# NOTHING BELOW HAS EVER RUN. No virtual machine, no root, no docker, no
+# T-Pot, ever. Every assertion here is what this role is specified to do.
+
+# ---------------------------------------------------------------------------
+# The stage marker comes first, before anything can fail, so that a failure in
+# the very next task is already attributed to this role rather than to the
+# play's `init`.
+# ---------------------------------------------------------------------------
+- name: Enter the upstream stage
+  # The accumulator names are fixed by the play contract -- site.yml
+  # initialises them, roles/report assembles them and lib/result.sh reads the
+  # result -- so they cannot carry this role's own prefix. The noqa marker is
+  # about that name, and nothing else in the task.
+  ansible.builtin.set_fact:
+    tpot_stage: upstream
+
+# ---------------------------------------------------------------------------
+# WHETHER THIS ROLE CAN RUN AT ALL ON A --check RUN.
+#
+# roles/tpot_user does not create the account under --check -- correctly, that
+# is what --check means -- so on a clean box tpot_home is empty by the time
+# this role starts, and every path here would resolve against the filesystem
+# root. The assert below is the right refusal for a REAL run, where an empty
+# tpot_home means the roles ran out of order. It is the WRONG answer for a dry
+# one: it maps to stage `upstream`, which install.sh reports as 14
+# (EX_UPSTREAM, "the pinned installer could not be fetched or its sha256 did
+# not match"), and neither half of that sentence is true -- nothing was
+# fetched and the pin is fine.
+#
+# So a check run over a box that has no T-Pot account records the gap as a
+# warning and stops here. `not ansible_check_mode` is one of the two clauses,
+# which is what makes this incapable of relaxing anything on a real install:
+# outside check mode this fact is always true and the role behaves exactly as
+# it did.
+# ---------------------------------------------------------------------------
+- name: Decide whether there is an account to install as
+  ansible.builtin.set_fact:
+    tpot_install_possible: >-
+      {{ (not ansible_check_mode) or ((tpot_home | default('') | length) > 1) }}
+
+- name: Note that a check run cannot install without an account
+  ansible.builtin.set_fact:
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings + ['Check mode: the T-Pot account does not exist on this box yet, '
+         ~ 'so nothing downstream of it could even be described -- no upstream fetch, no '
+         ~ 'compose swap, no credential and no verification. Run --check again once the '
+         ~ 'account exists, or read this as "the run got as far as needing one".'] }}
+  when: not (tpot_install_possible | bool)
+
+# ---------------------------------------------------------------------------
+# The T-Pot account's real home directory is the root of every path this role
+# touches, and it is read from the passwd database by the account role rather
+# than composed from a username. If it is missing, this role has been run out
+# of order or on its own with --tags, and every path below would silently
+# become an absolute path starting with a slash. Refuse, by name.
+# ---------------------------------------------------------------------------
+- name: Refuse to run without the T-Pot account's real home directory
+  ansible.builtin.assert:
+    that:
+      - tpot_home is defined
+      - tpot_home | default('') | length > 1
+      - tpot_home is match('^/.')
+    fail_msg: >-
+      tpot_home is not set, so there is nothing to hang this role's paths off.
+      It is read out of the passwd database by the account role, which runs
+      before this one in site.yml. Running this role alone -- with --tags
+      tpot_install, or from a playbook of your own -- skips that, and every
+      path here would resolve against the filesystem root. Run site.yml.
+    success_msg: "the T-Pot account's home directory is {{ tpot_home | default('') }}"
+    quiet: true
+  when: tpot_install_possible | bool
+
+- name: Fetch and verify the pinned upstream installer
+  ansible.builtin.include_tasks: fetch-upstream.yml
+  when: tpot_install_possible | bool
+
+# The workspace checks come AFTER the fetch on purpose. Everything in
+# fetch-upstream.yml that can refuse does so before it writes anything, so a
+# missing or malformed pin costs nothing; this file is about the ground
+# upstream is going to stand on, and there is no point examining it until
+# there is something to run.
+- name: Prepare the directories upstream will use
+  ansible.builtin.include_tasks: workspace.yml
+  when: tpot_install_possible | bool
+
+- name: Enter the driver stage
+  ansible.builtin.set_fact:
+    tpot_stage: driver
+  when: tpot_install_possible | bool
+
+- name: Run upstream's own installer
+  ansible.builtin.include_tasks: install-upstream.yml
+  when: tpot_install_possible | bool
+
+- name: Enter the env stage
+  ansible.builtin.set_fact:
+    tpot_stage: env
+  when: tpot_install_possible | bool
+
+- name: Apply the edition, the telemetry decision and the dashboard credential
+  ansible.builtin.include_tasks: configure-env.yml
+  when: tpot_install_possible | bool
+
+# ---------------------------------------------------------------------------
+# T-Pot is not running when this role finishes, and saying so is the whole
+# point of exit 20. Upstream's own closing message is "Please reboot and
+# re-connect via SSH on tcp/64295" (install.sh:730), its playbook enables
+# tpot.service without ever starting it, and nothing in that playbook reboots.
+# install.sh owns the reboot decision; this role only states the requirement.
+# ---------------------------------------------------------------------------
+#
+# NOT IN CHECK MODE, AND THAT DIRECTION MATTERS. Reporting reboot_required for
+# a run that installed nothing turns install.sh's exit 0 into exit 20 --
+# "installed, pre-reboot checks passed, A REBOOT IS REQUIRED" -- for a dry run
+# that changed nothing, which is a statement about a T-Pot that does not
+# exist. The other direction is the dangerous one and this cannot produce it:
+# the driver task is itself `when: not ansible_check_mode`, so upstream
+# provably did not run on any path this condition is false on.
+- name: Record that T-Pot needs a reboot before it is running
+  ansible.builtin.set_fact:
+    tpot_reboot_required: true
+  when: not ansible_check_mode

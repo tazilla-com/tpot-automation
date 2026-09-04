@@ -284,6 +284,79 @@ The variable reference is in docs/no-such-@@file.md.
 EOF
 }
 
+_fixture_check_stage_map() {
+    local d=$1
+    mkdir -p "$d/lib" "$d/docs" "$d/roles/report/vars" "$d/roles/tpot_snapshot/tasks"
+    cp -- "$REPO_ROOT/lib/exitcodes.sh" "$d/lib/" 2>/dev/null || return 1
+    # Both directions at once, because the gate exists for both and proving
+    # one would leave the other exactly as unverified as it was.
+    #
+    # (a) A CODE THE EXIT TABLE DOES NOT DEFINE. install.sh refuses a class it
+    #     does not recognise and falls back to 40, so the play would be
+    #     reporting a number that means nothing to the thing reading it.
+    # (b) THE MAP AND THE DOCUMENT DISAGREE about a stage that is in both.
+    # (c) A ROLE CLAIMING A STAGE WITH NO ROW -- the drift this gate was
+    #     written for. Adding a role and forgetting the map is silent until
+    #     the day that role fails.
+    _write "$d/roles/report/vars/main.yml" <<'EOF'
+---
+tpot_report_stage_exit_codes:
+  preflight: 11
+  driver: 17
+  verify: 16
+EOF
+    _write "$d/docs/exit-codes.md" <<'EOF'
+| Stage | Code | Why that code |
+|---|---|---|
+| `preflight` | 11 `EX_PREFLIGHT` | preflight |
+| `driver` | 15 `EX_DRIVER` | upstream's own installer |
+| `verify` | 16 `EX_VERIFY` | installed, assertion failed |
+| `finalize` | 16 `EX_VERIFY` | documented, and absent from the map |
+EOF
+    _write "$d/roles/tpot_snapshot/tasks/main.yml" <<'EOF'
+---
+- name: Record the stage
+  ansible.builtin.set_fact:
+    tpot_stage: snapshot
+EOF
+}
+
+_fixture_check_example_parity() {
+    local d=$1
+    mkdir -p "$d/examples"
+    # All three comparisons at once. Proving one would leave the other two as
+    # unverified as they were, and the three fail for genuinely different
+    # reasons: a key nobody carried across, a default edited in one copy, and
+    # prose corrected in one copy.
+    _write "$d/examples/tpot.example.yml" <<'EOF'
+---
+# The unprivileged account that owns the T-Pot checkout.
+# tpot_os_user: honeypot
+
+# How many running containers a healthy T-Pot has.
+# tpot_min_containers:
+
+# The dashboard port, which only this file documents.
+# tpot_dashboard_port: 64297
+EOF
+    _write "$d/examples/tpot.example.json" <<'EOF'
+{
+  "#help tpot_os_user": [
+    "The unprivileged account that owns the T-Pot checkout."
+  ],
+  "# tpot_os_user": "honeypot",
+  "#help tpot_min_containers": [
+    "How many running containers a healthy T-Pot has, counted at pin time."
+  ],
+  "# tpot_min_containers": null,
+  "#help tpot_verify_retries": [
+    "A key only the JSON file documents."
+  ],
+  "# tpot_verify_retries": 30
+}
+EOF
+}
+
 _fixture_for() {
     case $1 in
         check-no-tty.sh)           printf '_fixture_check_no_tty' ;;
@@ -295,6 +368,8 @@ _fixture_for() {
         check-notice-doc.sh)       printf '_fixture_check_notice_doc' ;;
         check-exit-table.sh)       printf '_fixture_check_exit_table' ;;
         check-references.sh)       printf '_fixture_check_references' ;;
+        check-stage-map.sh)        printf '_fixture_check_stage_map' ;;
+        check-example-parity.sh)   printf '_fixture_check_example_parity' ;;
         *)                         printf '' ;;
     esac
 }

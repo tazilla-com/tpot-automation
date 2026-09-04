@@ -1,0 +1,378 @@
+---
+# roles/tpot_install/vars/main.yml -- this role's internals.
+#
+# WHY vars/ AND NOT defaults/
+#   Nothing here is user input, and tests/check-variable-surface.sh would
+#   correctly refuse every one of these names in a defaults/ file: they are
+#   not among the 50 documented keys, and documenting them would advertise a
+#   knob nobody should turn. vars/ is not scanned by that gate, and -- the
+#   property that actually matters -- vars/ cannot be overridden by an answer
+#   file, by an environment variable or by --set -- lib/config.py refuses a key
+#   that is not one of the 50, and all three of those channels go through it.
+#   The invocation this project's whole security argument rests on is
+#   therefore not reachable from any input install.sh accepts.
+#
+#   That is the honest form of the claim, and it is narrower than "not
+#   settable". MEASURED HERE on ansible-core 2.21.2: `-e name=value` DOES beat
+#   a role var -- extra-vars is the highest precedence there is. So somebody
+#   running `ansible-playbook site.yml -e ...` by hand can replace anything in
+#   this file. What they cannot do is get there through install.sh, which
+#   passes exactly one `-e`, and it is `@merged.json`.
+#
+# EVERY VALUE HERE IS EVALUATED LAZILY
+#   Ansible templates a role var when it is first read, not when the file is
+#   loaded. So the expressions below may refer to facts that later tasks set
+#   -- tpot_home from the account role, the per-ref data loaded by
+#   tasks/fetch-upstream.yml -- and they will see them.
+#
+# NOTHING BELOW HAS EVER RUN AGAINST A REAL BOX. No T-Pot has ever been
+# installed by this project: no virtual machine, no root, no docker. Read
+# every claim about upstream's behaviour as read from upstream's source at the
+# pinned commit, because that is what it is.
+
+# ---------------------------------------------------------------------------
+# THE INSTALL TYPE UPSTREAM IS TOLD, AND WHY IT IS NOT THE ONE THE USER ASKED
+# FOR.
+#
+# Upstream's own type flag does exactly two things (install.sh:594-714): it
+# decides which compose file is copied over docker-compose.yml, and it decides
+# whether upstream enters its credential branch. The branch is entered for its
+# internal HIVE type only, and h, l, i and t all map to HIVE while copying
+# four DIFFERENT compose files -- so the type is not a proxy for the edition
+# and must never be treated as one.
+#
+# The SENSOR type is the one value that asks for neither a username nor a
+# password, so upstream never receives a credential and never puts one in an
+# argv. This role then performs both of the things the type would have done,
+# itself: it copies the edition's compose file (tasks/configure-env.yml) and
+# writes the dashboard record into T-Pot's own environment file from standard
+# input. Every edition runs the identical upstream playbook, so nothing is
+# lost by taking this route.
+#
+# tests/check-argv-hygiene.sh rule 5 fails the build on any line -- code or
+# prose -- that describes upstream being driven with a credential flag.
+# ---------------------------------------------------------------------------
+tpot_install_upstream_type: "s"
+
+# Upstream's own mapping from the type letter to the compose file it copies
+# (install.sh:599-643). It is reproduced rather than inferred because the
+# names do not follow from the letters: h is standard, i is mini.
+tpot_install_compose_editions:
+  h: standard
+  s: sensor
+  l: llm
+  i: mini
+  m: mobile
+  t: tarpit
+
+# The editions that have a web dashboard, and therefore a credential record to
+# write. Upstream gates on the same four (install.sh:254) before demanding a
+# credential on its own path. The sensor and mobile editions have no dashboard
+# at all, so for those this role writes no credential and says so in the
+# report rather than writing an empty one.
+tpot_install_dashboard_types: [h, l, i, t]
+
+# The edition selected for THIS run, and the compose file it names inside
+# upstream's checkout.
+tpot_install_edition: "{{ tpot_install_compose_editions[tpot_install_type] | default('') }}"
+tpot_install_edition_source: "{{ tpot_install_clone_dir }}/compose/{{ tpot_install_edition }}.yml"
+tpot_install_has_dashboard: "{{ tpot_install_type in tpot_install_dashboard_types }}"
+
+# ---------------------------------------------------------------------------
+# PATHS. Every one of them hangs off tpot_home, which the account role reads
+# out of the passwd database. It is never composed as /home plus a username:
+# an account whose home is somewhere else is ordinary, and getting this wrong
+# installs T-Pot into a directory nothing will ever look at.
+# ---------------------------------------------------------------------------
+tpot_install_home: "{{ tpot_home | default('') }}"
+
+# The clean directory upstream's installer is fetched into and run from, and
+# it has to be BOTH of those. Two independent reasons, and the second is a
+# security control rather than housekeeping:
+#
+#   * upstream downloads its playbook into the current directory and runs a
+#     NESTED ansible-playbook there. With this project's own ansible.cfg in
+#     scope that nested run would inherit our roles path, our collections path
+#     and our log path;
+#   * upstream's git_source() reads its branch AND its repository URL out of
+#     whatever git work tree the directory holding install.sh belongs to
+#     (install.sh:37-72). Run from inside a checkout of THIS repository it
+#     offers to clone T-Pot from OUR origin -- executed 2026-09-04, and it is
+#     silent about it.
+#
+# So: a directory of our own, owned by the T-Pot account, asserted to be
+# outside any work tree before anything is written into it.
+tpot_install_workdir: "{{ tpot_install_home }}/.tpot-automation-upstream"
+tpot_install_script: "{{ tpot_install_workdir }}/install.sh"
+
+# The playbook upstream downloads into its working directory. It is named here
+# because a STALE one is silently reused: install.sh:502 prefers a local copy
+# to downloading, so a file left behind by a previous run at a DIFFERENT ref
+# would become the payload of this one, while the report named the new ref.
+tpot_install_payload: "{{ tpot_install_workdir }}/tpot.yml"
+tpot_install_payload_alt: "{{ tpot_install_workdir }}/installer/install/tpot.yml"
+
+# Upstream's own checkout, and the two files in it this role edits. The
+# directory name is not incidental: docker compose derives the project label
+# com.docker.compose.project from it, and nothing declares it anywhere.
+tpot_install_clone_dir: "{{ tpot_install_home }}/tpotce"
+tpot_install_env_file: "{{ tpot_install_clone_dir }}/.env"
+tpot_install_compose_file: "{{ tpot_install_clone_dir }}/docker-compose.yml"
+
+# Upstream's own Ansible log. It writes this on every run and DELETES the
+# previous one first (install.sh:551), so it has to be collected after each
+# run or the evidence for a failure is gone the moment anybody re-runs.
+tpot_install_upstream_log: "{{ tpot_install_home }}/install_tpot.log"
+tpot_install_log_copy: "{{ tpot_log_dir }}/upstream-install.log"
+
+# The password hasher. Absolute, because this role scrubs PATH out of the
+# child environment, and because the package that provides it differs by
+# distribution (apache2-utils, httpd-tools) while the path does not.
+tpot_install_htpasswd_bin: /usr/bin/htpasswd
+
+# ---------------------------------------------------------------------------
+# THE HASHER'S ARGUMENT VECTOR, WRITTEN DOWN IN ONE PLACE SO IT CAN BE
+# ASSERTED ON.
+#
+# It is here, and not inline in the task, for the same reason
+# tpot_install_driver_argv is here: this is the invocation the product's
+# central security claim is about, and a claim that can be checked beats a
+# claim a reviewer has to remember.
+#
+# -n   print the record on standard output instead of writing a file
+# -i   READ THE PASSWORD FROM STANDARD INPUT. The alternative, -b, takes it as
+#      an argument, where it is world-readable in /proc for the life of the
+#      process. Upstream uses -b (upstream install.sh:709); we never reach
+#      that line, which is one of the two reasons upstream is driven as a
+#      sensor install at all.
+#
+# NO ALGORITHM FLAG, DELIBERATELY. Upstream calls the hasher with none either,
+# so both take the hasher's own default and produce a record of the same kind.
+# Choosing one here would produce a record T-Pot's own tooling did not expect.
+#
+# The password is NOT in this list, and tasks/configure-env.yml asserts that
+# before it runs -- see the note there about what the build gate can and
+# cannot see in a file of this shape.
+tpot_install_htpasswd_argv:
+  - "{{ tpot_install_htpasswd_bin }}"
+  - "-n"
+  - "-i"
+  - "{{ tpot_web_user }}"
+
+# The flag that would put the password on the command line. Named so the
+# assertion in tasks/configure-env.yml can be read without knowing the
+# hasher's options, and so that grepping for it finds the prohibition.
+tpot_install_htpasswd_forbidden_flag: "-b"
+
+# How much password the hasher will actually read. It reads ONE LINE into a
+# fixed buffer, so a longer password is silently truncated -- the same class
+# of quiet falsehood as a newline in the middle of one, and just as invisible
+# afterwards. Apache's own support tools call that buffer MAX_STRING_LEN.
+#
+# NOT MEASURED: the hasher is not installed on the machine this was written
+# on, so this bound is chosen conservatively to sit under the size Apache
+# uses rather than to equal it. A password over it is refused, never cut.
+tpot_install_htpasswd_max_bytes: 255
+# The same bound expressed where it can be checked. Jinja counts CHARACTERS
+# and the buffer counts BYTES, and `b64encode | length` is exactly
+# 4 * ceil(bytes / 3) -- so 340 here is 255 bytes, for ASCII and for a
+# passphrase of multi-byte characters alike. Verified on this box: 255 ASCII
+# characters encode to 340; 256 encode to 344.
+tpot_install_htpasswd_max_b64: 340
+
+# ---------------------------------------------------------------------------
+# THE TIME BUDGET, AND WHY IT IS coreutils RATHER THAN ANSIBLE'S OWN async.
+#
+# Ansible's async/poll is the idiomatic way to bound a long task, and it was
+# tried first. It does not survive this particular task: the async job file is
+# written under the HOME the CHILD sees, while the status poll looks for it
+# under the home Ansible resolved for the connection. Measured 2026-09-04 on
+# this box -- with HOME set in the task environment the job ran to completion
+# and the poll reported "could not find job", so the result carried no return
+# code at all and a successful run looked like a timeout. This role has to set
+# HOME (upstream builds its checkout path out of it), and it has to become an
+# unprivileged account, so both halves of that trap are permanent here.
+#
+# `timeout` has none of that. It is one process, its exit status IS the
+# answer, and 124 -- or 137 after the kill -- says "the budget ran out" in a
+# way nothing has to interpret. It also puts the child in its own process
+# group and signals the group, so upstream's nested ansible-playbook and its
+# docker pulls go with it rather than being orphaned.
+#
+# It matters more than a tidiness argument. Upstream contains two `while read`
+# loops with no EOF handling, which spin rather than fail when stdin is not a
+# terminal. Our flags mean neither is reachable -- but "unreachable given
+# these flags" is an argument, and a time budget is a mechanism.
+tpot_install_timeout_bin: /usr/bin/timeout
+# Seconds between the TERM and the KILL. Upstream shells out to docker and to
+# a nested ansible-playbook; a minute is enough for those to unwind and short
+# enough that a wedged run does not sit there.
+tpot_install_kill_after: 60
+# The two exit statuses that mean the budget ran out rather than that upstream
+# failed: 124 is timeout's own, and 137 is 128 plus SIGKILL for a child that
+# ignored the TERM.
+tpot_install_timeout_rcs: [124, 137]
+
+# ---------------------------------------------------------------------------
+# THE CHILD ENVIRONMENT UPSTREAM IS GIVEN.
+#
+# Two halves, because Ansible can only do one of them with `environment:`.
+#
+#   SET   PATH, HOME and the locale, below. HOME is stated rather than left to
+#         sudo's -H, because upstream builds its checkout path and its log
+#         path out of it: a HOME that still said /root would clone T-Pot into
+#         root's home and report success.
+#
+#   UNSET the two variables install.sh exports for OUR play and the three a
+#         Python virtualenv leaves behind. `environment:` CANNOT do this --
+#         measured 2026-09-04 on this box, a null value produces the literal
+#         string "None" in the child, and an empty PYTHONPATH puts the current
+#         directory on sys.path. So the removal is done by /usr/bin/env with
+#         its unset option, which is a real removal and is visible in the
+#         argv this run records.
+#
+# C.UTF-8 and never plain C: ansible-core refuses to start under a non-UTF-8
+# locale, and upstream runs a nested ansible-playbook. tests/check-locale.sh
+# fails the build on the other spelling.
+# ---------------------------------------------------------------------------
+tpot_install_base_env:
+  PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+
+tpot_install_child_env: >-
+  {{ tpot_install_base_env
+     | combine({'HOME': tpot_install_home})
+     | combine(tpot_upstream_env | default({}, true)) }}
+
+# Written out element by element rather than assembled from a list of names.
+# This is the argument vector of a process that runs for ninety minutes with
+# passwordless sudo; a reader should be able to see it, not reconstruct it.
+tpot_install_env_scrub_argv:
+  - "-u"
+  - "VIRTUAL_ENV"
+  - "-u"
+  - "PYTHONPATH"
+  - "-u"
+  - "PYTHONHOME"
+  - "-u"
+  - "ANSIBLE_CONFIG"
+  - "-u"
+  - "ANSIBLE_LOG_PATH"
+
+# ---------------------------------------------------------------------------
+# THE PER-REF DATA FILE, AND THE SEAM THIS ROLE READS IT THROUGH.
+#
+# vars/upstream-<ref>.yml is generated by tools/pin-upstream.sh. It is not
+# written by hand and it is not written by this role. It carries the facts
+# that are properties of the PINNED REF rather than of this project: the
+# sha256 of upstream's install.sh, the container count per edition, the name
+# of the telemetry service, and which install types that ref knows about.
+#
+# The expressions below are a deliberate seam. They accept the data under a
+# namespaced mapping, under flat namespaced keys, or under the bare names, and
+# they resolve to an empty value rather than raising when the file is shaped
+# some fourth way. That turns a mismatch between this role and the generator
+# into a named assertion in tasks/fetch-upstream.yml -- "the data file carries
+# no sha256" -- instead of an undefined-variable traceback from the middle of
+# a Jinja expression an hour into a run.
+# ---------------------------------------------------------------------------
+tpot_install_ref_map: "{{ tpot_install_upstream | default({}, true) }}"
+
+tpot_install_ref_sha256: >-
+  {{ tpot_install_ref_map.get('sha256')
+     | default(tpot_install_upstream_sha256
+               | default(sha256 | default('', true), true), true) }}
+
+tpot_install_ref_telemetry_service: >-
+  {{ tpot_install_ref_map.get('telemetry_service')
+     | default(tpot_install_telemetry_service
+               | default(telemetry_service | default('', true), true), true) }}
+
+tpot_install_ref_types: >-
+  {{ tpot_install_ref_map.get('install_types')
+     | default(tpot_install_install_types
+               | default(install_types | default([], true), true), true) }}
+
+# The checksum actually enforced. The documented input wins, so that a
+# candidate ref can be tested before it is pinned; otherwise it is whatever
+# the data file recorded at pin time. Lowercased, because a pasted uppercase
+# digest would otherwise fail the pattern below for the wrong reason.
+tpot_install_checksum: >-
+  {{ (tpot_upstream_checksum | default('', true) | default(tpot_install_ref_sha256, true)) | lower }}
+
+# The service block removed from docker-compose.yml when telemetry is off, and
+# the network only it uses. The data file names the network itself when it
+# has one; otherwise it is derived from upstream's own naming convention, the
+# service name with a suffix. Either way it is removed only after the
+# remaining services have been checked for a reference to it -- a network
+# something still joins is not unused, whatever it is called.
+tpot_install_telemetry_default_service: ewsposter
+tpot_install_telemetry_target: >-
+  {{ tpot_install_ref_telemetry_service | default(tpot_install_telemetry_default_service, true) }}
+tpot_install_ref_telemetry_network: >-
+  {{ tpot_install_ref_map.get('telemetry_network') | default('', true) }}
+tpot_install_telemetry_network: >-
+  {{ tpot_install_ref_telemetry_network | default(tpot_install_telemetry_target ~ '_local', true) }}
+
+# ---------------------------------------------------------------------------
+# WHAT UPSTREAM IS ACTUALLY RUN WITH.
+#
+#   the unattended flag   requires passwordless sudo, and requires a type
+#   the type flag         the SENSOR type; see the block at the top of this file
+#   the branch flag       the payload ref. It must be the full 40-character
+#                         sha, and it is asserted to be before this list is
+#                         built: an empty value degrades to the default branch
+#                         in silence, and an abbreviated one makes every
+#                         RE-run exit 1, because ansible.builtin.git leaves
+#                         HEAD at the full sha and upstream's check_tpot_clone
+#                         then compares 7 characters against 40
+#   the repository flag   stated for the same reason the branch flag is:
+#                         without it upstream reads the URL out of a
+#                         surrounding git work tree
+#
+# The list is reported verbatim as the driver's flags, and lib/result.sh reads
+# the install type and the payload ref back OUT of it rather than trusting a
+# second field somebody has to keep in step. So this is not a copy of the
+# invocation -- it is the invocation.
+# ---------------------------------------------------------------------------
+tpot_install_driver_flags: >-
+  {{ ['-s', '-t', tpot_install_upstream_type,
+      '-b', tpot_upstream_ref | default(''),
+      '-r', tpot_upstream_repo_url]
+     + (tpot_upstream_extra_flags | default([], true)) }}
+
+# The flags this project sets itself, and the two that carry a credential.
+# Any of them arriving again through tpot_upstream_extra_flags is refused: a
+# duplicate is either ignored by upstream's own option parsing or it silently
+# replaces one of the values this product's guarantees rest on.
+tpot_install_reserved_flags: ["-s", "-t", "-b", "-r"]
+tpot_install_credential_flag_user: "-u"
+tpot_install_credential_flag_pass: "-p"
+
+# The full argv, in three layers and in this order:
+#
+#   timeout   the wall-clock budget, and the only thing that can end a run
+#             upstream will not end itself
+#   env       the environment scrub, because the names it removes cannot be
+#             removed any other way
+#   install.sh and upstream's own flags
+#
+# Nothing in it is a secret and nothing in it is derived from one, which is
+# why the whole vector is printed into the transcript before it runs and
+# recorded verbatim in the report.
+tpot_install_driver_argv: >-
+  {{ [tpot_install_timeout_bin,
+      '--kill-after=' ~ (tpot_install_kill_after | string),
+      tpot_driver_install_timeout | string,
+      '/usr/bin/env']
+     + tpot_install_env_scrub_argv
+     + [tpot_install_script]
+     + tpot_install_driver_flags }}
+
+# Regular expressions the pin is held to. A ref that is not a full lowercase
+# sha and a checksum that is not 64 hex characters are both refused before
+# anything is fetched, because both of them fail LATER in ways that look like
+# something else entirely.
+tpot_install_ref_pattern: '^[0-9a-f]{40}$'
+tpot_install_checksum_pattern: '^[0-9a-f]{64}$'

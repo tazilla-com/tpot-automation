@@ -1,0 +1,97 @@
+---
+# roles/preflight/defaults/main.yml -- the input this role reads, and nothing
+# else.
+#
+# WHY EVERY KEY HERE IS ALSO IN lib/varschema.json, AND WHY THAT IS ENFORCED
+#   The same variable surface is written down three times: lib/varschema.json
+#   is the machine-readable schema, inventories/example/group_vars/all.yml is
+#   the documented copy that lib/args.sh also parses at run time, and a role's
+#   defaults are what Ansible starts from when nothing overrides. Three copies
+#   drift quietly, so tests/check-variable-surface.sh compares them: every
+#   tpot_/ioc_ key defaulted in any role must exist in the schema AND in the
+#   example inventory, with the same default after whitespace and one layer of
+#   quotes are normalised.
+#
+#   Two consequences a reader should not have to discover by breaking the
+#   build. A knob this role needs that is not one of the fifty documented keys
+#   does not belong here -- it goes in vars/main.yml, which is not scanned and
+#   which an answer file cannot override. And a default here may not carry a
+#   trailing comment, because the gate compares the whole rest of the line.
+#
+# WHY DEFAULT THEM AT ALL, GIVEN THAT install.sh ALWAYS SUPPLIES THEM
+#   lib/config.py applies the schema defaults and passes the merged document
+#   in as extra-vars, so in a real run every key below is already set and
+#   these values are never read. They exist so the role is still meaningful
+#   when it is run on its own -- `ansible-playbook site.yml` by hand, or a
+#   future test that includes the role without the shell around it. A role
+#   that silently asserts nothing because a threshold was undefined is worse
+#   than one that asserts the documented default.
+#
+#   The eight schema keys that have NO default are the other half of that
+#   rule. They are absent from the merged document when nobody supplied them,
+#   so every reference to one must be guarded. This role reads none of them.
+
+# The IoC forwarding switch, read for one purpose: to refuse a run that asks
+# for a capability this release does not have, while the box is still
+# untouched. Nothing here reads the endpoint, the sensor id or the header --
+# only whether the switch is on. false is the only value this release accepts.
+#
+# roles/ioc_forward defaults the same key to the same value, and that is not a
+# duplication to tidy away: role defaults are the lowest precedence and are
+# what each role starts from when it is included on its own, so a role that
+# reads a key and does not declare it is a role whose declared input surface
+# is a lie. tpot_os_user is defaulted in four roles here for the same reason.
+ioc_forwarding_enabled: false
+
+# The unprivileged account that will own the T-Pot checkout. Read here for one
+# purpose only: to decide which filesystem's free space to measure. The account
+# does not exist yet at preflight time on a fresh box, and that is the normal
+# case rather than an error -- see tasks/main.yml.
+tpot_os_user: "honeypot"
+
+# Elasticsearch's sysctl prerequisite. This role REPORTS the current value and
+# never fails on it; os_prep is what sets it, and it has to, because upstream
+# writes the setting to /etc/sysctl.conf without ever applying it and Debian 13
+# systemd-sysctl does not read that file.
+tpot_max_map_count: 262144
+
+# Memory, in MiB: the hard floor and the recommendation. Below the floor the
+# run stops; between the two it warns and continues. 8192 is upstream's stated
+# minimum for a sensor and 16384 what it recommends for a hive.
+tpot_min_memory_mb: 8192
+tpot_warn_memory_mb: 16384
+
+# CPU count. Upstream states no CPU figure anywhere and its installer contains
+# no CPU check at all, so the floor sits below both of the disputed numbers
+# this project inherited and the lower of them becomes the warning.
+tpot_min_cpus: 2
+tpot_warn_cpus: 4
+
+# Free disk, in GiB, measured on two filesystems: the one that will hold the
+# T-Pot account's home and the one that will hold /var/lib/docker. They are
+# frequently different devices and the one that fills is usually not the one
+# somebody checked. The floor is a deliberate deviation BELOW upstream's own
+# stated 128 GB minimum so that a modest test guest can complete a run; the
+# recommendation is upstream's hive figure.
+tpot_min_disk_gb: 64
+tpot_warn_disk_gb: 256
+
+# The ports this installer requires to be free before it starts. Port 22 is
+# allowed to be held by the host's own sshd and is treated as an exception
+# throughout this role. UPSTREAM CHECKS A DIFFERENT SET AND THE TWO ARE
+# DISJOINT -- upstream refuses tcp/25, tcp/53 and udp/53, which this list
+# cannot express because it carries no protocol. Those three are added by
+# vars/main.yml and are not configurable, because relaxing them here would not
+# make the install work; it would only move upstream's refusal to a point
+# where this installer had already changed the box.
+tpot_required_ports: [22, 64294, 64295, 64297, 64298]
+
+# Where administrative SSH ends up. Read here so that the record can say which
+# layout the box is in -- sshd on 22 before an install, sshd here afterwards.
+tpot_admin_ssh_port: 64295
+
+# The two overrides this role honours. Neither of them touches upstream: its
+# own /etc/os-release gate runs before it reads any flag and has no override at
+# all, and its own port check is not ours to relax either.
+tpot_force_unsupported_os: false
+tpot_force_low_resources: false

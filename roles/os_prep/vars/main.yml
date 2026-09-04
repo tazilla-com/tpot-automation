@@ -1,0 +1,111 @@
+---
+# roles/os_prep/vars/main.yml -- this role's internals.
+#
+# WHY vars/ AND NOT defaults/
+#   Nothing here is user input. tests/check-variable-surface.sh scans
+#   roles/*/defaults/*.yml and requires every tpot_*/ioc_* key it finds to be
+#   one of the fifty documented input keys; vars/ is not scanned, and vars/
+#   cannot be overridden by an answer file. That second property is the one
+#   that matters: the package list below is a correctness statement about
+#   what upstream's installer needs, not a preference, and an operator who
+#   could shorten it would get a run that fails ninety minutes later inside
+#   somebody else's code.
+#
+# WHY THE NAMES ARE os_prep_* AND NOT tpot_*
+#   Role vars outrank play vars in Ansible's precedence order. site.yml
+#   initialises the run's accumulators (tpot_run_warnings, tpot_stage and the
+#   rest) as PLAY vars, so a role var that happened to share one of those
+#   names would silently shadow it and the report would lose whatever the
+#   earlier roles had put there. A separate prefix makes that impossible
+#   rather than unlikely.
+
+# ---------------------------------------------------------------------------
+# The packages this installer and upstream's both need present before
+# anything else happens. Every entry earns its place; none is aspirational.
+#
+#   ca-certificates  every fetch in this run is https. Without the trust
+#                    store, upstream's own `wget` of its playbook and the
+#                    Docker repository fetch inside upstream's playbook fail
+#                    with a certificate error that reads like a network fault.
+#   curl             how this project fetches upstream's install.sh at the
+#                    pinned ref before checksumming it.
+#   gnupg            upstream's playbook adds the Docker Engine repository and
+#                    dearmours its signing key. Without gnupg that step fails
+#                    inside a role nobody here wrote.
+#   locales          roles/finalize generates a locale AFTER the install, and
+#                    locale-gen lives in this package. It is installed here
+#                    rather than there so that every package this run needs is
+#                    resolved in one apt transaction, at the point where a
+#                    failure still means "the box was not prepared".
+#   apache2-utils    htpasswd. roles/tpot_install writes T-Pot's WEB_USER from
+#                    it, with the password on stdin and never on a command
+#                    line. Upstream installs this package too, but it does so
+#                    at a point where our own credential write has already had
+#                    to happen.
+#   iproute2         `ss`. Upstream's install.sh treats a missing `ss` as a
+#                    hard error and installs no package that provides it
+#                    (upstream install.sh:384-392 prints the three package
+#                    names and exits); lib/preflight.sh says the same thing
+#                    from our side. Neither of those installs it. This does.
+#   python3          every Ansible module below runs under it, and lib/config.py
+#                    needs it before Ansible exists. Present on every supported
+#                    release, and listed anyway so the transaction is complete.
+#   sudo             NOT OPTIONAL, and the reason is specific rather than
+#                    general. Upstream's Debian branch, when `sudo` is absent,
+#                    installs it under `su -c "apt -y update && ..."`
+#                    (upstream install.sh:423-445) and then runs a bare `sudo
+#                    echo` to prove it works. `su` prompts for the ROOT
+#                    password on the terminal and upstream's unattended flag
+#                    does not bypass it -- the `-s` branch there only chooses
+#                    which sudoers rule to write. An unattended run reaching
+#                    that code stops and waits for a human who is not there,
+#                    which is precisely the failure this product exists to
+#                    remove. Installing sudo first means upstream takes its
+#                    `else` branch and never asks.
+#
+# Deliberately NOT here: git and wget. Upstream needs both, and upstream
+# installs both itself -- wget from its own package list (upstream
+# install.sh:266) and git from its playbook's recommended-packages task
+# (upstream installer/install/tpot.yml:186). Duplicating them here would put
+# this role in the business of tracking upstream's dependency list, which is
+# a thing it cannot do and would get wrong quietly.
+os_prep_base_packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - locales
+  - apache2-utils
+  - iproute2
+  - python3
+  - sudo
+
+# The dpkg-query output format used by the --no-install-deps path. Kept here
+# because it must be a single-quoted YAML scalar: dpkg-query interprets the
+# two characters backslash-n itself, and a double-quoted scalar would hand it
+# a real newline instead.
+os_prep_dpkg_format: '-f=${Package} ${db:Status-Status}\n'
+
+# Where the kernel parameter goes. 99- so that it sorts after anything the
+# distribution ships, .conf because systemd-sysctl reads nothing else, and a
+# name that says who wrote it so an operator finding it in six months can
+# work out what to blame.
+os_prep_sysctl_file: /etc/sysctl.d/99-tpot-automation.conf
+
+# The environment every apt task runs under.
+#
+#   DEBIAN_FRONTEND    the apt module already sets this for itself; it is
+#                      stated because a reader should not have to know that.
+#   NEEDRESTART_SUSPEND  needrestart hooks into apt on Debian and Ubuntu and,
+#                      in its default interactive mode, asks which services to
+#                      restart. On a box with no terminal that is either a
+#                      stalled run or a prompt answered by nobody. Upstream
+#                      sets the same variable for the same reason (upstream
+#                      install.sh:440 and :449). The alternative -- letting it
+#                      restart services automatically -- would let it restart
+#                      sshd underneath the run. Deferring the restarts costs
+#                      nothing here: T-Pot requires a reboot before it is
+#                      running at all, and the last task in this role records
+#                      whether the distribution has asked for one.
+os_prep_apt_environment:
+  DEBIAN_FRONTEND: noninteractive
+  NEEDRESTART_SUSPEND: "1"

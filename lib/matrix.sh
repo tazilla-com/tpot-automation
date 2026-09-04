@@ -16,7 +16,10 @@
 #
 #     supported   what the PINNED upstream ref accepts, intersected with what
 #                 this installer can drive. Derived from the pin, written by
-#                 tools/pin-upstream.sh. SHIPS EMPTY, because no ref is pinned.
+#                 tools/pin-upstream.sh, never by hand. Two rows at the ref
+#                 this tree pins (D-11); EMPTY in a checkout with no pin, and
+#                 empty is an answer rather than a broken file.
+#                 DERIVED, NEVER TESTED -- see below.
 #     legacy      the nine releases the automation this project replaces was
 #                 installed on. Reachable by pinning an older upstream ref.
 #                 DOCUMENTED, NEVER TESTED.
@@ -25,8 +28,10 @@
 #   refuses to answer it as though it were:
 #
 #     matrix_supports   is it in the SUPPORTED tier. Nothing else. This is the
-#                       only function whose true answer licenses the words
-#                       "supported" or "tested" in a message or in result.json.
+#                       only function whose true answer licenses the word
+#                       "supported" in a message or in result.json. It
+#                       licenses "tested" nowhere: nothing in this file has
+#                       any evidence about a real install.
 #     matrix_known      is it in EITHER tier. A legacy box is known and
 #                       reachable; it is not supported.
 #     matrix_tier       WHICH tier matched -- "supported" or "legacy".
@@ -41,10 +46,20 @@
 #
 #   CHANGED BEHAVIOUR, CALLED OUT BECAUSE IT IS SILENT OTHERWISE: before D-07
 #   this file had one flat list and matrix_supports was true for all nine
-#   releases. It is now true for none of them, because the supported tier ships
-#   empty. That is deliberate and it fails CLOSED: an unpinned installer claims
-#   nothing. Callers that want the old breadth want matrix_known, and they owe
-#   the tier in their output.
+#   releases. It is now true only for what the pinned ref's own gate accepts
+#   and this installer can drive. Against the matrix this tree ships, asked
+#   row by row on 2026-09-04, that is debian:13 and ubuntu:26.04 and nothing
+#   else -- so eight of the old nine now answer false, and debian:13 answers
+#   true from the supported tier rather than the legacy one it is also in,
+#   because matrix_match searches supported first. In a checkout with no pin
+#   the answer is true for nothing at all, which is the CLOSED direction: an
+#   unpinned installer claims nothing. Callers that want the old breadth want
+#   matrix_known, and they owe the tier in their output.
+#
+#   WHAT A TRUE matrix_supports STILL DOES NOT MEAN: that anybody ran it. The
+#   tier is derived from upstream's gate at the pin; the evidence of a real
+#   install would be a dated row in tests/MATRIX-STATUS.md, and that file does
+#   not exist because no such install has happened.
 #
 # WHAT IT DELIBERATELY DOES NOT DO
 #   It does not parse YAML. It reads known keys from one known file whose
@@ -479,13 +494,21 @@ matrix_summary_tier() {
 # matrix_summary [FILE]
 #   THE user-facing sentence about what this installer claims, for the message
 #   preflight prints when a box is not supported. It names both tiers and it
-#   never lets the legacy tier read as tested.
+#   lets NEITHER of them read as tested.
 #
-#   With a pin:     debian 13, ubuntu 26.04 (upstream ref 24.04.1); legacy,
-#                   documented but not tested: debian 11/12/13, ...
-#   Without one:    none yet -- no upstream ref is pinned, so nothing is
-#                   claimed as tested; run tools/pin-upstream.sh. Legacy,
-#                   documented but not tested: debian 11/12/13, ...
+#   With a pin:     supported at the pinned upstream ref, never tested:
+#                   debian 13, ubuntu 26.04 (upstream ref fdafa483...);
+#                   legacy, documented but not tested: debian 11/12/13, ...
+#   Without one:    supported: none -- no upstream ref is pinned, so nothing
+#                   is claimed; run tools/pin-upstream.sh. Legacy, documented
+#                   but not tested: debian 11/12/13, ...
+#
+#   NEITHER HALF MAY SAY "TESTED" OF THE SUPPORTED TIER. It said "supported
+#   and tested" until 2026-09-04, which was invisible while the tier shipped
+#   empty and became a printed claim the moment D-11 pinned a ref: the string
+#   went out on every run on a box in neither tier, asserting a test campaign
+#   that has never happened. The tier is derived from upstream's gate; the
+#   evidence of an install is a dated row in tests/MATRIX-STATUS.md.
 #
 #   Returns 1, printing nothing, only when the matrix cannot be read at all.
 #   An empty supported tier is an answer and gets the second sentence, because
@@ -500,13 +523,16 @@ matrix_summary() {
     fi
 
     if supported=$(matrix_summary_tier supported "$file"); then
-        text="supported and tested: ${supported}"
+        # "never tested" is not hedging. See the note above the function: the
+        # tier is derived from the pinned ref's gate, and nothing here has
+        # evidence that any row was installed.
+        text="supported at the pinned upstream ref, never tested: ${supported}"
         if ref=$(matrix_supported_ref "$file"); then
             text+=" (upstream ref ${ref})"
         fi
     else
-        text="supported and tested: none yet -- no upstream ref is pinned, so nothing is"
-        text+=" claimed as tested; run tools/pin-upstream.sh"
+        text="supported: none -- no upstream ref is pinned, so nothing is"
+        text+=" claimed; run tools/pin-upstream.sh"
     fi
 
     if legacy=$(matrix_summary_tier legacy "$file"); then

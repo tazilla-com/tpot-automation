@@ -1,0 +1,164 @@
+---
+# site.yml -- the install play. THE thing install.sh step 9 runs.
+#
+# WHAT THIS FILE IS RESPONSIBLE FOR, AND WHAT IT DELIBERATELY IS NOT
+#   It owns the ORDER the roles run in, the mapping from "which stage failed"
+#   to an exit code, and the two documents the shell reads back. It owns no
+#   behaviour of its own: every task that changes the box lives in a role, so
+#   that `--check` means something and so that a reader can find the thing
+#   that touched a file by looking in one place.
+#
+# WHY ONE BLOCK/RESCUE/ALWAYS AROUND EVERYTHING
+#   `ansible-playbook` has one coarse exit status and this product's whole
+#   contract is a precise one. So the play does the mapping itself and the
+#   shell reads the answer rather than guessing it: each role's first task
+#   records `tpot_stage`, the rescue writes `<code> <stage>` to
+#   $RUNDIR/failure-class, and install.sh reads that file. A play that fails
+#   without saying how far it got produces exit 40, which is the honest
+#   answer -- "a bug in this installer" -- and not a guess.
+#
+#   The `always:` is what makes result.json true on every path. It runs after
+#   the rescue, so a failed run still contributes everything it measured
+#   before it stopped: the verification records, the warnings, the upstream
+#   facts. A run that failed at `verify` still says which checks passed.
+#
+# WHY include_role IN tasks: RATHER THAN A roles: SECTION
+#   A `roles:` section cannot be wrapped in block/rescue/always -- the
+#   handlers and the rescue would not see it -- and the exit contract is the
+#   product. This is the one structural reason; there is no other.
+#
+# NOTHING HERE HAS EVER INSTALLED ANYTHING.
+#   This file has been syntax-checked, linted and gated, and it has never run
+#   against a real box. No VM, no root, no docker, no T-Pot, ever. Read every
+#   assertion below as what this play is specified to do, not as something
+#   observed.
+
+- name: Install T-Pot, unattended
+  hosts: tpot
+  # The play is already root -- install.sh runs as uid 0 and ansible.cfg sets
+  # become = false. The ONLY escalation in the tree is tpot_install dropping
+  # DOWN to the unprivileged account, because upstream refuses to run as root.
+  become: false
+  # preflight compares this box against support-matrix.yml, so the
+  # distribution facts have to exist before the first role.
+  gather_facts: true
+
+  vars:
+    # The run-scoped accumulators. They are initialised HERE, not in any
+    # role's defaults/, for two reasons that both matter:
+    #
+    #   * tests/check-variable-surface.sh requires every tpot_* key defaulted
+    #     in a role to be one of the 50 keys in lib/varschema.json and to be
+    #     documented in the example inventory. These are not user input and
+    #     must never appear there.
+    #   * a role's defaults are re-entered every time a role is included. A
+    #     list that roles append to has to outlive the role that started it.
+    #
+    # `set_fact` in a role beats a play var, which is how a role contributes.
+    tpot_stage: init
+    tpot_verify_results: []
+    tpot_run_warnings: []
+    tpot_report_upstream: {}
+    tpot_report_driver: {}
+    tpot_report_accounts: {}
+    tpot_reboot_required: false
+    tpot_already_installed: false
+
+  tasks:
+    - name: Run the install
+      block:
+
+        # ---------------------------------------------------------------
+        # Assert-only. Changes nothing. It complements rather than repeats
+        # lib/preflight.sh stages A and B, which run before Ansible exists on
+        # the box: this one exists so the same conditions appear in
+        # structured Ansible output and are visible under --check.
+        # ---------------------------------------------------------------
+        - name: Preflight
+          ansible.builtin.include_role:
+            name: preflight
+            apply:
+              tags: [preflight]
+          tags: [preflight, always]
+
+        # ---------------------------------------------------------------
+        # The first role that changes anything.
+        # ---------------------------------------------------------------
+        - name: Prepare the operating system
+          ansible.builtin.include_role:
+            name: os_prep
+            apply:
+              tags: [os_prep]
+          tags: [os_prep]
+
+        - name: Create and prove the T-Pot account
+          ansible.builtin.include_role:
+            name: tpot_user
+            apply:
+              tags: [tpot_user]
+          tags: [tpot_user]
+
+        # ---------------------------------------------------------------
+        # Fetches upstream, drives it, and configures what it left empty.
+        # The only role a reviewer must read closely.
+        # ---------------------------------------------------------------
+        - name: Install T-Pot from the pinned upstream
+          ansible.builtin.include_role:
+            name: tpot_install
+            apply:
+              tags: [tpot_install]
+          tags: [tpot_install]
+
+        - name: Verify what was installed
+          ansible.builtin.include_role:
+            name: tpot_verify
+            apply:
+              tags: [tpot_verify]
+          tags: [tpot_verify]
+
+        - name: Finalize and arm the post-boot verification
+          ansible.builtin.include_role:
+            name: finalize
+            apply:
+              tags: [finalize]
+          tags: [finalize]
+
+        # ---------------------------------------------------------------
+        # Slice 2's namespace reservation. Included UNCONDITIONALLY, not
+        # `when: ioc_forwarding_enabled`, so that the reservation is visible
+        # in --list-tasks and exercised by --syntax-check on every run. Its
+        # tasks/main.yml is one refusing assert; that assert IS the gate, so
+        # a `when:` here would only make the refusal harder to find.
+        # ---------------------------------------------------------------
+        - name: Refuse IoC forwarding, which is not in this release
+          ansible.builtin.include_role:
+            name: ioc_forward
+            apply:
+              tags: [ioc_forward]
+          tags: [ioc_forward]
+
+      rescue:
+        # The failure class, written before anything else can go wrong. If
+        # THIS fails there is nothing left to tell install.sh with, and it
+        # falls back to 40 -- which is the correct answer for a play that
+        # broke while reporting that it broke.
+        - name: Record which stage failed
+          ansible.builtin.include_role:
+            name: report
+            tasks_from: failure-class
+
+        # Re-raise. install.sh branches on ansible-playbook's own status
+        # first and only then reads the class, so a rescue that swallowed
+        # the failure would report success for a failed install.
+        - name: Fail the play with the original error
+          ansible.builtin.fail:
+            msg: >-
+              {{ tpot_stage }} failed:
+              {{ ansible_failed_result.msg | default('no message was recorded') }}
+
+      always:
+        # Runs on success, on failure and after the rescue alike. This is
+        # what makes result.json true about a run that stopped halfway.
+        - name: Write the play's report for install.sh
+          ansible.builtin.include_role:
+            name: report

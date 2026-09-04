@@ -177,10 +177,6 @@ gate_begin 'references' 'every path named here exists, or is declared absent her
 # they are what a reader gets instead of the file.
 # ---------------------------------------------------------------------------
 readonly -a KNOWN_ABSENT=(
-    "site.yml"$'\t'"the top-level play install.sh invokes at step 9; the whole install slice is unwritten"
-    "verify.yml"$'\t'"the post-install verification play, split across the reboot T-Pot requires"
-    "roles"$'\t'"every role: OS preparation, the upstream driver, the compose swap, the .env credential write, the telemetry removal, verification and the post-boot oneshot"
-    "tools/pin-upstream.sh"$'\t'"fetches upstream install.sh at a ref, prints its sha256 and scaffolds the per-ref data file; until it is run no ref is pinned"
     "tests/bats"$'\t'"the unit-test suite; no bats on this box and none in CI yet"
     "tests/fixtures"$'\t'"the /proc and configuration fixtures the unit suite would read; three config files already carve out the path"
     "tests/MATRIX-STATUS.md"$'\t'"which (ref x distribution) pairs have been proven on a real box, with dates (D-07); nothing has been proven, so there is no file"
@@ -279,6 +275,21 @@ FILENAME == ANCHORS {
     while (match(s, /[A-Za-z0-9._\/~@*:<>-]+/)) {
         t = substr(s, RSTART, RLENGTH)
         s = substr(s, RSTART + RLENGTH)
+
+        # A token cut short by an interpolation is HALF a path, and resolving
+        # the half is a false positive every time. `$` is not in the token
+        # character class, so `vars/upstream-${ref}.yml` yields the token
+        # `vars/upstream-`, whose trailing hyphen the punctuation trim below
+        # then removes -- leaving `vars/upstream`, a file that has no reason
+        # to exist and never will. The same happens to a Jinja `{{ ... }}`.
+        #
+        # Look at the character the token stopped on rather than at the token:
+        # nothing about `vars/upstream-` says it was truncated, and everything
+        # about the `$` that follows it does. Found when tools/pin-upstream.sh
+        # landed and reported two dangling references to a path it prints
+        # correctly at run time.
+        nextch = substr(s, 1, 1)
+        if (nextch == "$" || nextch == "{") continue
 
         if (t ~ /:\/\//) continue              # a URL
         if (t ~ /[~@]/)  continue              # home-relative, or an address

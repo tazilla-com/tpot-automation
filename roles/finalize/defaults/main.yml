@@ -1,0 +1,31 @@
+---
+# roles/finalize/defaults/main.yml -- the two INPUT keys this role reads.
+#
+# WHY ONLY TWO, AND WHY THESE
+#   tests/check-variable-surface.sh check 4 requires every tpot_*/ioc_* key
+#   defaulted in a role to exist in lib/varschema.json AND in
+#   inventories/example/group_vars/all.yml, with a byte-equal default. That
+#   makes this file a promise rather than a convenience: anything written
+#   here is documented, supported input. Everything this role needs that a
+#   user must NOT set -- the destination path, the unit name, the exclusion
+#   list -- lives in vars/main.yml, which the gate does not scan and which an
+#   answer file cannot override.
+#
+#   In practice install.sh supplies both of these on every run: it passes
+#   tpot_state_dir as an explicit --set (see step 8 of the entrypoint), and
+#   tpot_locale comes through the merged document with the schema default
+#   applied. They are repeated here so that `ansible-playbook site.yml` run
+#   by hand -- during development, with no merged document -- behaves the way
+#   the documentation says it does rather than dying on an undefined name.
+
+# The locale to generate and set, or null to leave the box alone. Null by
+# default because a locale is a policy decision, and because leaving it alone
+# is the one option that cannot fail. When it IS set, this role is where it
+# is applied -- after the install, never before it. See tasks/main.yml.
+tpot_locale: null
+
+# Where this installer keeps its own state: result.json, and the
+# verify-pending marker this role writes. lib/result.sh creates it too, and
+# chmods it 0750; this role creates it with the same mode so that whichever
+# of the two gets there first leaves the same thing behind.
+tpot_state_dir: /var/lib/tpot-automation

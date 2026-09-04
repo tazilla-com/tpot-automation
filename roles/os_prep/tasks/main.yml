@@ -1,0 +1,428 @@
+---
+# roles/os_prep/tasks/main.yml -- prepare the operating system, and nothing else.
+#
+# WHAT THIS ROLE IS FOR
+#   It is the first role in site.yml that changes the box. Everything before
+#   it -- lib/preflight.sh's two stages in the shell, and the preflight role
+#   in the play -- only measures. So this is the boundary: after the first
+#   task below succeeds, the machine is no longer as it was found.
+#
+#   Its job is to leave a box on which the rest of the run can be about T-Pot
+#   rather than about Debian. Packages present, updates applied if the
+#   operator asked for them, the clock labelled, and the one kernel parameter
+#   the search engine will not start without actually in effect.
+#
+# WHAT IT IS THE SUCCESSOR TO, AND WHAT WAS WRONG WITH THAT
+#   The installer this project replaces had a setup_os role that set a single
+#   tenant's locale and timezone as literals, ran an unconditional
+#   dist-upgrade, and carried two reboot tasks gated on the connection type
+#   against an inventory that pinned the only value the gate would accept --
+#   permanently dead code that read, to anyone skimming it, as though somebody
+#   had thought about reboots and decided. Three rules follow from that, and
+#   they are constraints on this file rather than preferences:
+#
+#     * NO LOCALE IS SET HERE. roles/finalize sets it, after upstream's
+#       installer has run, so that a non-English locale can never precede an
+#       English-output installer whose messages this project reads back.
+#     * NO REBOOT HAPPENS HERE, and no task in this file mentions the
+#       connection. install.sh owns the reboot decision; this role's last two
+#       tasks only record whether the distribution has asked for one.
+#     * THE UPGRADE IS A CHOICE, spelled none / safe / full, and `none`
+#       genuinely skips the task rather than running a quieter version of it.
+#
+# NO CREDENTIAL IS TOUCHED IN THIS FILE
+#   Which is why no task here carries no_log. That is worth stating rather
+#   than leaving implicit: the convention in this tree is that no_log marks
+#   the tasks that handle a secret and is followed by a task printing rc and
+#   changed alone, so an unexplained absence of no_log should be readable as
+#   "nothing secret passes through here" and not as an oversight. The web
+#   password never reaches this role; it is written by roles/tpot_install,
+#   from stdin, into T-Pot's own .env.
+#
+# NOTHING BELOW HAS EVER RUN AGAINST A REAL BOX.
+#   No VM, no root, no T-Pot has ever been installed by this project. Every
+#   sentence here says what a task is specified to do. Where a claim was
+#   actually measured, it says where and when it was measured.
+
+# ---------------------------------------------------------------------------
+# The stage marker, first, before anything can fail.
+#
+# site.yml's rescue reads tpot_stage to write $RUNDIR/failure-class, which is
+# how install.sh turns "the play failed" into an exit code -- 13 (EX_DEPS) for
+# this stage, per the table in docs/exit-codes.md and the map in
+# roles/report/vars/main.yml. Setting it anywhere but the first task leaves a
+# window in which a failure is attributed to whichever role ran before, and
+# the caller is sent down the wrong branch with confidence.
+# ---------------------------------------------------------------------------
+- name: Enter the os_prep stage
+  ansible.builtin.set_fact:
+    tpot_stage: os_prep
+
+# ---------------------------------------------------------------------------
+# This role is apt-only, and says so out loud.
+#
+# lib/preflight.sh already fails the run when apt-get is absent, so on the
+# supported path this assert never fires. It exists for the path where it
+# can: tpot_force_unsupported_os lets an operator past the distribution gate,
+# and upstream's own installer does support Fedora, RHEL, Rocky and openSUSE.
+# This installer does not. Saying that here, in one sentence, is better than
+# the alternative -- ansible.builtin.apt failing three tasks later with a
+# message about importing a Python module.
+# ---------------------------------------------------------------------------
+- name: Refuse to prepare a distribution this role cannot prepare
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] | default('') == 'Debian'
+    fail_msg: >-
+      os_prep only knows how to prepare Debian-family systems, and this box
+      reports os_family "{{ ansible_facts['os_family'] | default('unknown') }}"
+      ({{ ansible_facts['distribution'] | default('unknown') }}
+      {{ ansible_facts['distribution_version'] | default('') }}). Upstream's
+      own installer supports more distributions than this one does; this
+      installer's support matrix is Debian, Ubuntu and Linux Mint, and
+      tpot_force_unsupported_os gets you past the check for the distribution
+      but cannot make apt exist.
+    success_msg: >-
+      {{ ansible_facts['distribution'] | default('this box') }} is
+      Debian-family, so apt is the package manager
+    quiet: true
+
+# ---------------------------------------------------------------------------
+# The upgrade mode, validated before it is used.
+#
+# lib/config.py enforces the enum when the run comes through install.sh. This
+# assert covers the other way in -- `ansible-playbook site.yml` by hand, or a
+# group_vars file -- because the mapping below is written as a `when`, and an
+# unrecognised value in a `when` does not fail: it skips. A typo would then
+# silently produce the one behaviour the operator did not ask for, and the
+# transcript would show a skipped task rather than an error.
+# ---------------------------------------------------------------------------
+- name: Check that the upgrade mode is one this role implements
+  ansible.builtin.assert:
+    that:
+      - tpot_os_upgrade in ['none', 'safe', 'full']
+    fail_msg: >-
+      tpot_os_upgrade is "{{ tpot_os_upgrade }}", which is not one of none,
+      safe or full. none skips the upgrade entirely, safe runs apt upgrade,
+      full runs apt dist-upgrade.
+    success_msg: "tpot_os_upgrade is {{ tpot_os_upgrade }}"
+    quiet: true
+
+# ---------------------------------------------------------------------------
+# The package index.
+#
+# cache_valid_time skips the refresh when the lists are under an hour old,
+# which matters on a re-run far more than it does on a first install: an
+# operator debugging a failed install should not pay for a full index fetch
+# every time.
+#
+# lock_timeout is raised well above the module's own 60 seconds because of
+# one specific, extremely common failure. A freshly booted cloud image runs
+# unattended-upgrades on a timer, that holds the dpkg lock for minutes, and
+# an installer that gives up after a minute fails on a box that is perfectly
+# healthy -- with an error naming a lock file rather than the thing holding
+# it. Waiting is the right answer; there is nothing else to do with the time.
+#
+# The task is skipped only when nothing after it needs the index: no packages
+# to install and no upgrade to apply.
+# ---------------------------------------------------------------------------
+- name: Refresh the apt package index
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+  environment: "{{ os_prep_apt_environment }}"
+  when: (tpot_install_deps | bool) or tpot_os_upgrade != 'none'
+
+# ---------------------------------------------------------------------------
+# The upgrade. none / safe / full, and none means the task does not run.
+#
+# The apt module's own vocabulary is 'yes' for `apt-get upgrade` and 'dist'
+# for `apt-get dist-upgrade`, so the mapping is one expression. It is written
+# as a conditional expression rather than a lookup table because there are
+# exactly two live values and a reader can check the mapping by eye.
+#
+# force_apt_get is set because of what the module does without it, which is
+# not obvious from the outside: for `safe` it prefers aptitude when aptitude
+# happens to be installed, and runs `aptitude safe-upgrade` instead of
+# `apt-get upgrade --with-new-pkgs` (ansible-core's own apt module, the
+# upgrade() branch on use_apt_get). The two hold different packages back, so
+# without this flag WHICH updates a box received would depend on whether
+# somebody had once installed aptitude on it. An unattended installer should
+# do the same thing on every box, and be able to say which command it ran.
+#
+# `full` is unaffected by the flag -- the module maps `dist` to `apt-get
+# dist-upgrade` either way -- but dist-upgrade is the one operation in this
+# role that can REMOVE a package to satisfy a dependency. That is why it is
+# opt-in and not the default.
+# ---------------------------------------------------------------------------
+- name: Apply pending operating-system updates
+  ansible.builtin.apt:
+    upgrade: "{{ 'dist' if tpot_os_upgrade == 'full' else 'yes' }}"
+    force_apt_get: true
+    lock_timeout: 300
+  environment: "{{ os_prep_apt_environment }}"
+  when: tpot_os_upgrade in ['safe', 'full']
+
+# ---------------------------------------------------------------------------
+# The base packages. vars/main.yml says why each one is on the list; the
+# short version is that every entry is something this run or upstream's run
+# needs before it can proceed, and that sudo is the one whose absence turns
+# an unattended install into a terminal waiting for a root password.
+#
+# install_recommends is false to match how lib/deps.sh installs its own
+# prerequisites (`apt-get install -y --no-install-recommends`). A honeypot
+# host should carry what it needs and not what a maintainer thought was nice
+# to have alongside it.
+# ---------------------------------------------------------------------------
+- name: Install the packages this run and upstream's both need
+  ansible.builtin.apt:
+    name: "{{ os_prep_base_packages }}"
+    state: present
+    install_recommends: false
+    lock_timeout: 300
+  environment: "{{ os_prep_apt_environment }}"
+  when: tpot_install_deps | bool
+
+# ---------------------------------------------------------------------------
+# --no-install-deps: check, and fail with a list.
+#
+# The flag is documented as "install no prerequisites; fail instead if one is
+# missing", so honouring it by skipping the install and saying nothing would
+# be the wrong half of the sentence. These three tasks are the other half.
+#
+# WHY dpkg-query AND NOT ansible.builtin.package_facts
+#   package_facts needs python3-apt on the target, and installing python3-apt
+#   is exactly what the flag forbids -- so the module could fail for the
+#   reason it exists to check. It also builds a dictionary of every package
+#   on the box to answer a question about eight. dpkg-query is part of dpkg,
+#   which is present on any box that has apt at all, and it answers the
+#   question directly.
+#
+#   Its output shape was verified on this development box on 2026-09-04: one
+#   `<name> <status>` line per package found, "no packages found matching X"
+#   on stderr for one that is not, and rc 1 when any is unknown. Hence
+#   failed_when: false and a parse of stdout -- rc 1 here means "something is
+#   missing", which is the answer, not an error.
+# ---------------------------------------------------------------------------
+- name: Look for the base packages without installing anything
+  # command, not a module, for the two reasons in the comment above. It reads
+  # dpkg's database and changes nothing, so changed_when is false outright.
+  ansible.builtin.command:
+    argv: "{{ ['dpkg-query', '-W', os_prep_dpkg_format] + os_prep_base_packages }}"
+  register: os_prep_dpkg_status
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: not (tpot_install_deps | bool)
+
+- name: Work out which of the base packages are missing
+  ansible.builtin.set_fact:
+    # A package that is present but half-configured is missing for our
+    # purposes: only lines ending in " installed" count as a package this run
+    # can rely on. The rest of a status word -- config-files, half-installed,
+    # unpacked -- describes a package that is not usable.
+    os_prep_missing_packages: >-
+      {{ os_prep_base_packages
+         | difference(os_prep_dpkg_status.stdout_lines | default([])
+                      | select('search', ' installed$')
+                      | map('regex_replace', '\s.*$', '')
+                      | list)
+         | sort }}
+  when: not (tpot_install_deps | bool)
+
+- name: Refuse to continue with a prerequisite missing
+  ansible.builtin.assert:
+    that:
+      - os_prep_missing_packages | length == 0
+    fail_msg: >-
+      tpot_install_deps is false (--no-install-deps), so this run installs
+      nothing -- and these packages are not installed:
+      {{ os_prep_missing_packages | join(', ') }}. Install them and run again,
+      or drop --no-install-deps. If sudo is in that list, it is the one that
+      matters most: without it upstream's installer tries to add it under
+      `su`, which asks for the root password on a terminal that an unattended
+      run does not have.
+    success_msg: >-
+      all {{ os_prep_base_packages | length }} base packages are installed;
+      nothing needed installing
+    quiet: true
+  when: not (tpot_install_deps | bool)
+
+# ---------------------------------------------------------------------------
+# The timezone.
+#
+# `null` means leave the box alone, and this role treats the strings "none"
+# and "null" the same way -- an operator writing TPOT_TIMEZONE=none in an
+# environment file means "do not touch it", and no timezone is named either
+# of those, so there is nothing to be ambiguous about. The alternative is
+# community.general.timezone failing with "unknown timezone none", which is a
+# worse answer to a clear request.
+#
+# community.general is a hard dependency of this project for exactly this
+# module: lib/deps.sh refuses to continue without it and says so by name,
+# because there is no native fallback and a run that discovered the gap here
+# would blame the wrong thing.
+#
+# tzdata is not in the base package list because Debian and Ubuntu both ship
+# it at priority required; if that ever stops being true, this task is where
+# it will show up.
+# ---------------------------------------------------------------------------
+- name: Set the system timezone
+  community.general.timezone:
+    name: "{{ tpot_timezone }}"
+  when:
+    - tpot_timezone is defined
+    - tpot_timezone is not none
+    - (tpot_timezone | string | trim | lower) not in ['', 'none', 'null']
+
+# ---------------------------------------------------------------------------
+# vm.max_map_count -- THE LOAD-BEARING PART OF THIS ROLE.
+#
+# This is not belt-and-braces over something upstream already does. Upstream
+# writes `vm.max_map_count=262144` into /etc/sysctl.conf with lineinfile and
+# runs no `sysctl -w` and no reload (upstream installer/install/tpot.yml:525-540).
+# That leaves the setting inert until something reads the file -- and on
+# Debian 13, systemd-sysctl does not read /etc/sysctl.conf at all. Measured
+# 2026-09-04. So on the newest supported release, upstream's own line is
+# never applied: not during the run, and not after the reboot either.
+#
+# The consequence is not subtle. Elasticsearch refuses to start below this
+# value, and T-Pot without its search engine is a set of honeypots writing
+# into nothing -- with the failure surfacing inside a container's log, an
+# hour after the last thing anybody was watching.
+#
+# So this role writes its own file where systemd-sysctl does look, and then
+# proves the running kernel agrees. lib/preflight.sh measures the value
+# BEFORE this runs and only warns, which is the right polarity there -- it
+# has not tried to fix anything yet. Here the polarity is the opposite: the
+# file is in place and the value is still wrong means something is actively
+# preventing it, and continuing would install a T-Pot that cannot start.
+# ---------------------------------------------------------------------------
+- name: Install the kernel parameter T-Pot's search engine requires
+  ansible.builtin.copy:
+    dest: "{{ os_prep_sysctl_file }}"
+    # World-readable on purpose: everything else in /etc/sysctl.d is, it holds
+    # nothing private, and an operator debugging a start-up failure should be
+    # able to read it without becoming root.
+    mode: "0644"
+    owner: root
+    group: root
+    content: |
+      # Written by tpot-automation. Rewritten on every run -- edit
+      # tpot_max_map_count in the answer file instead, not this file.
+      #
+      # Elasticsearch, inside T-Pot, refuses to start below this value.
+      # Upstream's own playbook writes the same setting to /etc/sysctl.conf
+      # and never applies or reloads it, and Debian 13's systemd-sysctl does
+      # not read that file, so this copy is the one that takes effect.
+      vm.max_map_count = {{ tpot_max_map_count | int }}
+  # BOTH handlers, by name. A handler runs only if it was notified, so
+  # notifying the reload alone would define the reporting handler below it
+  # and never run it -- a silent gap, because a handler that is never
+  # notified is not reported as skipped either. They run in the order they
+  # are defined in handlers/main.yml, not the order named here.
+  notify:
+    - Reload the kernel parameters
+    - Report how the kernel-parameter reload went
+
+# ---------------------------------------------------------------------------
+# Run the handler now rather than at the end of the play.
+#
+# Handlers normally fire when the play finishes, which here would be after
+# upstream's installer had already run and failed. The point of this whole
+# section is that the value is in effect BEFORE anything needs it, so the
+# queue is flushed here and the two tasks after it check the result.
+#
+# Flushing runs every pending handler, not just this role's. That is safe in
+# this position: only the preflight role has run, and it asserts without
+# changing anything, so it has nothing queued.
+# ---------------------------------------------------------------------------
+- name: Apply the pending kernel-parameter reload now
+  ansible.builtin.meta: flush_handlers
+
+- name: Record a warning when the sysctl reload reported a problem
+  ansible.builtin.set_fact:
+    # `sysctl --system` reads every file under every sysctl.d directory, so a
+    # non-zero exit can be about somebody else's broken file rather than
+    # ours. It is not fatal here because the read-back below is the thing
+    # that decides whether OUR setting took -- but it should not vanish
+    # either, so it goes into result.json's warning list where an operator
+    # will see it next to everything else this run noticed.
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings + ['sysctl --system exited '
+         ~ os_prep_sysctl_reload.rc ~ ' ('
+         ~ (os_prep_sysctl_reload.stderr_lines | default(['no error text']) | first)
+         ~ '). Another file under /etc/sysctl.d may be broken; this run'
+         ~ ' checks vm.max_map_count itself immediately afterwards, and would'
+         ~ ' have failed rather than warned if that value were wrong.'] }}
+  when:
+    - os_prep_sysctl_reload is defined
+    - os_prep_sysctl_reload.rc is defined
+    - os_prep_sysctl_reload.rc != 0
+
+- name: Read back the kernel parameter that is actually in effect
+  ansible.builtin.slurp:
+    src: /proc/sys/vm/max_map_count
+  register: os_prep_max_map_count_now
+  # Under --check nothing was written and the handler did not run, so a
+  # read-back would be measuring the box as it was found and asserting on it
+  # as though this role had acted. A check run says what it WOULD do; it does
+  # not get to fail on what it did not do.
+  when: not ansible_check_mode
+
+- name: Refuse to continue with vm.max_map_count below what the search engine needs
+  ansible.builtin.assert:
+    that:
+      - (os_prep_max_map_count_now.content | b64decode | trim | int) >= (tpot_max_map_count | int)
+    fail_msg: >-
+      vm.max_map_count is
+      {{ os_prep_max_map_count_now.content | b64decode | trim }} and T-Pot's
+      search engine needs at least {{ tpot_max_map_count }}.
+      {{ os_prep_sysctl_file }} has been written with the right value, so
+      something is overriding it or the reload did not take: a file sorting
+      after this one under /etc/sysctl.d, or a container whose /proc/sys is
+      read-only. Try `sysctl --system` and read what it prints. Continuing
+      would install a T-Pot whose search engine cannot start, which surfaces
+      an hour later inside a container log.
+    success_msg: >-
+      vm.max_map_count is
+      {{ os_prep_max_map_count_now.content | b64decode | trim }}, at or above
+      the required {{ tpot_max_map_count }}
+    quiet: true
+  when: not ansible_check_mode
+
+# ---------------------------------------------------------------------------
+# Whether a reboot is pending.
+#
+# THIS ROLE DOES NOT REBOOT, and deliberately contains no reboot task at all.
+# install.sh owns that decision, through tpot_reboot_policy, whose default is
+# `never`: an install that needs a reboot exits 20 and says so rather than
+# taking the box down under an operator who did not ask for it.
+#
+# What is recorded here is only what the DISTRIBUTION asked for. Read the
+# false case carefully: /var/run/reboot-required is written by
+# update-notifier-common on Ubuntu and by the kernel package's hooks, and a
+# minimal Debian box may not have anything that writes it. So absence means
+# "nothing asked for a reboot", NOT "no reboot is needed" -- T-Pot itself
+# needs one regardless, and roles/tpot_install sets the same fact for that
+# reason.
+#
+# The value is OR-ed with whatever is already there rather than assigned, so
+# that two roles contributing to one fact cannot cancel each other out
+# depending on which ran last.
+# ---------------------------------------------------------------------------
+- name: Look for the distribution's reboot marker
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+    # The only question is whether it exists. Hashing it, and reading its
+    # extended attributes, is work done for an answer nothing here reads.
+    get_checksum: false
+    get_attributes: false
+  register: os_prep_reboot_marker
+
+- name: Record whether a reboot is pending
+  ansible.builtin.set_fact:
+    tpot_reboot_required: >-
+      {{ (tpot_reboot_required | default(false) | bool)
+         or (os_prep_reboot_marker.stat.exists | default(false)) }}

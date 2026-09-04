@@ -13,20 +13,32 @@
 #   tier_pinned   the same, against support-matrix.pinned-example.yml
 #   row_pinned    the row it matches there, or "-" when none
 #
-# WHY TWO PAIRS OF COLUMNS. The shipped support-matrix.yml has an EMPTY
-# supported tier, honestly, because no upstream ref is pinned. Nothing could
-# then ever resolve as supported, and the supported half of the reader -- the
-# tier lookup, the supported-wins precedence, the summary -- would never be
-# executed by any test in the tree. support-matrix.pinned-example.yml is a
-# matrix as it will look once tools/pin-upstream.sh has run, so the last two
-# columns exercise that half. Neither file is evidence that anything was ever
-# installed anywhere; tests/MATRIX-STATUS.md is where that would live.
+# WHY TWO PAIRS OF COLUMNS. They were written when the shipped
+# support-matrix.yml had an EMPTY supported tier, because no ref was pinned:
+# nothing could then resolve as supported, and the supported half of the
+# reader -- the tier lookup, the supported-wins precedence, the summary --
+# would never have been executed by any test in the tree.
+# support-matrix.pinned-example.yml existed to exercise that half.
 #
-# THE ROW THAT EARNS THE SECOND PAIR: debian-13 is legacy against the shipped
-# file and SUPPORTED against the pinned one, from the same fixture and the same
-# code. debian:13 is listed in both tiers of the pinned example, which is the
-# real case -- it is both what today's upstream accepts and one of the nine the
-# old installer ran on -- and this row is what proves supported wins.
+# ▲ THAT IS NO LONGER WHY THEY ARE HERE. D-11 (2026-09-04) pinned a commit and
+# tools/pin-upstream.sh derived a two-row supported tier, so the shipped file
+# now exercises the supported half by itself and the two pairs of columns
+# AGREE for every fixture. They are kept because agreeing is a fact worth
+# checking rather than assuming: the pinned example carries a ref this project
+# will never pin and a supported tier written by hand, so the pair proves the
+# reader gives the same answer for a matrix it has never seen as for the one it
+# ships with. If a future pin narrows the supported tier, these columns part
+# company again and the shipped ones must be re-derived -- BY MOVING THE PIN,
+# never by editing this file to match.
+#
+# Neither file is evidence that anything was ever installed anywhere;
+# tests/MATRIX-STATUS.md is where that would live, and it does not exist.
+#
+# THE ROW THAT EARNS THE SECOND PAIR: debian-13 resolves SUPPORTED against
+# both files now, and debian:13 is listed in BOTH TIERS of each -- it is what
+# today's upstream accepts and also one of the nine the old installer ran on.
+# That is what proves supported wins over legacy, and it is the reason the row
+# reads supported rather than legacy on both sides.
 #
 # WHY THIS FILE RESTATES THE ANSWER. It is a deliberate second statement, and
 # the only one in the tree. A test that derived the answer with the same rule
@@ -70,14 +82,14 @@
 #
 debian-11.os-release	debian	11	legacy	debian:11	legacy	debian:11
 debian-12.os-release	debian	12	legacy	debian:12	legacy	debian:12
-debian-13.os-release	debian	13	legacy	debian:13	supported	debian:13
+debian-13.os-release	debian	13	supported	debian:13	supported	debian:13
 ubuntu-20.04.os-release	ubuntu	20.04	legacy	ubuntu:20.04	legacy	ubuntu:20.04
 ubuntu-22.04.os-release	ubuntu	22.04	legacy	ubuntu:22.04	legacy	ubuntu:22.04
 ubuntu-24.04.os-release	ubuntu	24.04	legacy	ubuntu:24.04	legacy	ubuntu:24.04
 linuxmint-20.3.os-release	linuxmint	20.3	legacy	linuxmint:20	legacy	linuxmint:20
 linuxmint-21.3.os-release	linuxmint	21.3	legacy	linuxmint:21	legacy	linuxmint:21
 linuxmint-22.os-release	linuxmint	22	legacy	linuxmint:22	legacy	linuxmint:22
-ubuntu-26.04.os-release	ubuntu	26.04	unknown	-	supported	ubuntu:26.04
+ubuntu-26.04.os-release	ubuntu	26.04	supported	ubuntu:26.04	supported	ubuntu:26.04
 kali-2024.2.os-release	kali	2024.2	unknown	-	unknown	-
 raspbian-12.os-release	raspbian	12	unknown	-	unknown	-
 fedora-40.os-release	fedora	40	unknown	-	unknown	-

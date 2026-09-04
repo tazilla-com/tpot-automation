@@ -1,0 +1,312 @@
+---
+# roles/tpot_install/tasks/fetch-upstream.yml -- the pin, and the only file
+# this project ever downloads.
+#
+# STAGE: upstream. Everything here maps to exit 14, and 14 means exactly one
+# thing to whoever reads it: NOTHING OF UPSTREAM'S HAS BEEN EXECUTED. That
+# promise is why the assertions come before the first mkdir and why the
+# download is verified before anything is allowed to run it.
+#
+# ONE VARIABLE PINS TWO DIFFERENT THINGS, AND THEY MAY NEVER BE SET APART
+#   tpot_upstream_ref names both the ENTRYPOINT -- the install.sh fetched
+#   here, verified against a sha256 -- and the PAYLOAD, the playbook upstream
+#   itself clones, which is pinned by handing upstream the same ref as its own
+#   branch flag. Upstream never re-fetches or re-execs itself, so its
+#   distribution gate, its port check and its sudo handling are whatever copy
+#   of install.sh was executed, while the branch flag governs only what that
+#   copy goes on to clone. Pinning one without the other produces a run that
+#   succeeds while the report names a ref the box is not running, which is why
+#   result.json carries `upstream.ref_consistent` at all.
+#
+# AND NEITHER OF THEM PINS THE SOFTWARE
+#   T-Pot's own environment file sets a mutable image tag and a pull policy of
+#   `always`, so the containers are re-pulled every time T-Pot starts --
+#   including at the daily reboot upstream's playbook installs in root's
+#   crontab. lib/result.sh records `pins_payload: false` for exactly this, and
+#   it is an honest name for a gap rather than a to-do item. Say so wherever
+#   you say "pinned".
+#
+# NOTHING HERE HAS EVER FETCHED ANYTHING. This box has no network and no
+# upstream installer has ever been downloaded by this project.
+
+# ---------------------------------------------------------------------------
+# THE PIN ITSELF.
+#
+# tpot_upstream_ref is one of the eight schema keys with no default: absent
+# from the merged document entirely when nobody supplied one. Every reference
+# to it therefore has to be guarded, or the play dies with an
+# undefined-variable traceback instead of the message below -- which is the
+# difference between an installer that refuses and one that crashes.
+#
+# THE FULL 40-CHARACTER SHA IS NOT A STYLE PREFERENCE. Two failures come from
+# anything shorter, and both of them look like something else:
+#
+#   * an EMPTY ref is accepted by upstream's own option parsing and then
+#     silently degrades to its default branch (install.sh:66-72), so the box
+#     runs a payload nobody chose and the transcript never mentions it;
+#   * an ABBREVIATED sha installs correctly ONCE and then makes every re-run
+#     exit 1. ansible.builtin.git leaves HEAD at the full sha, and upstream's
+#     check_tpot_clone compares that against what it was asked for
+#     (install.sh:85-98) -- seven characters against forty, forever.
+# ---------------------------------------------------------------------------
+- name: Refuse to install without a pinned upstream ref
+  ansible.builtin.assert:
+    that:
+      - tpot_upstream_ref is defined
+      - tpot_upstream_ref | default('') | length > 0
+      - tpot_upstream_ref | default('') is match(tpot_install_ref_pattern)
+    fail_msg: >-
+      tpot_upstream_ref must be the full 40-character lowercase commit sha of
+      upstream T-Pot, and it is {{ tpot_install_ref_complaint }}.
+      Supply it in the answer file as tpot_upstream_ref, in the environment as
+      TPOT_UPSTREAM_REF, or with --upstream-ref. A tag or an abbreviated sha
+      is not accepted here: an abbreviated one installs once and then fails
+      every re-run, and an empty one silently installs upstream's default
+      branch instead of the ref this run reports.
+    success_msg: "upstream ref pinned at {{ tpot_upstream_ref | default('') }}"
+    quiet: true
+  # The conditional lives in a task var rather than inside the message, and
+  # that is not cosmetic. A folded scalar keeps a MORE-INDENTED continuation
+  # line literally, and the break BEFORE the next base-indent line with it --
+  # so the multi-line form of this expression put a real newline in the middle
+  # of the sentence. Rendered and counted here: one embedded newline, right
+  # before "Supply it in the answer file". install.sh puts a fail_msg through
+  # its own line handling, so a message with a newline in it is a message that
+  # arrives differently from the one that was written.
+  vars:
+    tpot_install_ref_complaint: >-
+      {{ 'not set at all' if tpot_upstream_ref is not defined
+         else ('empty' if (tpot_upstream_ref | length) == 0
+               else (tpot_upstream_ref | length) ~ ' characters: ' ~ tpot_upstream_ref) }}
+
+- name: Refuse to install without the URL the pinned installer is fetched from
+  ansible.builtin.assert:
+    that:
+      - tpot_upstream_url is defined
+      - tpot_upstream_url | default('') | length > 0
+    fail_msg: >-
+      tpot_upstream_url is empty. It is normally DERIVED from
+      tpot_upstream_ref by the configuration merge, so an empty value here
+      means either that the derivation did not happen or that it was
+      overridden with nothing. Set it only to fetch the SAME ref from a mirror
+      or a fork.
+    success_msg: "upstream entrypoint: {{ tpot_upstream_url | default('') }}"
+    quiet: true
+
+# Not fatal, because fetching the same ref from a mirror is a legitimate
+# reason for the two to differ. lib/result.sh reports `ref_consistent` from
+# the same comparison, so this warning and that field cannot disagree.
+- name: Warn when the entrypoint URL does not name the pinned ref
+  ansible.builtin.set_fact:
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings + ['the entrypoint URL does not contain the pinned ref '
+         ~ tpot_upstream_ref ~ '. That is legitimate for a mirror or a fork of the same ref, and '
+         ~ 'wrong for anything else: result.json records upstream.ref_consistent for it.'] }}
+  when:
+    - tpot_upstream_url is defined
+    - ('/' ~ tpot_upstream_ref ~ '/') not in tpot_upstream_url
+
+# ---------------------------------------------------------------------------
+# WHAT IS KNOWN ABOUT THIS PARTICULAR REF.
+#
+# vars/upstream-<ref>.yml is generated by tools/pin-upstream.sh and carries
+# the facts that belong to the pinned ref rather than to this project: the
+# sha256 of its install.sh, the container count of each edition, the name of
+# the telemetry service, and the install types that ref knows about. None of
+# them can be guessed -- upstream states no container count anywhere, and the
+# only authoritative source is the compose file at the pinned ref.
+#
+# The fallback file exists so that a run with an unpinned or newly pinned ref
+# fails with a sentence rather than with a missing-file error. Taking it is
+# NOT a normal outcome and it is warned about loudly: the numbers in it belong
+# to some other ref, and a container count from the wrong ref turns
+# verification into either a rubber stamp or a false alarm.
+# ---------------------------------------------------------------------------
+- name: Locate the data file for the pinned upstream ref
+  ansible.builtin.set_fact:
+    tpot_install_ref_file: >-
+      {{ lookup('ansible.builtin.first_found',
+                {'files': ['upstream-' ~ tpot_upstream_ref ~ '.yml', 'upstream-default.yml'],
+                 'paths': [role_path ~ '/vars']},
+                errors='ignore') | default('', true) }}
+
+- name: Refuse to install with no data file for the pinned ref
+  ansible.builtin.assert:
+    that:
+      - tpot_install_ref_file | length > 0
+    fail_msg: >-
+      Neither a data file for {{ tpot_upstream_ref }} nor the fallback exists
+      in this role's vars directory. That file is what carries the sha256 of
+      upstream's installer, the container count of each edition and the name
+      of the telemetry service, and none of them can be inferred from
+      anywhere else. Generate it with tools/pin-upstream.sh; do not write one
+      by hand.
+    success_msg: "upstream data file: {{ tpot_install_ref_file | basename }}"
+    quiet: true
+
+- name: Load what is known about the pinned upstream ref
+  ansible.builtin.include_vars:
+    file: "{{ tpot_install_ref_file }}"
+
+- name: Warn loudly when the pinned ref has no data file of its own
+  ansible.builtin.set_fact:
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings + ['no data file exists for the pinned ref '
+         ~ tpot_upstream_ref ~ ', so the fallback was used. Its sha256, its container counts and '
+         ~ 'its telemetry service name belong to some OTHER ref. Verification against a container '
+         ~ 'count from the wrong ref is not verification. Run tools/pin-upstream.sh for this ref '
+         ~ 'before trusting anything this run reports.'] }}
+  # Two signals, because either one alone can be wrong: the generator marks a
+  # fallback file with a flag, and a file that predates the flag is still
+  # recognisable by its name.
+  when: >-
+    (tpot_install_ref_file | basename == 'upstream-default.yml')
+    or (tpot_install_ref_map.get('is_fallback') | default(false) | bool)
+
+# The seam described at the foot of vars/main.yml either resolved or it did
+# not. A data file shaped differently from what this role reads produces this
+# sentence rather than an undefined-variable traceback an hour later.
+- name: Refuse to install without a sha256 for the pinned installer
+  ansible.builtin.assert:
+    that:
+      - tpot_install_checksum | length > 0
+      - tpot_install_checksum is match(tpot_install_checksum_pattern)
+    fail_msg: >-
+      No usable sha256 for upstream's installer. Supply it as
+      tpot_upstream_checksum, or let {{ tpot_install_ref_file | basename }}
+      carry it -- this role reads it from that file as `sha256`, either at the
+      top level or under a `tpot_install_upstream` mapping. What was resolved
+      was {{ (tpot_install_checksum | length) }} characters long, and 64
+      lowercase hex characters are required.
+    success_msg: "upstream installer sha256 resolved, {{ tpot_install_checksum | length }} hex characters"
+    quiet: true
+
+# Not fatal when the data file does not say. When it does say, an install type
+# the pinned ref has never heard of would pick a compose file that is not in
+# the checkout, and failing here is far better than failing after the install.
+- name: Refuse an install type the pinned ref does not know
+  ansible.builtin.assert:
+    that:
+      - tpot_install_type in tpot_install_ref_types
+    fail_msg: >-
+      tpot_install_type is {{ tpot_install_type }}, and the pinned ref
+      {{ tpot_upstream_ref }} knows only {{ tpot_install_ref_types | join(', ') }}.
+      The edition decides which compose file is copied over
+      docker-compose.yml, so an unknown one has nothing to copy.
+    success_msg: "install type {{ tpot_install_type }} exists at the pinned ref"
+    quiet: true
+  when: (tpot_install_ref_types | default([], true) | length) > 0
+
+- name: Refuse an install type this role has no compose file name for
+  ansible.builtin.assert:
+    that:
+      - tpot_install_edition | length > 0
+    fail_msg: >-
+      tpot_install_type is {{ tpot_install_type }} and this role has no
+      compose file name for it. The mapping from the type letter to the
+      compose file is upstream's own (install.sh:599-643) and is reproduced in
+      this role's vars, because the names do not follow from the letters.
+    success_msg: "edition {{ tpot_install_type }} is compose file {{ tpot_install_edition }}"
+    quiet: true
+
+# ---------------------------------------------------------------------------
+# THE CLEAN DIRECTORY. Created before the download because it is the download's
+# destination, and checked immediately afterwards because what makes it clean
+# is a property of where it sits, not of what is in it.
+#
+# 0700 and owned by the T-Pot account: the script inside it is about to be
+# executed by that account with passwordless sudo for up to ninety minutes, so
+# no other unprivileged account on the box may write to it or to anything in
+# it.
+# ---------------------------------------------------------------------------
+- name: Create the clean directory upstream's installer is fetched into and run from
+  ansible.builtin.file:
+    path: "{{ tpot_install_workdir }}"
+    state: directory
+    owner: "{{ tpot_os_user }}"
+    mode: "0700"
+
+# git rev-parse rather than a stat walk up the tree: the answer has to be the
+# one GIT gives, because it is git that upstream asks. A stat loop would miss
+# a worktree file, a GIT_DIR in the environment and an ancestor .git the user
+# cannot see. `command` rather than a module because there is no module for
+# this question.
+#
+# git being absent is a PASS, not an error: upstream's git_source returns
+# immediately when git is not on the path (install.sh:42), so there is nothing
+# for it to read out of.
+- name: Ask git whether that directory is inside a work tree
+  ansible.builtin.command:
+    argv:
+      - git
+      - rev-parse
+      - --is-inside-work-tree
+    chdir: "{{ tpot_install_workdir }}"
+  register: tpot_install_worktree
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Refuse to run upstream's installer from inside a git work tree
+  ansible.builtin.assert:
+    that:
+      - not (tpot_install_worktree.rc == 0 and (tpot_install_worktree.stdout | trim) == 'true')
+    fail_msg: >-
+      {{ tpot_install_workdir }} is inside a git work tree, and upstream's
+      installer reads its branch AND its repository URL out of the work tree
+      that holds it whenever it is not told otherwise (install.sh:37-72). Run
+      from inside a checkout of this repository it offers to clone T-Pot from
+      OUR origin, and it says nothing about doing so. This directory is
+      created by this role and should belong to nobody; something has put a
+      repository above it in the T-Pot account's home.
+    success_msg: "{{ tpot_install_workdir }} is outside any git work tree"
+    quiet: true
+
+# ---------------------------------------------------------------------------
+# Recorded BEFORE the download, so that a failed fetch still reports which ref
+# and which URL were tried. `verified` says what it means: the file on disk
+# matched the pinned sha256 during THIS run. It stays false until it has.
+# ---------------------------------------------------------------------------
+- name: Record the pin before anything is fetched
+  ansible.builtin.set_fact:
+    tpot_report_upstream:
+      url: "{{ tpot_upstream_url }}"
+      ref: "{{ tpot_upstream_ref }}"
+      repo_url: "{{ tpot_upstream_repo_url }}"
+      sha256: "{{ tpot_install_checksum }}"
+      verified: false
+      payload_ref: null
+
+# force: true, and no `creates:`. The alternative -- keep whatever is already
+# at that path when its checksum matches -- saves one HTTP request and buys a
+# question nobody can answer afterwards: whether the bytes about to be run
+# with passwordless sudo came from the pinned URL or from something that
+# happened to be sitting in the T-Pot account's home. Downloading every run
+# makes the answer the same every run.
+#
+# The checksum is not belt-and-braces either. Upstream's own branch flag pins
+# the PAYLOAD; nothing upstream does says anything at all about the bytes of
+# the entrypoint, and the entrypoint is the part that runs as this account
+# with sudo.
+- name: Fetch upstream's installer at the pinned ref and verify its sha256
+  ansible.builtin.get_url:
+    url: "{{ tpot_upstream_url }}"
+    dest: "{{ tpot_install_script }}"
+    checksum: "sha256:{{ tpot_install_checksum }}"
+    owner: "{{ tpot_os_user }}"
+    mode: "0700"
+    force: true
+    timeout: 30
+  register: tpot_install_fetch
+
+- name: Record that the fetched installer matched the pinned sha256
+  ansible.builtin.set_fact:
+    tpot_report_upstream: "{{ tpot_report_upstream | combine({'verified': true}) }}"
+  when: not ansible_check_mode
+
+- name: Report what was fetched
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'checked only: nothing was downloaded' if ansible_check_mode
+         else (tpot_install_script ~ ' fetched from ' ~ tpot_upstream_url
+               ~ ' and verified against the pinned sha256') }}

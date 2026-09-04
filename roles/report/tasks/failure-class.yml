@@ -1,0 +1,68 @@
+---
+# roles/report/tasks/failure-class.yml -- tell install.sh how far the run got.
+#
+# Included from the `rescue:` of site.yml and verify.yml, and from nowhere
+# else. It writes ONE line:
+#
+#     <exit-code> <stage>
+#
+# install.sh takes the first whitespace-separated field, and if
+# lib/exitcodes.sh does not recognise it the code becomes 40. The second
+# field is printed in the failure message so the transcript names the stage
+# in the same words the roles use.
+#
+# THIS FILE MUST NOT FAIL. It runs when something has already gone wrong, and
+# a rescue that dies while reporting leaves install.sh with no file to read
+# and a run that says nothing about itself. Every task here is therefore
+# either guarded or unable to fail on its own.
+
+- name: Resolve the failing stage to an exit code
+  ansible.builtin.set_fact:
+    # A stage this map does not know is EX_INTERNAL. See the note in
+    # vars/main.yml: guessing the nearest plausible code is the one option
+    # that would send a caller confidently down the wrong branch.
+    tpot_report_exit_code: >-
+      {{ tpot_report_stage_exit_codes[tpot_stage | default('unknown')]
+         | default(40) }}
+
+- name: Report the failing stage in the transcript
+  # Not no_log. This names a stage and a number and can hold no credential,
+  # and a rescue whose only output is silence is the thing that makes a
+  # 3 a.m. failure unreadable.
+  ansible.builtin.debug:
+    msg: >-
+      stage {{ tpot_stage | default('unknown') }} failed; install.sh will
+      exit {{ tpot_report_exit_code }}
+
+- name: Write the failure class for install.sh
+  ansible.builtin.copy:
+    content: "{{ tpot_report_exit_code }} {{ tpot_stage | default('unknown') }}\n"
+    dest: "{{ tpot_runtime_dir }}/failure-class"
+    # 0600 in a 0700 tmpfs directory. It holds no secret, but everything this
+    # run writes into the run directory is written the same way, so that a
+    # future file that DOES hold one cannot be the first to think about it.
+    mode: "0600"
+  # tpot_runtime_dir is one of the eight schema keys with no default: it is
+  # supplied by install.sh, which creates the directory. A play run directly
+  # with `ansible-playbook site.yml` has no run directory, and in that case
+  # there is nobody waiting to read this file -- the operator is reading the
+  # transcript above instead.
+  when:
+    - tpot_runtime_dir is defined
+    - tpot_runtime_dir | length > 0
+  # check_mode: false, and this is the one line that keeps `install.sh --check`
+  # honest. ansible.builtin.copy SUPPORTS check mode, so under --check it
+  # reports `changed` and writes nothing -- measured here on ansible-core
+  # 2.21.2: the task said changed=True and the file did not exist afterwards.
+  # install.sh reads this file to turn a failed play into an exit code, and
+  # when it is missing _tpot_failure_class returns EX_INTERNAL. So without
+  # this line EVERY --check failure, at every stage, collapses to 40 -- "a bug
+  # in this installer, file an issue" -- for a dry run that behaved exactly as
+  # designed. The exemption is safe because this file is not on the box: it is
+  # written into $RUNDIR, a 0700 mktemp -d on tmpfs that install.sh created
+  # for this run and shreds at the end. A check run still changes nothing an
+  # operator could find afterwards.
+  check_mode: false
+  # A failure here must not replace the real failure with a worse one. The
+  # debug task above has already said everything this file would have said.
+  failed_when: false

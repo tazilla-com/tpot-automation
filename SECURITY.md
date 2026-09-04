@@ -12,31 +12,36 @@ tag is supported; there are no backports to earlier tags.
 
 ## The state of this build, before anything below is read
 
-**This tree does not yet contain a working installer, and this document does
-not pretend otherwise.** The entrypoint (`install.sh`), the libraries it
-sources and the build gates are written. The Ansible play is not: `site.yml`,
-`verify.yml` and the whole of `roles/` are a separate slice and are absent.
-Everything that would change a real host lives there.
+**This tree contains a complete installer that has never installed anything,
+and this document does not blur the two.** The entrypoint (`install.sh`), the
+libraries it sources, the build gates, the Ansible play (`site.yml`,
+`verify.yml`) and its eight roles are all written, linted and gated. Every
+rule below is therefore readable in the tree.
 
 **Nothing has ever been installed by this code.** No virtual machine, no root,
-no network, no T-Pot. Two things have been executed, both unprivileged on a
-development box: the tree's own gate suite, and `install.sh` itself, run to its
-refusal in every mode it offers and never past it. Every one of those runs
-stopped inside preflight with exit `11`, before anything on a machine could
-change.
+no docker daemon, no network-facing host, no T-Pot -- not once. What has been
+executed, all of it unprivileged on a development box: the tree's own gate
+suite, `install.sh` itself in every mode it offers, and the roles far enough to
+establish that their expressions evaluate and their modules behave as written.
+Measured on 2026-09-04, `./install.sh`, `--preflight-only` and `--verify-only`
+each stop inside preflight with exit `11` on the `root` check, before anything
+on a machine could change.
 
-So this document has two kinds of statement in it, and they are marked:
+So this document has two kinds of statement in it, and the difference is no
+longer "written" versus "unwritten" -- it is what has been *exercised*:
 
-* **rules the code in this tree enforces today** -- the argument parser, the
-  secret channel, the transcript redactor, `result.json`, and the gates that
-  fail the build when one of them is broken. These are written in the present
-  tense and can be checked by reading the tree;
-* **rules for the part that has not landed** -- everything that touches
-  upstream T-Pot's own files on a real host. These say *is specified to*, or
-  *will*, and are a design commitment rather than a report.
+* **rules the code enforces and this project has run** -- the argument parser,
+  the secret channel, the transcript redactor, `result.json`, and the gates
+  that fail the build when one of them is broken. These can be checked by
+  reading the tree, and running it produces them;
+* **rules the code enforces and nothing has ever exercised** -- everything
+  downstream of a real install: the account, upstream's own files, the compose
+  edit, the credential write, the post-boot unit. These are written as
+  descriptions of what the code does, because that is what they are, and every
+  one of them is unverified against a running host.
 
-A reader auditing this project should treat the second kind as unverified.
-`CHANGELOG.md` lists exactly what is and is not built.
+A reader auditing this project should treat the second kind as code review
+rather than as evidence. `CHANGELOG.md` lists what is built and what is not.
 
 ## Reporting a vulnerability
 
@@ -85,11 +90,17 @@ handling rules are structural, not advisory:
   goes: answer file, environment or password file, into the merged
   configuration document written mode 0600 in a 0700 directory on `/run`
   (tmpfs, asserted to be tmpfs); and into `ansible-playbook` as `-e @<path>`
-  -- a path on the command line, never a value. *Enforced today.* From there
-  it is specified to reach `htpasswd -n -i`, which reads the password from
-  standard input, and then T-Pot's own `.env`; that step lives in the role
-  that has not landed. `htpasswd -b`, which takes the password as an
-  argument, is forbidden and the gate checks for it.
+  -- a path on the command line, never a value. *Enforced today, and every run
+  this project has made has produced it.* From there it reaches
+  `htpasswd -n -i`, which reads the password from standard input, and then
+  T-Pot's own `.env`. `roles/tpot_install` builds that hasher's argument
+  vector in `vars/`, where no answer file can reach it, and asserts five
+  things about the vector immediately before running it: that it is a list,
+  that `-i` is in it, that `-b` is not, that it is exactly four elements long,
+  and -- the one that survives somebody rewriting the other four -- that no
+  element of it equals the password. The comparison runs under `no_log`; the
+  assertion speaks only about a boolean. *That half is written and reviewed;
+  no run has ever reached it.*
 * **Nothing this run creates survives it.** The run directory is shredded and
   removed by an exit trap that fires on success, failure and interruption
   alike. No `.bak` file is written, because no file in the tree is ever edited
@@ -110,15 +121,41 @@ handling rules are structural, not advisory:
 * **Ansible's `environment:` keyword is never used for a secret.** ansible-core
   resolves that keyword into a string prepended to the module command line, so
   those values would be argv-visible on the target for the lifetime of the
-  task. A rule for the play that has not landed.
+  task. The play uses it in exactly two places -- `roles/os_prep`, for apt's
+  non-interactive frontend, and `roles/tpot_install`, for the `PATH`, `HOME`
+  and locale upstream's installer is given -- and neither carries a
+  credential.
+* **The report the play hands back cannot carry the dashboard password.**
+  This document invites you to attach `result.json` to a vulnerability report,
+  and that document is built from the play's own report, so `roles/report`
+  checks the assembled document against the supplied password under `no_log`
+  and **refuses to write it** if it matches. Nothing is supposed to put a
+  credential there -- no role writes one into any accumulator -- which is
+  exactly why the check is worth its one task: it fires only when something
+  has gone wrong in a way review did not catch. The failure message names the
+  problem and not the value.
+* **The file the post-boot verification reads carries no secret either.**
+  `roles/finalize` writes `{{ tpot_state_dir }}/verify-config.json`,
+  root-owned mode `0600`, so that the unattended verification on the next boot
+  checks the box that was actually installed rather than a default one. It is
+  built from the merged **public** document -- `lib/config.py` produces that
+  by *removing* every secret-typed key rather than by blanking it -- and then
+  filtered to drop the three keys `lib/varschema.json` marks
+  `config_file: false` (`tpot_state_dir`, `tpot_log_dir`, `tpot_runtime_dir`),
+  which an answer file may not carry. It is checked twice before it is
+  written: once by name, against the schema's own list of secret-typed keys,
+  and once by value, against every credential the run holds. Either check
+  failing refuses the write, leaves post-boot verification unarmed, and says
+  so -- because a file read by a systemd unit on every boot until it disarms
+  is the wrong place to discover a leak later.
 
 ## How the dashboard password stays off upstream's command line
 
-**This is a design commitment about the part of the product that is not
-built.** No run has ever been made. What follows is what the play is specified
-to do, and why; the invocation rule it depends on is already enforced by a
-gate that fails the build on any line -- code or documentation -- claiming
-this project hands upstream a credential.
+**This is implemented, in `roles/tpot_install`, and it has never been run
+against a real host.** What follows is what the code does, and why. The
+invocation rule it depends on is also enforced by a build gate that fails the
+tree on any line -- code or documentation -- claiming this project hands
+upstream a credential.
 
 Upstream T-Pot's own installer accepts a dashboard username and password only
 as command-line arguments. **This tool does not take that path and passes
@@ -140,9 +177,20 @@ playbook. So:
    algorithm is selected, because upstream selects none either and byte
    compatibility with what upstream would have written is the point.
 
-The intended result is that the password exists in a run as a file
-descriptor, a 0600 file on tmpfs, and a hash -- never an argument to anything,
-in this project's process tree or upstream's.
+The result the code is written for is that the password exists in a run as a
+file descriptor, a 0600 file on tmpfs, and a hash -- never an argument to
+anything, in this project's process tree or upstream's.
+
+**One honest limit on the gate that guards this.**
+`tests/check-argv-hygiene.sh` reads *logical lines*: it needs the command word
+and the flag together to recognise a forbidden invocation. An Ansible `argv:`
+list puts every token on a line of its own, so the gate cannot see it.
+Measured on 2026-09-04 against a throwaway tree: a task hashing the password
+with `-b`, the password appended as the last element of an `argv:` list, is
+reported clean by that gate. That is why the run-time assertion above exists
+and why it checks the vector rather than trusting the build to have caught it.
+Fixing the gate to parse YAML task vectors is unwritten work, and it is
+recorded here rather than left to be rediscovered.
 
 ### What upstream's own credential path costs, for anyone who takes it
 
@@ -192,9 +240,12 @@ own responsibility, and the two have landed differently:
   Upstream patches the `WEB_USER=` line with `sed -i`. On a file that has no
   such line that command exits 0, changes nothing and reports nothing --
   verified by execution against a copy of it. The outcome would be a T-Pot
-  whose dashboard has no login and an installer that reported success. The
-  specified write therefore checks that the line is present and fails the run
-  if it is not, rather than trusting the edit.
+  whose dashboard has no login and an installer that reported success. So the
+  write in `roles/tpot_install` counts the `WEB_USER=` lines in the file
+  first, refuses to proceed when there is not exactly one, and then replaces
+  that line rather than appending a second -- two `WEB_USER` lines in that
+  file is its own failure mode. It checks the file rather than trusting the
+  edit.
 * **`LS_WEB_USER` is never written.** That key is upstream-managed state for
   sensor-to-hive authentication, and putting a dashboard credential into it
   would break a distributed deployment.
@@ -216,33 +267,35 @@ Upstream's unattended mode **requires** passwordless `sudo` for the account
 that runs it. It tests this with `sudo -n -k true`, which deliberately ignores
 any cached authentication, so only a NOPASSWD rule satisfies it; it makes that
 test three times, and under unattended mode it aborts the install before
-changing anything when the test fails. This tool is specified to grant exactly
-that, deliberately, in a dedicated sudoers file, and states it here rather
-than leaving it to be discovered.
+changing anything when the test fails. `roles/tpot_user` grants exactly that,
+deliberately, in a dedicated file under `/etc/sudoers.d/`, and this document
+states it rather than leaving it to be discovered.
 
 The grant is unconditional and is **not** derived from whether the account has
 a password. Giving the account a login password
 (`tpot_os_user_password_policy: set`) does not make `sudo` prompt; it only adds
 an interactive login, and it widens the box's credential surface by one
-password. The default is `locked`: the account is specified to be created with
-no usable password at all, so the grant is its only route to privilege and
-interactive login to it is impossible. Nothing in this project needs the
-account's password -- the mechanism that once did was the screen-scraping
-driver, and that is deleted.
+password. The default is `locked`: the account is created with no usable
+password at all, the role then reads the shadow record back and asserts the
+field is the shape the policy promised, so the grant is its only route to
+privilege and interactive login to it is impossible. Nothing in this project
+needs the account's password -- the mechanism that once did was the
+screen-scraping driver, and that is deleted.
 
 One related trap, on Debian systems with no `sudo` installed at all: upstream
 installs it for you using `su`, which asks for the root password on a
-terminal and has no unattended bypass. The role that prepares the account is
-specified to ensure `sudo` and the NOPASSWD rule exist *before* upstream runs,
-because otherwise an unattended install stops there and waits for a human who
-is not present.
+terminal and has no unattended bypass. So `sudo` is in `roles/os_prep`'s base
+package list, installed in the same apt transaction as everything else this
+run needs, and `roles/tpot_user` writes the NOPASSWD rule after it -- both
+before upstream is invoked, because otherwise an unattended install stops
+there and waits for a human who is not present.
 
 ## What the installed box becomes
 
 **A finished T-Pot host is deliberately attackable.** These properties are
-what a completed install produces; no install has been completed by this code
-yet, so read them as what upstream's own playbook does and what this tool is
-specified to report.
+what a completed install produces; no install has been completed by this code,
+so read them as what upstream's own playbook does and what this tool's own
+code reports about it -- neither observed on a running host.
 
 Most of them are named in the closing notice `install.sh` prints before it
 exits -- the port move, the honeypot on 22, the absence of firewall rules,
@@ -263,11 +316,12 @@ and nowhere else.
   ports should be closed is a site decision. `docs/firewall.md` carries that
   position in full, with a worked example ruleset -- which nobody here has
   loaded on a host running T-Pot, because this project has never installed one.
-  The closing notice and the preflight report are written to name which
-  administrative ports will be world-reachable -- the part that matters before
-  you walk away -- but neither has ever been printed: the exposure line is a
-  preflight stage B check and every run of this build stops in stage A, and the
-  notice belongs to the end of an install that has never completed.
+  The closing notice and the preflight report both name which administrative
+  ports will be world-reachable -- the part that matters before you walk away
+  -- and neither has ever been printed. The exposure line is a preflight stage
+  B check, every run this project has made was unprivileged, so stage A fails
+  on the `root` check and stage B is never reached; the notice belongs to the
+  end of an install that has never completed.
 * **That is not the same as the host's filtering being untouched.** Upstream's
   playbook sets the firewalld public zone target to `ACCEPT` and puts SELinux
   into monitor (permissive) mode on Red Hat family distributions. On those, a
@@ -293,9 +347,11 @@ and nowhere else.
   default.** This installer's default is off, `tpot_upstream_telemetry: "off"`.
   It is a compose-file edit and not a setting: there is no upstream `.env` key
   and no upstream flag for it, so turning it off means removing the submitting
-  service block from upstream's `docker-compose.yml`, and the specified
-  implementation then asserts the block is actually gone rather than that the
-  edit was attempted. **That removal is part of the role that has not landed.**
+  service block from upstream's `docker-compose.yml`. `roles/tpot_install`
+  does that structurally -- it parses the compose document, drops the service
+  and the network that exists only for it, writes the result back, and then
+  **asserts both are absent from the file it wrote** rather than that the edit
+  was attempted. A run left with telemetry on records a warning saying so.
   Set the value to `"on"` to leave upstream's own default in place. Note that
   the edit lives inside upstream's git checkout, and upstream's own update
   script overwrites local changes there, so it does not survive an upstream

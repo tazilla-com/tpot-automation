@@ -1,0 +1,37 @@
+---
+# roles/tpot_user/defaults/main.yml -- the three input keys this role reads.
+#
+# WHY THERE ARE ONLY THREE, AND WHY THE FOURTH IS MISSING ON PURPOSE
+#   tests/check-variable-surface.sh (check 4) requires every tpot_*/ioc_* key
+#   defaulted in a role to exist in lib/varschema.json AND in the example
+#   inventory, with a byte-equal default. So this file is not a place to
+#   invent a knob: it is a copy of three rows of the schema, and the gate is
+#   what keeps the copy honest.
+#
+#   tpot_os_user_password is deliberately ABSENT. It is one of the eight
+#   schema keys with no default, which means it is simply not in the merged
+#   configuration when nobody supplied one. Defaulting it here -- to '' or to
+#   anything else -- would make `is defined` true on every run and turn "no
+#   password was supplied" into "the empty password was supplied". Every
+#   reference to it below is guarded instead.
+#
+#   The run-scoped accumulators (tpot_stage, tpot_run_warnings,
+#   tpot_report_accounts) are play vars, initialised in site.yml and
+#   verify.yml. They are not input, they must not appear here, and a role's
+#   defaults are re-entered on every include anyway -- a list that roles
+#   append to has to outlive the role that started it.
+
+# The unprivileged account that owns the T-Pot checkout and runs upstream's
+# installer. Upstream refuses to run as root (upstream install.sh, the EUID
+# check at its line 287), so this account is the only reason the install can
+# happen at all.
+tpot_os_user: honeypot
+
+# locked | set. `locked` is the default and leaves the account with no usable
+# password, which removes it from the required input surface entirely.
+tpot_os_user_password_policy: locked
+
+# It must be true. Not a preference and no longer derived from the password
+# policy -- see the assertion in tasks/main.yml, which names upstream's three
+# `sudo -n -k true` probes and refuses the run rather than reaching them.
+tpot_sudo_nopasswd: true

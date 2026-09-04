@@ -1,0 +1,287 @@
+---
+# roles/ioc_forward/tasks/main.yml -- the reservation, and the refusal that
+# makes it one.
+#
+# ===========================================================================
+# WHAT THIS ROLE DOES, IN ONE SENTENCE
+# ===========================================================================
+#   It stops the run when ioc_forwarding_enabled is true, and otherwise
+#   changes nothing at all.
+#
+# ===========================================================================
+# WHY A ROLE THAT ONLY REFUSES IS WORTH ITS OWN DIRECTORY
+# ===========================================================================
+#   The alternative -- accept the key, ignore it, install a honeypot, exit 0
+#   -- is the exact failure this project exists to remove. An operator who put
+#   an endpoint and a token in an answer file would watch a successful install
+#   and reasonably conclude that indicators were on their way to it. Nothing
+#   would ever arrive, no error would ever be printed, and the first person to
+#   notice would be whoever eventually asked why the receiving system was
+#   empty. A setting that quietly does nothing is worse than one that does not
+#   exist, because a name that does not exist is refused the moment the answer
+#   file is written.
+#
+#   So the five names are reserved AND they refuse. An answer file written
+#   today stays valid when forwarding lands, and until then a run has only two
+#   possible outcomes: "you did not ask for forwarding", or "the run stopped
+#   and told you why". Neither of them is silence.
+#
+#   The other half of the reservation is in defaults/main.yml, which is where
+#   the five names and the reason for the ioc_ prefix are written down.
+#
+# ===========================================================================
+# THE EXIT CODE IS 10 (EX_USAGE), AND THAT IS A JUDGEMENT
+# ===========================================================================
+#   The first task below sets tpot_stage to `ioc`. If anything in this role
+#   fails, site.yml's rescue asks roles/report to turn that string into a
+#   number, and roles/report/vars/main.yml maps `ioc` to 10 -- matching the
+#   Stage / Code table in docs/exit-codes.md, which tests/check-stage-map.sh
+#   compares against the map on every build.
+#
+#   10 is EX_USAGE rather than 40 (EX_INTERNAL) or 16 (EX_VERIFY) because
+#   nothing here is broken: the installer did precisely what it says it does,
+#   and the input asked for a capability this release does not have. The
+#   distinction matters to whoever reads the exit code in a pipeline -- 40
+#   means "file a bug against this installer", 10 means "fix the request".
+#
+#   THE SAME CONDITION IS ALSO REFUSED IN roles/preflight, AND REPORTS 11
+#   THERE. Two numbers for one condition needs a reason, and the reason is
+#   that they are not two answers to one question. docs/exit-codes.md states
+#   as its first design property that every failure code names HOW FAR THE RUN
+#   GOT -- 11 never touched the box, 16 has T-Pot installed -- and that is
+#   precisely what differs. Refused in preflight the run stopped before the
+#   first mutation, and 11 (EX_PREFLIGHT) says so; refused here it stopped in
+#   a stage that is reached only after os_prep, tpot_user, tpot_install,
+#   tpot_verify and finalize have all run, and 11 would then be a lie about
+#   the state of the machine. 10 is what is left to say: the installer did
+#   what it says it does and the input asked for something it does not have.
+#
+#   The alternative -- making this role report 11 too -- is false for the
+#   reason just given. The other alternative, making preflight report 10,
+#   would mean setting tpot_stage to `ioc` inside preflight and setting it
+#   back afterwards, so the run directory would name a stage that never ran
+#   and any failure landing between the two writes would be misreported. Two
+#   honest numbers beat one number bought with a false stage.
+#
+#   Do not change the number in one place. It is written in the map, in
+#   docs/exit-codes.md and in lib/exitcodes.sh, and the gate fails when any
+#   two of them disagree.
+#
+# ===========================================================================
+# WHERE THIS ROLE SITS IN THE RUN -- READ THIS BEFORE FILING A BUG
+# ===========================================================================
+#   site.yml includes this role LAST, after finalize, and unconditionally
+#   rather than behind a `when:`. Unconditional is right on the play's side:
+#   the reservation is then visible in --list-tasks and is syntax-checked on
+#   every run, and the refusal is a property of the role rather than of the
+#   condition that happens to reach it.
+#
+#   THIS ROLE IS THE SECOND GATE, NOT THE ONLY ONE, AND THAT MATTERS. Being
+#   last means being reached only after os_prep, tpot_user, tpot_install,
+#   tpot_verify and finalize have run -- which on a real box is the install
+#   itself, packages and account and upstream's own installer and the sshd
+#   port move. A refusal there arrived at the far end of about ninety minutes
+#   and handed the caller exit 10, "fix your request", about a machine that
+#   had just become a honeypot and needed a reboot. So roles/preflight now
+#   asserts the same condition in its own stage, where it costs one comparison
+#   on an untouched box and reports 11 -- "nothing on this box was changed" --
+#   which is true there and is not true here.
+#
+#   THE ASSERT BELOW STAYS ANYWAY, AND IS NOT REDUNDANT. A reservation that
+#   refuses in one place is one somebody can route around, and this one is
+#   routable around by tag selection: site.yml applies the `preflight` tag to
+#   everything that role contains, so `--tags ioc_forward` runs the include
+#   and filters out every task inside it. Measured on this tree: under that
+#   tag selection the "Preflight" include appeared in the transcript with not
+#   one preflight task below it, and the assert below was what refused. Read
+#   the two as first line and last line of the same defence.
+#
+#   `install.sh --check` remains the way to find the mistake without running
+#   anything at all: an assert is evaluated in check mode like any other read,
+#   so a dry run reaches both refusals having changed nothing (verified here,
+#   by running the role under --check; not on an installed box). One cheaper
+#   refusal is still possible and is not built: lib/config.py could reject the
+#   key while merging the configuration, before ansible-core is even invoked,
+#   which is where a usage error most naturally belongs and where 10 fits its
+#   published meaning exactly. If that lands, both asserts stay.
+#
+# ===========================================================================
+# NOTHING HERE OPENS A CONNECTION, AND THAT IS THE POINT
+# ===========================================================================
+#   No uri task, no forwarding client, no Logstash, no Elastic package
+#   repository, no pipeline file, no template. The only modules in this file
+#   are set_fact, debug and assert, and set_fact is the only one that writes
+#   anything -- a fact, in this play's own memory. That is the whole of this
+#   release's IoC behaviour, and it is the sentence README.md and SECURITY.md
+#   make to a reader deciding whether to trust this installer with an endpoint
+#   of their own.
+#
+# ===========================================================================
+# NOTHING HERE HAS EVER RUN AGAINST AN INSTALLED T-POT
+# ===========================================================================
+#   No virtual machine, no root, no docker, no T-Pot -- not once, in this
+#   project. What HAS been done to this file is narrower and worth stating
+#   exactly: it is linted and gated, and it was executed against an
+#   unprivileged development box to prove that its expressions evaluate --
+#   that the refusal fires for true, "yes", "on" and "1" and stays quiet for
+#   false, "no", "off", "0", "" and undefined; that the rescue path writes
+#   "10 ioc" into the run directory, which is what install.sh reads as exit
+#   10; that the supplied-key detection censors its own task and leaks no
+#   value at -vv; and that under `--tags ioc_forward` every task in
+#   roles/preflight is filtered out while this assert still fires, which is the
+#   measurement the second-gate paragraph above rests on. None of that is an
+#   installed T-Pot. Read every claim below
+#   about upstream, about a box or about a run as specified, not observed.
+# ===========================================================================
+
+# ===========================================================================
+# WHY FOUR TASKS BELOW CARRY A noqa MARKER, AND FOUR DEFAULTS CANNOT
+# ===========================================================================
+#   ansible-lint's var-naming[no-role-prefix] wants every name a role sets to
+#   begin with the role's own name. That convention cannot hold anywhere in
+#   this tree and the reason is the product, not laziness: tpot_stage,
+#   tpot_run_warnings and the other accumulators are the CONTRACT BETWEEN the
+#   roles -- site.yml initialises them, several roles append to them and
+#   roles/report reads them -- so a name scoped to one role would break the
+#   thing the name exists for. The input keys are worse: their spelling is the
+#   published interface, checked byte-for-byte against lib/varschema.json and
+#   the example inventory by tests/check-variable-surface.sh, and renaming one
+#   would break an answer file rather than satisfy a linter.
+#
+#   So each task below names the ONE rule it silences, on its own line, the
+#   way roles/tpot_install already does. The marker is per-rule: everything
+#   else ansible-lint has to say about these tasks is still reported.
+#
+#   defaults/main.yml gets no such marker and still reports four violations,
+#   exactly as every other role in this tree does. A marker there would have
+#   to sit at the end of the key's line, and check 4 of
+#   tests/check-variable-surface.sh compares the WHOLE rest of that line
+#   against the schema default -- so silencing the linter would fail the gate
+#   that actually protects the interface. Given the choice, the gate wins.
+# ===========================================================================
+
+- name: Record the stage, so a failure below can be given an exit code
+  # First task in the role, per the play contract. site.yml's rescue reads
+  # tpot_stage to write "<code> <stage>" into $RUNDIR/failure-class, and
+  # roles/report maps this exact string to 10. It is written as a literal and
+  # never assembled from a variable, because tests/check-stage-map.sh finds
+  # the stages that occur by matching the literal -- a stage built from a
+  # variable is invisible to it, and would silently lose the check that keeps
+  # the map total.
+  ansible.builtin.set_fact:
+    tpot_stage: ioc
+
+- name: Make sure the run's warning accumulator exists
+  # site.yml and verify.yml initialise this as a play var and this role is
+  # normally reached through site.yml. The defaulting is for the other case --
+  # the role included on its own, by hand or by a future test -- where the
+  # append below would otherwise fail on an undefined name and produce a
+  # traceback in place of a refusal. Setting a fact to the value it already
+  # has costs nothing and changes no precedence a later role depends on.
+  ansible.builtin.set_fact:
+    tpot_run_warnings: "{{ tpot_run_warnings | default([], true) }}"
+
+- name: Note which reserved IoC keys carry a value
+  # WHY THIS EXISTS AT ALL, GIVEN THAT THE ASSERT BELOW IS THE PRODUCT
+  #   Forwarding disabled with an endpoint and a token filled in is the OTHER
+  #   silent case: the assert passes, the install succeeds, and three settings
+  #   the operator deliberately wrote down were never looked at by anything.
+  #   Saying so once, by name, in the run's warnings is the difference between
+  #   a reservation and a black hole. The refusal covers the switch; this
+  #   covers the values beside it.
+  #
+  # WHAT IS AND IS NOT DETECTABLE
+  #   Three of the four settings beside the switch can be told apart from
+  #   their defaults, because those defaults are empty: two are null and the
+  #   third is absent from the merged document altogether. ioc_auth_header_name
+  #   cannot -- its documented default is a real string, so a run that set it
+  #   to that same string is indistinguishable from one that never touched it,
+  #   and guessing would produce a warning nobody could act on. It is left out
+  #   deliberately rather than approximated.
+  #
+  # `default('', true)` is doing two jobs and both are needed: the plain
+  # default covers ioc_auth_header_value, which is one of the eight schema
+  # keys with no default and is simply ABSENT from the merged document unless
+  # somebody supplied it, and the `true` covers the two keys whose documented
+  # default is null. Without it this task is the undefined-variable traceback
+  # the exit contract promises never to produce.
+  ansible.builtin.set_fact:
+    tpot_ioc_supplied_keys: >-
+      {{ (['ioc_endpoint_url'] if (ioc_endpoint_url | default('', true) | string | length) > 0 else [])
+         + (['ioc_sensor_id'] if (ioc_sensor_id | default('', true) | string | length) > 0 else [])
+         + (['ioc_auth_header_value']
+            if (ioc_auth_header_value | default('', true) | string | length) > 0 else []) }}
+  # ioc_auth_header_value is secret-typed. Its VALUE never leaves this
+  # expression -- only its length is asked for, and only a key NAME is kept --
+  # but the expression names it, so the task is censored on principle rather
+  # than on a case-by-case judgement about which references are safe.
+  no_log: true
+
+- name: Report which reserved IoC keys were supplied, by name
+  # The non-no_log half of the pair above. It prints names and a count and can
+  # hold no credential: the fact it renders is a list of literal strings this
+  # file wrote, never a value read from the configuration. Without it, a
+  # no_log task that went wrong would leave a transcript with a hole in it
+  # exactly where the explanation should be.
+  ansible.builtin.debug:
+    msg: >-
+      reserved IoC keys carrying a value: {{ tpot_ioc_supplied_keys | length }}
+      ({{ tpot_ioc_supplied_keys | join(', ') | default('none', true) }});
+      forwarding is not implemented in this release, so none of them is read
+
+- name: Warn that reserved IoC values were carried and not used
+  # Appended to the run's warnings, which roles/report copies into
+  # ansible-report.json and lib/result.sh merges into result.json. A warning
+  # rather than a failure: the values are inert, the install is unaffected,
+  # and refusing a box because an answer file is ready for a later release
+  # would punish exactly the person who read the documentation.
+  ansible.builtin.set_fact:
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings + ['the reserved IoC settings '
+         ~ (tpot_ioc_supplied_keys | join(', '))
+         ~ ' were accepted and ignored. IoC forwarding is not implemented in this'
+         ~ ' release: no indicator was sent anywhere and no connection to an'
+         ~ ' endpoint was opened, because there is no code in this installer that'
+         ~ ' could. The names are reserved so this answer file stays valid; see'
+         ~ ' docs/roadmap-ioc.md.'] }}
+  when:
+    - tpot_ioc_supplied_keys | length > 0
+
+- name: Refuse IoC forwarding, which is not implemented in this release
+  # THE ONE TASK THIS ROLE EXISTS FOR.
+  #
+  # `default(false)` is not defensive clutter. ioc_forwarding_enabled has a
+  # schema default and a role default, so in every path this project ships it
+  # is defined -- but an undefined value here must mean "nobody asked for
+  # forwarding" and proceed, not raise. Failing closed would be the wrong
+  # direction for a switch whose absence IS the safe state, and a traceback in
+  # place of this message would cost the caller exit 40 and the sentence that
+  # tells them what to do.
+  #
+  # `| bool` because the value may arrive as a string. lib/config.py types it
+  # from the schema, but a hand-run `ansible-playbook -e ioc_forwarding_enabled=yes`
+  # passes a string, and `not "false"` is false -- the one shape in which a
+  # refusal would silently invert.
+  ansible.builtin.assert:
+    that:
+      - not (ioc_forwarding_enabled | default(false) | bool)
+    fail_msg: >-
+      IoC forwarding is not implemented in this release; see docs/roadmap-ioc.md.
+      ioc_forwarding_enabled is set true, and this installer contains no
+      forwarding code at all -- no client, no pipeline, no endpoint template --
+      so a run that continued would install a working T-Pot and send nothing,
+      for as long as nobody checked. The five ioc_* names are reserved so that
+      this answer file stays valid when forwarding lands; set
+      ioc_forwarding_enabled to false to install now, and keep the other four
+      values where they are.
+      READ THE STATE OF THIS BOX BEFORE YOU RETRY. This role runs after
+      finalize, so on a full site.yml run everything ahead of it has already
+      happened: T-Pot is installed and the host needs a reboot, and the exit
+      code 10 says only that the request was wrong, never that the machine was
+      left alone. roles/preflight asserts this same condition before the first
+      mutation and reports 11 there, which does say the machine was left alone;
+      reaching THIS copy on a full run means that assert did not execute --
+      a tag selection that skipped the preflight stage is how that happens.
+    success_msg: >-
+      IoC forwarding is off, which is the only state this release implements
+    quiet: true

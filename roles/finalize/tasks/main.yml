@@ -1,0 +1,901 @@
+---
+# roles/finalize/tasks/main.yml -- the last role site.yml runs, and the one
+# that makes an unattended install honest about itself afterwards.
+#
+# WHAT THIS ROLE IS FOR
+#   Four things, and they are less unrelated than they look:
+#
+#     1. The locale, if one was asked for. It is applied HERE, at the end,
+#        for a reason given in full above the block below: everything this
+#        installer and upstream's installer print is English, and a run that
+#        changed the locale first would have produced a transcript nobody can
+#        search for the error message they were told to look for.
+#
+#     2. A permanent copy of the installer tree. The run directory is on
+#        tmpfs and is shredded when install.sh exits; the tree the operator
+#        ran from may have been a tarball in /tmp or a clone on a disk that
+#        is no longer attached. Verification has to happen AFTER a reboot,
+#        so something that still exists after that reboot has to be able to
+#        run it.
+#
+#     3. A permanent copy of THE CONFIGURATION, for exactly the same reason.
+#        The tree alone is not enough: an installer with no answer file
+#        re-derives every input from the schema defaults, so the post-boot
+#        run would verify the wrong account, the wrong ports and the wrong
+#        edition on any install that changed one. Section 3 says what is
+#        persisted and why it is the merged PUBLIC document rather than a
+#        hand-picked subset.
+#
+#     4. The post-boot unit, and the marker that arms it. Together they are
+#        the half of the two-invocation contract that does not require anyone
+#        to come back: `install.sh` -> 20 -> reboot -> the unit -> 0.
+#
+# WHAT IT MUST NOT DO, AND WHY EACH ONE IS WRITTEN DOWN
+#   * It does not START the unit. Starting it now would run verification
+#     against the pre-reboot box, which is precisely the state this project
+#     refuses to call verified.
+#   * It does not REBOOT. install.sh owns that decision -- it is the thing
+#     tpot_reboot_policy names -- and a play that rebooted would pull the
+#     floor out from under the shell that is waiting to write result.json.
+#   * It does not copy a credential -- into the installer tree, and not into
+#     the configuration it persists either. The merged document that HAS the
+#     dashboard password lives in the run directory on tmpfs and is shredded;
+#     what this role keeps is the PUBLIC document, which lib/config.py writes
+#     with every secret-typed key removed. "Supposed to" is why there are two
+#     tripwires below rather than two comments.
+#
+# NOTHING HERE HAS EVER RUN AGAINST A REAL BOX. No VM, no root, no T-Pot, no
+# systemd unit has ever been installed by this project. Every assertion below
+# is what this role is specified to do. Where a fact about systemd or about
+# upstream is stated, it was read from the manual page or from upstream's
+# source and the citation is given inline.
+
+- name: Enter the finalize stage
+  # First task, before anything can fail. site.yml's rescue turns this into
+  # `16 finalize` in the failure-class file, and docs/exit-codes.md is where
+  # a reader finds out that 16 means "installed, but never verified".
+  ansible.builtin.set_fact:
+    tpot_stage: finalize
+
+
+# ===========================================================================
+# 1. THE LOCALE
+# ===========================================================================
+#
+# WHY IT HAPPENS HERE AND NOT IN os_prep
+#   Ordering, and it is the whole reason this block is at the end of the last
+#   role rather than the start of the first. Two installers run during a
+#   T-Pot install -- this one and upstream's -- and every message either of
+#   them prints, every error a reader is told to search the transcript for,
+#   and every string this project's own gates match on is English. Set a
+#   non-English locale first and the transcript that has to be read after a
+#   failure is half in another language, with the interesting half chosen by
+#   whichever tool happened to be localised.
+#
+#   Applying it last costs nothing: nothing after this point reads it. The
+#   locale a login shell gets is the operator's, and the locale this run used
+#   was C.UTF-8 throughout, which is what install.sh exports for itself.
+#
+# WHY THIS IS A WARNING AND NOT A FAILURE WHEN THE TOOLING IS ABSENT
+#   locale-gen and update-locale come from the `locales` package, and a
+#   minimal cloud image may not have it. Refusing at this point would turn a
+#   complete, correct T-Pot install into exit 16 over a cosmetic setting --
+#   and the box would be left with the honeypot running and the run recorded
+#   as a failure, which is the least true of the available answers. So the
+#   locale is skipped, loudly, and the reason travels to result.json as a
+#   warning rather than being lost in the transcript.
+
+- name: Work out the encoding the requested locale names
+  # Split off any @modifier first, then take what follows the dot, so that
+  # en_US.UTF-8, en_US.utf8 and de_DE.UTF-8@euro all answer "UTF8" and a bare
+  # en_US answers with the empty string. Doing this once, here, keeps the
+  # assertion below readable and keeps the rule in one place.
+  ansible.builtin.set_fact:
+    tpot_finalize_locale_codeset: >-
+      {{ ((tpot_locale | string).split('@')[0].split('.')[1:] | first | default('', true))
+         | upper | replace('-', '') }}
+  when:
+    - tpot_locale is defined
+    - tpot_locale is not none
+    - tpot_locale | string | length > 0
+
+- name: Refuse a locale whose encoding is not UTF-8
+  # ansible-core exits 1 under a non-UTF-8 locale -- "Ansible requires the
+  # locale encoding to be UTF-8; Detected None" -- and upstream's installer
+  # runs a NESTED ansible-playbook of its own. A box left with a non-UTF-8
+  # default is therefore a box on which the next run of this installer, and
+  # every later upstream update, refuses to start. That is a much bigger
+  # consequence than "the locale is a bit odd", so it is refused rather than
+  # warned about. It also rejects the two spellings the example inventory
+  # tells the reader not to use, C and POSIX, because neither has an
+  # encoding suffix at all.
+  ansible.builtin.assert:
+    that:
+      - tpot_finalize_locale_codeset == 'UTF8'
+    fail_msg: >-
+      tpot_locale is set to "{{ tpot_locale }}", whose encoding reads as
+      "{{ tpot_finalize_locale_codeset | default('') }}" rather than UTF-8.
+      This installer only sets UTF-8 locales: ansible-core refuses to start
+      under anything else, and both this installer and upstream's run
+      ansible-playbook. Write the encoding out -- for example en_US.UTF-8 --
+      or set tpot_locale to null to leave the box's locale alone.
+    success_msg: "{{ tpot_locale | default('') }} names a UTF-8 encoding"
+    quiet: true
+  when:
+    - tpot_finalize_locale_codeset is defined
+
+- name: Look for the tooling the locale block needs
+  # Both come from the `locales` package on Debian and Ubuntu, so one absent
+  # means the other is too; both are stated anyway, because a reader chasing
+  # the warning below wants to know which path was checked.
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  register: tpot_finalize_locale_tooling
+  loop:
+    - /etc/locale.gen
+    - /usr/sbin/update-locale
+  when:
+    - tpot_finalize_locale_codeset is defined
+
+- name: Decide whether the locale can be applied on this box
+  ansible.builtin.set_fact:
+    tpot_finalize_locale_ready: >-
+      {{ tpot_finalize_locale_tooling.results
+         | default([]) | map(attribute='stat.exists') | select | list | length == 2 }}
+  when:
+    - tpot_finalize_locale_codeset is defined
+
+- name: Record that the requested locale could not be applied
+  ansible.builtin.set_fact:
+    tpot_run_warnings: "{{ tpot_run_warnings + ['the locale ' ~ tpot_locale ~ ' was NOT applied:
+                           /etc/locale.gen or /usr/sbin/update-locale is missing on this box, which
+                           means the locales package is not installed. The install itself is
+                           unaffected; install that package and set the locale by hand, or re-run
+                           with tpot_locale set once it is present.'] }}"
+  when:
+    - tpot_finalize_locale_codeset is defined
+    - not (tpot_finalize_locale_ready | default(false) | bool)
+
+- name: Generate the requested locale
+  # community.general is already a hard dependency of this play -- see
+  # requirements.yml -- and this module does the two halves the manual
+  # procedure would do by hand: it uncomments the locale's line in
+  # /etc/locale.gen and runs locale-gen. It is idempotent (it asks `locale -a`
+  # whether the locale is already there), it supports check mode, and it
+  # fails with a message naming the locales package when neither of the two
+  # Debian mechanisms is present -- which is the case the stat above is
+  # there to catch before it gets that far.
+  community.general.locale_gen:
+    name: "{{ tpot_locale }}"
+    state: present
+  when:
+    - tpot_finalize_locale_codeset is defined
+    - tpot_finalize_locale_ready | default(false) | bool
+
+- name: Set the system-wide default locale
+  # command, not a module: nothing in ansible.builtin or community.general
+  # writes /etc/default/locale, and hand-writing that file with lineinfile
+  # would reimplement what update-locale already does correctly -- it knows
+  # about the other locale variables in that file and about removing a
+  # setting rather than leaving a stale one behind.
+  #
+  # The variable name comes from vars/main.yml rather than being written
+  # here; the comment above that key says why, and it is a real reason
+  # rather than a style one.
+  #
+  # changed_when: true, unconditionally. update-locale exits 0 and prints
+  # nothing whether or not it changed the file, so there is no signal to map
+  # onto `changed`. Claiming the change is the honest answer -- the
+  # alternative is a task that says it did nothing on the run where it did
+  # the thing it exists to do.
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/update-locale
+      - "{{ tpot_finalize_locale_env_name }}={{ tpot_locale }}"
+  changed_when: true
+  when:
+    - tpot_finalize_locale_codeset is defined
+    - tpot_finalize_locale_ready | default(false) | bool
+
+
+# ===========================================================================
+# 2. THE PERMANENT COPY OF THE INSTALLER TREE
+# ===========================================================================
+
+- name: Resolve the installer tree this run is executing from
+  # playbook_dir is the directory holding site.yml, which is the root of the
+  # installer tree -- install.sh derives its own REPO_DIR the same way, from
+  # the resolved location of its own file, so the two agree by construction
+  # rather than by a path written down twice.
+  ansible.builtin.set_fact:
+    tpot_finalize_source: "{{ playbook_dir | ansible.builtin.realpath }}"
+    tpot_finalize_dest_real: "{{ tpot_finalize_dest | ansible.builtin.realpath }}"
+
+- name: Decide whether the installer tree needs copying
+  # The guard for one real case, and it is not hypothetical: somebody re-runs
+  # a full install from the copy this role made last time. The copy below
+  # DELETES its destination before extracting into it, so aiming it at the
+  # tree the play is currently being read from would destroy the running
+  # installer halfway through its own run.
+  #
+  # Both shapes are refused, not just the obvious one. Equal paths is the
+  # case everybody thinks of; a source NESTED under the destination is the
+  # one that actually eats the checkout, and it costs one more clause to
+  # rule out. Everything downstream of this -- the tripwire, the delete, the
+  # extract -- hangs off this single fact rather than repeating the
+  # comparison, so the two cannot drift apart.
+  ansible.builtin.set_fact:
+    tpot_finalize_copy_wanted: >-
+      {{ tpot_finalize_source != tpot_finalize_dest_real
+         and not tpot_finalize_source.startswith(tpot_finalize_dest_real ~ '/') }}
+
+- name: Note that the installer tree is already in its permanent location
+  # Said out loud, and carried into result.json, because a silently skipped
+  # copy is indistinguishable from a copy that happened.
+  ansible.builtin.set_fact:
+    tpot_run_warnings: "{{ tpot_run_warnings + ['the installer tree was not copied to
+                           ' ~ tpot_finalize_dest ~ ': this run is executing from that directory
+                           or from inside it. The post-boot verification unit will use the tree
+                           that is there now, which is the one that performed this install.'] }}"
+  when:
+    - not (tpot_finalize_copy_wanted | bool)
+
+# ---------------------------------------------------------------------------
+# The credential tripwire.
+#
+# The copy is a permanent, root-only directory that nothing ever shreds, so
+# the one thing it must not contain is the dashboard password. Nothing is
+# SUPPOSED to put it there: user input reaches this play as `-e @<merged
+# document>` from a 0700 directory on tmpfs, and the source tree is a
+# checkout. But `install.sh --config ./tpot.yml` is a perfectly natural thing
+# for somebody to type, and an answer file written INSIDE the installer tree
+# is then copied to a second location that no document mentions and no exit
+# trap cleans up.
+#
+# So the scan is cheap insurance against one specific, plausible mistake, and
+# it is modelled directly on lib/log.sh's tripwire over the transcript: the
+# same literal search, the same 8-character floor, and the same rule that an
+# unexercised check is not a pass.
+#
+# The value reaches grep on STDIN and never as an argument -- a command line
+# is world-readable in /proc for the life of the process, which is the
+# property tests/check-argv-hygiene.sh exists to defend.
+# ---------------------------------------------------------------------------
+- name: Scan the installer tree for the supplied dashboard credential
+  ansible.builtin.command:
+    argv:
+      - grep
+      - --recursive
+      - --binary-files=without-match
+      - --files-with-matches
+      - --fixed-strings
+      - --file=-
+      - --exclude-dir=.git
+      - --
+      - "{{ tpot_finalize_source }}"
+    stdin: "{{ tpot_web_password }}"
+    stdin_add_newline: false
+  register: tpot_finalize_secret_scan
+  # It reads. grep's own exit status is the finding, and a non-zero status
+  # here is data rather than an error, so it is examined below instead of
+  # ending the play with grep's message.
+  changed_when: false
+  failed_when: false
+  # check_mode: false, and it is not a convenience. ansible.builtin.command is
+  # SKIPPED under --check, and a check-mode skip is not the same shape as a
+  # `when` skip: measured on ansible-core 2.21.2, the skipped result still
+  # carries rc: 0 and an empty stdout. rc 0 is grep's "I found it". So without
+  # this line a --check run reads a scan that never happened as a MATCH, the
+  # assertion below fires, and the run stops at stage finalize -- exit 16 --
+  # telling the operator their dashboard password is sitting in the installer
+  # tree. It is also the wrong way round on purpose: --check exists to find
+  # that mistake BEFORE an install, so the one run that must exercise this
+  # scan is the dry one. grep reads and changes nothing, which is what makes
+  # the exemption legitimate; roles/preflight, roles/tpot_user and
+  # roles/tpot_install use exactly this idiom for the same reason.
+  check_mode: false
+  no_log: true
+  when:
+    - tpot_finalize_copy_wanted | bool
+    - tpot_web_password is defined
+    - tpot_web_password | string | length >= tpot_finalize_tripwire_min_len
+
+- name: Report the credential scan's outcome
+  # Deliberately not no_log, and deliberately says nothing but the status.
+  # The task above hides everything it touched, which is right and which also
+  # means a failure there would otherwise be undiagnosable.
+  #
+  # It carries the same `when` as the scan itself, so that the one branch it
+  # cannot describe -- there was no copy to scan for -- is not reported as
+  # though a password had been missing. That case has already said so, in the
+  # warning above.
+  ansible.builtin.debug:
+    msg: >-
+      credential scan over the installer tree:
+      {{
+        'not run -- no dashboard password long enough to search for was supplied to this run'
+        if tpot_finalize_secret_scan.rc is not defined
+        else ('clean' if tpot_finalize_secret_scan.rc | int == 1
+              else ('MATCHED in ' ~ (tpot_finalize_secret_scan.stdout_lines | default([]) | length)
+                    ~ ' file(s)' if tpot_finalize_secret_scan.rc | int == 0
+                    else 'could not be completed, grep exited ' ~ tpot_finalize_secret_scan.rc))
+      }}
+  when:
+    - tpot_finalize_copy_wanted | bool
+
+- name: Refuse to copy an installer tree that carries the dashboard credential
+  ansible.builtin.assert:
+    that:
+      # Only rc 0 is a hit. rc 1 is clean and anything above is grep failing,
+      # which is handled as a warning by the next task rather than as proof
+      # of a leak.
+      - tpot_finalize_secret_scan.rc | int != 0
+    fail_msg: >-
+      The dashboard password appears in the installer tree, so the tree has
+      NOT been copied to {{ tpot_finalize_dest }} and T-Pot is installed but
+      unverified. The likely cause is an answer file written inside the
+      installer directory; keep it outside, and chmod 0600. Files:
+      {{ tpot_finalize_secret_scan.stdout_lines | default([]) | join(', ') }}
+    success_msg: the installer tree carries no supplied credential
+    quiet: true
+  when:
+    - tpot_finalize_secret_scan.rc is defined
+
+- name: Record that the credential scan could not be completed
+  # An unexercised check is not a pass -- lib/log.sh says the same sentence
+  # about the transcript tripwire and falls back to an in-shell scan. There
+  # is no second implementation to fall back to here, so the honest answer is
+  # to say the copy was made without the check having been exercised, and to
+  # put that in result.json where it outlives the transcript.
+  ansible.builtin.set_fact:
+    tpot_run_warnings: "{{ tpot_run_warnings + ['the credential tripwire over the installer tree
+                           could not be completed (grep exited '
+                           ~ tpot_finalize_secret_scan.rc ~ '); the tree was copied to '
+                           ~ tpot_finalize_dest ~ ' without that check having been exercised.'] }}"
+  when:
+    - tpot_finalize_secret_scan.rc is defined
+    - tpot_finalize_secret_scan.rc | int > 1
+
+- name: Remove any previous installer copy
+  # A clean replace, not an overwrite. An overwrite leaves behind every file
+  # a previous VERSION had and this one does not, and a stale library sitting
+  # next to a current one in the tree that runs post-boot verification is a
+  # difference nobody will look for. If this or the copy below fails halfway,
+  # the result is a partial tree -- which preflight stage A's 17-file
+  # manifest refuses on the next run, by name, rather than half-running.
+  ansible.builtin.file:
+    path: "{{ tpot_finalize_dest }}"
+    state: absent
+  when:
+    - tpot_finalize_copy_wanted | bool
+
+- name: Create the permanent installer directory
+  ansible.builtin.file:
+    path: "{{ tpot_finalize_dest }}"
+    state: directory
+    owner: root
+    group: root
+    # 0700, and preflight cares: its repo_tree check FAILS on a
+    # world-writable installer root and warns on a group-writable one,
+    # because root is about to execute everything inside it. This tree also
+    # holds no secret, so 0700 is not protecting a value -- it is protecting
+    # the code path.
+    mode: "0700"
+  when:
+    - tpot_finalize_copy_wanted | bool
+
+- name: Copy the installer tree to its permanent location
+  # shell, and a tar pipe, rather than a module. The honest reasons:
+  #
+  #   * ansible.builtin.copy with remote_src can copy a directory but cannot
+  #     exclude anything, so it would carry .git -- the whole history of the
+  #     repository this was built from -- into a runtime directory.
+  #   * ansible.posix.synchronize needs rsync on the box, which nothing in
+  #     this project installs or checks for.
+  #   * a find-and-loop over ~80 files is ~80 module invocations to express
+  #     one operation, and it still never deletes anything the source no
+  #     longer has.
+  #
+  # set -o pipefail is mandatory here (ansible-lint enforces it, and it is
+  # right to): without it the exit status is the EXTRACTING tar's, so a
+  # source tar that died halfway would report success and leave a truncated
+  # installer behind. /bin/bash is named explicitly because /bin/sh is dash
+  # on Debian and Ubuntu and dash has no pipefail.
+  #
+  # --no-same-owner: extraction as root would otherwise restore the source
+  # files' uid, which is whatever account the operator's checkout belongs to.
+  # Everything in a root-only tree that root executes should be root's.
+  #
+  # changed_when: true. It rewrites the tree every run, by design, and a tar
+  # pipe has no way to say "nothing differed".
+  ansible.builtin.shell:
+    executable: /bin/bash
+    cmd: |
+      set -o pipefail
+      tar --create --file - \
+          --directory {{ tpot_finalize_source | quote }} \
+      {% for pattern in tpot_finalize_exclusions %}
+          --exclude={{ pattern | quote }} \
+      {% endfor %}
+          . \
+        | tar --extract --file - \
+              --directory {{ tpot_finalize_dest | quote }} \
+              --no-same-owner
+  changed_when: true
+  when:
+    - tpot_finalize_copy_wanted | bool
+
+- name: Prove the permanent copy can be executed
+  # The copy is the thing the post-boot unit depends on, and the failure mode
+  # it must not have is "the unit is enabled and the tree behind it is not
+  # there". Checking one file is not a checksum of the tree -- preflight's
+  # manifest is what does that, on the box, at the moment it matters -- but
+  # it does turn a silently empty destination into a failure now, while
+  # somebody is still watching the transcript.
+  ansible.builtin.stat:
+    path: "{{ tpot_finalize_dest }}/install.sh"
+  register: tpot_finalize_installed_entrypoint
+  when:
+    - not ansible_check_mode
+
+- name: Assert the permanent copy carries an executable entrypoint
+  ansible.builtin.assert:
+    that:
+      - tpot_finalize_installed_entrypoint.stat.exists | default(false)
+      - tpot_finalize_installed_entrypoint.stat.executable | default(false)
+    fail_msg: >-
+      {{ tpot_finalize_dest }}/install.sh is missing or not executable after
+      the copy, so the post-boot verification unit would have nothing to run.
+      T-Pot is installed; verification has not been armed.
+    success_msg: "{{ tpot_finalize_dest }}/install.sh is in place and executable"
+    quiet: true
+  when:
+    - not ansible_check_mode
+
+
+# ===========================================================================
+# 3. THE CONFIGURATION THE POST-BOOT RUN VERIFIES AGAINST
+# ===========================================================================
+#
+# THE DEFECT THIS SECTION EXISTS TO CLOSE
+#   The two-invocation contract has an attended half and an unattended half.
+#   The attended half is a person typing `install.sh --verify-only` after the
+#   reboot, with the same answer file they installed from. The unattended half
+#   is the systemd unit below, and until this section existed it ran
+#
+#       install.sh --verify-only --json
+#
+#   with no answer file at all. Every input therefore came back from the
+#   schema defaults, because the merged document this run was handed lives in
+#   the run directory on tmpfs and install.sh shreds it on the way out. The
+#   unattended half of the contract was re-deriving the configuration instead
+#   of remembering it.
+#
+#   On a default install that is invisible, which is why it survived review.
+#   On any other one the unit verifies a box that does not exist. Measured
+#   against lib/config.py, an install that set tpot_os_user,
+#   tpot_install_type, tpot_admin_ssh_port, tpot_dashboard_port,
+#   tpot_elasticsearch_port and tpot_upstream_telemetry produced a post-boot
+#   merge in which all six were back at their defaults: the wrong account, the
+#   wrong three ports, the wrong edition and the wrong expectation about
+#   telemetry. Verification then fails for reasons that are not true about the
+#   box, Restart=on-failure spends its five attempts inside the hour, the
+#   marker is never removed -- ExecStartPost runs only after a SUCCESSFUL
+#   ExecStart -- and result.json goes on reporting post_boot_verify_armed:
+#   true every night, for the life of the machine, without a human.
+#
+# WHAT IS PERSISTED, AND WHY IT IS THE WHOLE PUBLIC DOCUMENT
+#   lib/config.py already produces exactly the right document.
+#   $RUNDIR/public.json is the fully merged configuration with every
+#   secret-typed key REMOVED -- removed, not blanked -- and it is written by
+#   the one component that owns the rule about which keys are secret.
+#   Re-deriving that set here would be a second implementation of a security
+#   rule, and the copy that writes a permanent root-owned file would be the
+#   one that was wrong.
+#
+#   The alternative was to render only the keys roles/tpot_verify reads. That
+#   is a smaller surface, and a smaller surface is the whole of its appeal. It
+#   is rejected because the surface it shrinks is one nobody would notice
+#   going stale: preflight stage B reads this configuration too --
+#   tpot_admin_ssh_port, tpot_required_ports, tpot_firewall_mode,
+#   tpot_upstream_ref, tpot_install_type and more -- its records are kept and
+#   reported in --verify-only mode rather than gating, and a check added to
+#   either half in six months would silently start reading a default again.
+#   The public document carries more than verification strictly needs; it
+#   holds no secret, so carrying more is not a leak, and it cannot fall behind
+#   the thing it describes.
+#
+# WHY IT IS NOT A STRAIGHT COPY -- THE PART THAT LOOKS LIKE OVER-ENGINEERING
+#   Three of the fifty keys are marked `config_file: false` in
+#   lib/varschema.json: tpot_state_dir, tpot_log_dir and tpot_runtime_dir.
+#   They are flag-only by design, because the transcript is opened before any
+#   answer file is read. None of them is secret, so all three ARE in the
+#   public document -- and lib/config.py refuses an answer file that carries
+#   any of them. Measured: handing public.json back verbatim exits 10 with
+#   three errors, one per key, before a single value is merged. A verbatim
+#   copy would have replaced the old failure with a new one.
+#
+#   The three names are not written down here. They are read out of the schema
+#   itself, which is the file that decides them, so a fourth such key added
+#   later is dropped without anybody remembering this task exists.
+
+- name: Create the state directory
+  # lib/result.sh creates this too, and chmods it 0750. The mode is stated in
+  # both places on purpose: whichever of the two arrives first, the directory
+  # ends up the same, and neither has to assume the other ran.
+  #
+  # It is created HERE, before the unit is templated, because the answer file
+  # below lands in it and the unit's ConditionPathExists names that file.
+  ansible.builtin.file:
+    path: "{{ tpot_state_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Resolve the directory the post-boot answer file would live in
+  # realpath, not the raw value: the location rule is applied to the RESOLVED
+  # path by both enforcers, so a symlinked state directory that lands inside
+  # the installer tree has to be caught here in the same terms they use.
+  ansible.builtin.set_fact:
+    tpot_finalize_state_real: "{{ tpot_state_dir | ansible.builtin.realpath }}"
+
+- name: Decide whether the state directory is a legal place for an answer file
+  # The post-boot run's REPO_DIR is tpot_finalize_dest, so "inside the
+  # repository tree" means inside the permanent copy. Both shapes are ruled
+  # out, exactly as the copy guard above does it: equal paths is the case
+  # everybody thinks of, and nesting is the one that actually happens.
+  ansible.builtin.set_fact:
+    tpot_finalize_config_placeable: >-
+      {{ tpot_finalize_state_real != tpot_finalize_dest_real
+         and not tpot_finalize_state_real.startswith(tpot_finalize_dest_real ~ '/') }}
+
+- name: Look for the merged public document this run was built from
+  # tpot_runtime_dir is one of the eight keys with no schema default: it is
+  # supplied by install.sh and is simply absent when the play is run by hand.
+  # A guard, not a default -- there is no sensible run directory to invent.
+  ansible.builtin.stat:
+    path: "{{ tpot_runtime_dir }}/public.json"
+  register: tpot_finalize_public_stat
+  when:
+    - tpot_finalize_config_placeable | bool
+    - tpot_runtime_dir is defined
+    - tpot_runtime_dir | string | length > 0
+
+- name: Decide whether the post-boot answer file can be written
+  # One fact, computed once, read by every task below AND by the unit
+  # template. The unit and the file it names can therefore not disagree: if
+  # this is false the template emits neither the --config flag nor the
+  # ConditionPathExists that guards it.
+  ansible.builtin.set_fact:
+    tpot_finalize_verify_config_ok: >-
+      {{ (tpot_finalize_config_placeable | bool)
+         and (tpot_finalize_public_stat.stat.exists | default(false) | bool) }}
+
+- name: Record that the post-boot answer file cannot be placed
+  # Said out loud and carried into result.json rather than left in the
+  # transcript, because the consequence is silent: the unit is armed, it runs,
+  # and it verifies the wrong box. A reader of result.json needs to be told
+  # that before they trust what post-boot verification said.
+  ansible.builtin.set_fact:
+    tpot_run_warnings: "{{ tpot_run_warnings + ['the post-boot verification unit was armed WITHOUT
+                           the configuration this install used: the state directory
+                           ' ~ tpot_finalize_state_real ~ ' resolves inside the permanent installer
+                           tree ' ~ tpot_finalize_dest_real ~ ', and this installer refuses an answer
+                           file inside its own tree. The unit will re-derive every input from the
+                           schema defaults, so on a non-default install it verifies the wrong
+                           account, ports and edition. Re-run with --state-dir pointing somewhere
+                           outside ' ~ tpot_finalize_dest_real ~ '.'] }}"
+  when:
+    - not (tpot_finalize_config_placeable | bool)
+
+- name: Record that the post-boot verification will fall back to the defaults
+  ansible.builtin.set_fact:
+    tpot_run_warnings: "{{ tpot_run_warnings + ['the post-boot verification unit was armed WITHOUT
+                           the configuration this install used: the merged public document
+                           (' ~ (tpot_runtime_dir | default('no run directory', true)) ~ '/public.json)
+                           could not be read, which normally means this play was not started by
+                           install.sh. The unit will re-derive every input from the schema defaults,
+                           so on a non-default install it verifies the wrong account, ports and
+                           edition.'] }}"
+  when:
+    - tpot_finalize_config_placeable | bool
+    - not (tpot_finalize_verify_config_ok | bool)
+
+- name: Read the merged public document
+  # slurp: a read, works under --check, needs no changed_when. The file is
+  # mode 0600 in a 0700 directory on tmpfs and this play is root, which is the
+  # only reason it can be read at all.
+  ansible.builtin.slurp:
+    src: "{{ tpot_runtime_dir }}/public.json"
+  register: tpot_finalize_public_raw
+  when:
+    - tpot_finalize_verify_config_ok | bool
+
+- name: Read the variable schema this installer merges against
+  # From the SOURCE tree, which is the tree this run is executing from and the
+  # tree the permanent copy was made from a moment ago. The two hold the same
+  # bytes; reading the source means this task does not depend on the copy
+  # having been wanted.
+  ansible.builtin.slurp:
+    src: "{{ tpot_finalize_source }}/lib/varschema.json"
+  register: tpot_finalize_schema_raw
+  when:
+    - tpot_finalize_verify_config_ok | bool
+
+- name: Take the key list out of the schema
+  # ['keys'] and not .keys, and it is not a style choice. Jinja resolves a
+  # dotted name by trying the ATTRIBUTE first and the item second, and every
+  # Python dict has a method called `keys` -- so the dotted spelling would
+  # quietly hand the next filter a bound method instead of the schema's key
+  # list, and the error would name a filter rather than this line.
+  ansible.builtin.set_fact:
+    tpot_finalize_schema_keys: >-
+      {{ (tpot_finalize_schema_raw.content | b64decode | from_json)['keys'] }}
+  when:
+    - tpot_finalize_verify_config_ok | bool
+
+- name: Derive the flag-only keys and the secret keys from the schema
+  # Both lists are DERIVED rather than written down, and that is the whole
+  # design of this section: lib/varschema.json decides which keys may not
+  # appear in an answer file and which keys are secret, so a key added there
+  # is handled here without anybody editing this role.
+  #
+  # `rejectattr('config_file')` keeps the entries whose flag is falsy, which
+  # is the flag-only set. The `defined` test in front of it is defensive
+  # rather than load-bearing today: all 50 entries state both flags
+  # explicitly, and lib/config.py's own reader defaults a missing
+  # `config_file` to true, so an entry that omitted it must be treated as
+  # allowed here too rather than blowing up on an undefined attribute.
+  ansible.builtin.set_fact:
+    tpot_finalize_flag_only_keys: >-
+      {{ tpot_finalize_schema_keys | selectattr('config_file', 'defined')
+         | rejectattr('config_file') | map(attribute='name') | list }}
+    tpot_finalize_secret_keys: >-
+      {{ tpot_finalize_schema_keys | selectattr('secret', 'defined')
+         | selectattr('secret') | map(attribute='name') | list }}
+  when:
+    - tpot_finalize_verify_config_ok | bool
+
+- name: Build the answer file the post-boot verification will read
+  ansible.builtin.set_fact:
+    tpot_finalize_verify_config: >-
+      {{ (tpot_finalize_public_raw.content | b64decode | from_json)
+         | dict2items | rejectattr('key', 'in', tpot_finalize_flag_only_keys)
+         | items2dict }}
+  when:
+    - tpot_finalize_verify_config_ok | bool
+
+# ---------------------------------------------------------------------------
+# The second credential tripwire, and it guards a different file from the
+# first one.
+#
+# The scan further up looks at the installer TREE. This pair looks at the
+# document about to be written into the state directory, which is permanent,
+# root-owned and read back by a systemd unit on every boot until it disarms.
+#
+# Nothing is SUPPOSED to put a credential in it: it is built from the public
+# document, and lib/config.py builds that by removing every secret-typed key.
+# That is exactly the reason to check. The check is in two halves because they
+# fail differently:
+#
+#   * BY NAME. If a secret-typed key appears at all, the public document was
+#     not what this role believes it is. The list of names comes from the
+#     schema, so this half cannot go stale.
+#   * BY VALUE. A credential could reach the document under an innocent key --
+#     a web user named after the password, an endpoint URL with a token in the
+#     query string. This half searches for the literal values this run holds.
+#
+# The value half honours the same 8-character floor as the tree scan, and for
+# the same reason: a one-character password would match `"tpot_install_type":
+# "h"` by coincidence and would stop a perfectly good install.
+#
+# no_log on the task that touches the values; the assert then speaks only
+# about a boolean, so a failure names the problem without printing the cause.
+# ---------------------------------------------------------------------------
+- name: Refuse a post-boot answer file that names a secret-typed key
+  ansible.builtin.assert:
+    that:
+      - tpot_finalize_verify_config.keys() | list | intersect(tpot_finalize_secret_keys) | length == 0
+    fail_msg: >-
+      The post-boot answer file would have carried a secret-typed key
+      ({{ tpot_finalize_verify_config.keys() | list | intersect(tpot_finalize_secret_keys) | join(', ') }}).
+      It is built from the merged PUBLIC document, from which lib/config.py
+      removes every such key, so this is a defect in this installer rather
+      than a configuration error. Nothing has been written to
+      {{ tpot_finalize_verify_config_path }}. Please report it -- see
+      SECURITY.md.
+    success_msg: the post-boot answer file names no secret-typed key
+    quiet: true
+  when:
+    - tpot_finalize_verify_config_ok | bool
+
+- name: Check the post-boot answer file against every credential this run holds
+  # query() rather than the `vars` dictionary: the internal `vars` dict is
+  # deprecated in ansible-core and prints a deprecation warning on every use,
+  # and this project's transcripts are read after failures. The `*` unpacks
+  # the derived name list into the lookup's terms, so a secret added to the
+  # schema is searched for without this line changing. `default=''` covers the
+  # keys with no schema default -- tpot_os_user_password and
+  # ioc_auth_header_value are absent from most runs -- and an empty string
+  # cannot survive the length floor below.
+  ansible.builtin.set_fact:
+    tpot_finalize_config_is_clean: >-
+      {{ query('ansible.builtin.vars', *tpot_finalize_secret_keys, default='')
+         | select('string')
+         | select('in', tpot_finalize_verify_config | to_json)
+         | map('length') | select('ge', tpot_finalize_tripwire_min_len)
+         | list | length == 0 }}
+  no_log: true
+  when:
+    - tpot_finalize_verify_config_ok | bool
+
+- name: Report the post-boot answer file's credential check
+  # Deliberately not no_log, and deliberately says nothing but the verdict.
+  # The task above hides everything it touched, which is right and which also
+  # means a failure there would otherwise be undiagnosable.
+  ansible.builtin.debug:
+    msg: >-
+      credential scan over the post-boot answer file:
+      {{ 'clean' if tpot_finalize_config_is_clean | bool else 'MATCHED' }}
+      ({{ tpot_finalize_verify_config | length }} keys)
+  when:
+    - tpot_finalize_verify_config_ok | bool
+
+- name: Refuse to write a post-boot answer file that carries a credential
+  ansible.builtin.assert:
+    that:
+      - tpot_finalize_config_is_clean | bool
+    fail_msg: >-
+      The post-boot answer file would have contained a credential this run was
+      given. Nothing in this project is supposed to put one there -- the file
+      is built from the merged PUBLIC document -- so this is a defect in this
+      installer, not a configuration error. Nothing has been written to
+      {{ tpot_finalize_verify_config_path }}; T-Pot is installed and post-boot
+      verification has not been armed. Please report it -- see SECURITY.md --
+      and do not attach the transcript until you have read it.
+    success_msg: the post-boot answer file carries no supplied credential
+    quiet: true
+  when:
+    - tpot_finalize_verify_config_ok | bool
+
+- name: Write the answer file the post-boot verification will read
+  # to_nice_json rather than to_json: this file is read by a person deciding
+  # whether last night's verification was about the box they think it was, at
+  # least as often as it is read by lib/config.py.
+  #
+  # root:root 0600 -- see vars/main.yml for which of the two enforced rules
+  # that satisfies and which it merely anticipates. The mode is stated rather
+  # than inherited from umask, which is what ansible-lint's
+  # risky-file-permissions rule is enabled for.
+  ansible.builtin.copy:
+    content: "{{ tpot_finalize_verify_config | to_nice_json }}\n"
+    dest: "{{ tpot_finalize_verify_config_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - tpot_finalize_verify_config_ok | bool
+
+
+# ---------------------------------------------------------------------------
+# The one input an answer file CANNOT carry, and why it goes on the unit's
+# command line instead.
+#
+# Everything above persists the configuration so the post-boot run reads it
+# back. That works for 47 of the 50 keys and fails for one of them, because of
+# WHEN preflight runs rather than what it reads:
+#
+#   * lib/preflight.sh stage A is step 3 of install.sh and the merge is step
+#     4, so stage A exists before any answer file has been parsed. Its own
+#     comment says so, and its override reader (_tpot_pf_early_flag) looks at
+#     the command line and the environment and at nothing else.
+#   * The `os` check is a stage A check, and stage A GATES under --verify-only
+#     -- install.sh exempts only stage B there, because an installed T-Pot is
+#     supposed to look wrong to the port and exposure checks.
+#
+#   So a box installed with --force-unsupported-os gets a post-boot unit that
+#   fails the support-matrix check on every boot, exits 11 before it looks at
+#   anything, and never removes the marker: the same never-disarms failure the
+#   section above exists to remove, reached by a route an answer file cannot
+#   close. Passing the flag is the only channel stage A can hear.
+#
+# ONLY THIS ONE FLAG, AND THAT IS NOT AN OVERSIGHT. --force-low-resources
+# governs the memory, cpu and disk checks, which are stage B; stage B does not
+# gate under --verify-only, so carrying it would change nothing and would
+# assert a force the verification did not need. --force-reinstall is an
+# instruction to re-run upstream's installer and has no meaning in a play that
+# only asserts.
+#
+# It re-states what the install was told, never more: the flag is emitted only
+# when this run was given it, and result.json already records it under
+# `forced` either way, so the unit is not quietly widening what was allowed.
+- name: Work out which force flags the post-boot run cannot be told any other way
+  ansible.builtin.set_fact:
+    tpot_finalize_verify_force_flags: >-
+      {{ ' --force-unsupported-os' if (tpot_force_unsupported_os | default(false) | bool) else '' }}
+
+# ===========================================================================
+# 4. THE POST-BOOT UNIT
+# ===========================================================================
+
+- name: Install the post-boot verification unit
+  # The template carries its own explanation, and it ships to the box: the
+  # person who finds this unit at three in the morning is not holding this
+  # repository. Read it there for the disarm mechanism, for why upstream's
+  # nightly reboot makes the disarm mandatory rather than tidy, and for the
+  # two shapes ExecStart can take.
+  #
+  # It is templated AFTER section 3 because it reads
+  # tpot_finalize_verify_config_ok: the unit names the answer file only when
+  # the answer file was actually written.
+  ansible.builtin.template:
+    src: tpot-automation-verify.service.j2
+    dest: "{{ tpot_finalize_unit_path }}"
+    owner: root
+    group: root
+    # 0644: systemd reads it as root, and a unit file is not a secret. It
+    # must not be writable by anyone else -- it names a command root runs at
+    # every boot.
+    mode: "0644"
+
+
+# ===========================================================================
+# 5. THE MARKER, AND ENABLING THE UNIT
+# ===========================================================================
+
+- name: Arm the post-boot verification
+  # The file's EXISTENCE is the whole signal -- install.sh tests for it and
+  # reports it as reboot.post_boot_verify_armed, and the unit's
+  # ConditionPathExists gates on it. It has no content, and content would only
+  # invite somebody to parse it.
+  #
+  # modification_time and access_time are preserved so that a re-run reports
+  # `ok` rather than `changed`. A `touch` that always claims a change makes
+  # every re-run look like it did something, which is exactly the noise that
+  # stops people reading transcripts.
+  ansible.builtin.file:
+    path: "{{ tpot_finalize_marker_path }}"
+    state: touch
+    owner: root
+    group: root
+    mode: "0600"
+    modification_time: preserve
+    access_time: preserve
+
+- name: Enable the post-boot verification unit for the next boot
+  # ansible.builtin.systemd, not ansible.builtin.systemd_service: the second
+  # name only exists from ansible-core 2.16, and tpot_ansible_core_spec
+  # accepts from 2.15. The old name is kept as an alias in every later
+  # version, so this is the spelling that works across the whole supported
+  # range.
+  #
+  # NO `state:` KEY, AND THAT IS THE POINT. This enables the unit and does
+  # not start it. Starting it now would run verification against a box that
+  # has not rebooted, and "installed but not yet rebooted" is precisely the
+  # state this project refuses to call verified -- it is what exit 20 means.
+  # The unit runs once, on the next boot, and disarms itself when it passes.
+  ansible.builtin.systemd:
+    name: "{{ tpot_finalize_unit_name }}"
+    enabled: true
+    daemon_reload: true
+
+- name: Report what the next boot will do
+  # Every line of this folded scalar sits at the same indentation on purpose.
+  # A line indented FURTHER than the first is "more indented" in YAML's folding
+  # rules and keeps its newline, which puts a line break and a run of spaces
+  # into the middle of a sentence in the transcript.
+  ansible.builtin.debug:
+    msg: >-
+      {{ tpot_finalize_unit_name }} is enabled and armed
+      ({{ tpot_finalize_marker_path }} exists). On the next boot it runs
+      {{ tpot_finalize_dest }}/install.sh --verify-only --json
+      {{ '--config ' ~ tpot_finalize_verify_config_path
+      if tpot_finalize_verify_config_ok | bool else '(with NO answer file)' }}
+      -- so it verifies against
+      {{ 'the configuration THIS install used'
+      if tpot_finalize_verify_config_ok | bool
+      else 'the SCHEMA DEFAULTS, which is the wrong box on any install that
+      changed one; see the warning above' }}.
+      If that passes it removes the marker, so it never fires again. Nothing
+      has been started and nothing has been rebooted by this play.

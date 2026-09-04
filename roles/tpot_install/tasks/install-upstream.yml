@@ -1,0 +1,367 @@
+---
+# roles/tpot_install/tasks/install-upstream.yml -- run somebody else's
+# installer, for up to ninety minutes, with passwordless sudo.
+#
+# STAGE: driver. Everything here maps to exit 15, and 15 means the box HAS
+# been changed by upstream. That is the difference between this file and the
+# one before it, and it is why every refusal that can be made has already been
+# made by the time this file is reached.
+#
+# THE ONE TASK IN THIS TREE THAT IS NOT no_log, DELIBERATELY
+#   The convention everywhere else is that a task touching a credential is
+#   no_log and is followed by one that prints its return code. This task is
+#   neither, and that is the point: NO CREDENTIAL IS PASSED TO UPSTREAM AT
+#   ALL. Upstream is driven as the sensor type, whose code path never asks for
+#   one (install.sh:254-259, 646-714). Marking this no_log would protect
+#   nothing and would hide a ninety-minute transcript that is the only
+#   evidence a failed install leaves behind.
+#
+# UPSTREAM EXITS 0 WHEN IT HAS FAILED
+#   It has no `set -e`, and its last statement is an echo (install.sh:730-732).
+#   A failed image pull, a failed `netstat`, a container that never starts --
+#   all of them end at that echo and all of them exit 0. So a NON-zero return
+#   code is fatal here, and a zero one is recorded and believed about nothing.
+#   Success is established by the verification role counting containers and
+#   listeners, and by nothing else.
+#
+# ITS OWN LOG IS COLLECTED IN always:, AND IT HAS TO BE
+#   Upstream deletes the previous install_tpot.log at the start of each run
+#   (install.sh:551). So the log of a failed install survives only until
+#   somebody re-runs to see what happened -- which is the first thing anybody
+#   does. Copying it out is not tidiness.
+#
+# NOTHING HERE HAS EVER RUN. Upstream's installer has never been executed by
+# this project, on any machine.
+
+# ---------------------------------------------------------------------------
+# THE PRECONDITION UPSTREAM ITSELF ENFORCES, CHECKED FIRST SO THAT THE
+# REFUSAL NAMES IT.
+#
+# Upstream probes `sudo -n -k true` three times, the first before it installs
+# anything (install.sh:101-107, 368-371, 529-546), and under its unattended
+# flag a failure aborts the install outright. The -k is deliberate on
+# upstream's part: it ignores a cached sudo timestamp, so only a real NOPASSWD
+# rule satisfies it. A password-protected sudo therefore does not buy a
+# slower install here; it buys no install at all, failing at minute zero with
+# a message about sudoers that arrives in the middle of upstream's banner.
+# ---------------------------------------------------------------------------
+- name: Refuse to drive upstream without passwordless sudo for the T-Pot account
+  ansible.builtin.assert:
+    that:
+      - tpot_sudo_nopasswd | bool
+    fail_msg: >-
+      tpot_sudo_nopasswd is false, and upstream's unattended mode requires
+      passwordless sudo for {{ tpot_os_user }}. It probes it before it
+      installs anything and aborts when it fails, so this is not a slower
+      install -- it is no install. The key exists so that the grant is
+      visible and recorded in result.json, not so that it can be switched off.
+    success_msg: "passwordless sudo is declared for {{ tpot_os_user }}"
+    quiet: true
+
+# The declaration above says what was ASKED FOR. This asks the box. `sudo`
+# rather than a module because the question is exactly the one upstream will
+# ask, in exactly the form it will ask it, and any paraphrase of it is a
+# different question. -k for the same reason upstream uses it: this play has
+# been running as root and may well have refreshed a timestamp.
+- name: Ask the box the same sudo question upstream will ask
+  ansible.builtin.command:
+    argv:
+      - sudo
+      - -n
+      - -k
+      - "true"
+  become: true
+  become_user: "{{ tpot_os_user }}"
+  register: tpot_install_sudo_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Refuse to drive upstream when that sudo probe fails
+  ansible.builtin.assert:
+    that:
+      - tpot_install_sudo_probe.rc | default(1) == 0
+    fail_msg: >-
+      `sudo -n -k true` as {{ tpot_os_user }} exited
+      {{ tpot_install_sudo_probe.rc | default('with no status') }}, so
+      upstream will abort the moment it makes the same call. The grant is
+      created by the account role and lives in /etc/sudoers.d; something has
+      removed it, or a later rule overrides it. Nothing has been installed.
+    success_msg: "{{ tpot_os_user }} can sudo without a password"
+    quiet: true
+
+# ---------------------------------------------------------------------------
+# THE ARGUMENT VECTOR, CHECKED BEFORE IT IS USED.
+#
+# The flag list is assembled in vars/main.yml and is reported verbatim, so
+# lib/result.sh reads the install type and the payload ref back out of it
+# rather than out of a second field somebody has to remember to update. That
+# makes these assertions checks on the artefact as well as on the run.
+# ---------------------------------------------------------------------------
+- name: Refuse extra flags that duplicate the ones this project sets itself
+  ansible.builtin.assert:
+    that:
+      - (tpot_upstream_extra_flags | default([], true)
+         | select('in', tpot_install_reserved_flags) | list | length) == 0
+      - tpot_install_credential_flag_user not in (tpot_upstream_extra_flags | default([], true))
+      - tpot_install_credential_flag_pass not in (tpot_upstream_extra_flags | default([], true))
+    fail_msg: >-
+      tpot_upstream_extra_flags carries a flag this project sets itself. The
+      unattended flag, the install type, the branch and the repository are all
+      set from the configuration above, and a second copy is either ignored by
+      upstream or quietly replaces a value the product depends on. The two
+      credential flags are worse: upstream is driven as the one install type
+      that never asks for a credential, and adding either of them puts the
+      dashboard password into two process argument lists for the whole
+      install. See SECURITY.md.
+    success_msg: "the extra flags add nothing this project already sets"
+    quiet: true
+
+- name: Refuse an argument vector whose pinned ref is not a full sha
+  ansible.builtin.assert:
+    that:
+      - tpot_install_driver_argv | length > 4
+      - tpot_upstream_ref | default('') is match(tpot_install_ref_pattern)
+      - tpot_upstream_ref in tpot_install_driver_argv
+    fail_msg: >-
+      The argument vector built for upstream does not carry the pinned ref as
+      a full 40-character sha. An empty value degrades to upstream's default
+      branch in silence, and an abbreviated one makes every re-run exit 1.
+      This is a defect in this role, not a configuration error.
+    success_msg: "upstream will be run with the pinned ref as its branch"
+    quiet: true
+
+- name: Confirm the verified installer and the time budget are both in place
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ tpot_install_script }}"
+    - "{{ tpot_install_timeout_bin }}"
+  register: tpot_install_driver_stat
+  check_mode: false
+
+- name: Refuse to run an installer that is not there, or to run one without a time budget
+  ansible.builtin.assert:
+    that:
+      - (tpot_install_driver_stat.results | selectattr('stat.exists') | list | length) == 2
+      - (tpot_install_driver_stat.results | selectattr('stat.executable', 'defined')
+         | selectattr('stat.executable') | list | length) == 2
+    fail_msg: >-
+      One of {{ tpot_install_script }} and {{ tpot_install_timeout_bin }} is
+      missing or not executable. The first was fetched and verified a few
+      tasks ago, so its absence means something removed it since. The second
+      is coreutils, and without it there is no way to bound a run that
+      upstream will not bound itself -- which is the whole difference between
+      an unattended install and a machine that never comes back. Nothing has
+      been run.
+    success_msg: "the pinned installer and the time budget are both in place"
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Report the invocation before it starts
+  # The transcript of a ninety-minute task should begin by saying exactly what
+  # is about to run, as one line, so that a reader who scrolls to the top of a
+  # failure has the whole invocation without reconstructing it from variables.
+  ansible.builtin.debug:
+    msg: >-
+      running {{ tpot_install_driver_argv | join(' ') }}
+      as {{ tpot_os_user }} in {{ tpot_install_workdir }},
+      budget {{ tpot_driver_install_timeout }}s
+
+- name: Drive upstream and keep its evidence whatever happens
+  block:
+
+    # ----------------------------------------------------------------------
+    # THE DRIVER.
+    #
+    # THE PROGRAM IS NOT UPSTREAM'S SCRIPT. It is `timeout`, which wraps
+    # `env`, which finally execs upstream. Both wrappers are load-bearing and
+    # both are visible in the argv this task prints and records.
+    #
+    # `env` is there because the five variables install.sh and lib/deps.sh
+    # export for THIS play have to be REMOVED rather than blanked, and
+    # Ansible's environment keyword cannot remove anything -- measured
+    # 2026-09-04, a null value arrives in the child as the literal string
+    # "None". Two of the five matter enormously: ANSIBLE_CONFIG and
+    # ANSIBLE_LOG_PATH would be read by the NESTED ansible-playbook upstream
+    # runs, giving it this project's roles path, this project's collections
+    # path and this project's log file. Verified 2026-09-04 against a
+    # stand-in for upstream, with all five set in the parent: the child
+    # reports every one of them absent, PWD as the run directory, HOME as the
+    # T-Pot account's home and the locale as C.UTF-8.
+    #
+    # chdir is the clean directory, for the second reason in vars/main.yml:
+    # upstream downloads its playbook into the current directory, and it reads
+    # its own source ref and repository URL out of the git work tree holding
+    # install.sh whenever it is not told otherwise.
+    #
+    # The time budget is TOTAL wall clock, not an idle timeout -- worth saying
+    # because the variable's own documentation calls it seconds of silence,
+    # which describes a driver this project deleted. It is enforced by
+    # coreutils rather than by Ansible's async, for the measured reason in
+    # vars/main.yml.
+    #
+    # failed_when: false, because the return code is data here rather than a
+    # verdict: it is recorded in always: below and judged after.
+    # ----------------------------------------------------------------------
+    - name: Install T-Pot by running upstream's own installer, unattended
+      ansible.builtin.command:
+        argv: "{{ tpot_install_driver_argv }}"
+        chdir: "{{ tpot_install_workdir }}"
+      become: true
+      become_user: "{{ tpot_os_user }}"
+      environment: "{{ tpot_install_child_env }}"
+      register: tpot_install_driver
+      # It installs docker, clones a repository and pulls forty container
+      # images. There is no state in which this task has changed nothing.
+      changed_when: true
+      failed_when: false
+      when: not ansible_check_mode
+
+  always:
+
+    # The command module reports `delta` as H:MM:SS.ffffff. It is absent when
+    # the task never ran, and the guard below returns 0 for that rather than
+    # inventing a number.
+    #
+    # `is defined` rather than `| default(x, true)`: the boolean form of
+    # default() replaces every FALSY value, and both of the numbers this
+    # block records can legitimately be zero -- a return code of 0 is the
+    # successful one. Measured here: the default-with-true form turned a
+    # perfectly good rc 0 into -1 and reported a successful run as one that
+    # never returned a status.
+    - name: Measure how long upstream ran
+      ansible.builtin.set_fact:
+        tpot_install_duration_s: >-
+          {{ ((tpot_install_delta_parts[0] | int) * 3600
+              + (tpot_install_delta_parts[1] | int) * 60
+              + (tpot_install_delta_parts[2] | float | int))
+             if (tpot_install_delta_parts | length) == 3 else 0 }}
+      vars:
+        tpot_install_delta_parts: >-
+          {{ (tpot_install_driver.delta | string).split(':')
+             if tpot_install_driver.delta is defined else [] }}
+
+    # `upstream_install_type` is NOT sent: lib/result.sh derives it by reading
+    # the flags back the way upstream's own option parsing would, and a second
+    # copy of a derived fact is a second copy that can be wrong.
+    - name: Record the driver invocation
+      ansible.builtin.set_fact:
+        tpot_report_driver:
+          name: native
+          # -1 is not an exit status. It says upstream never returned one,
+          # which today means only that the task did not run at all.
+          rc: "{{ (tpot_install_driver.rc | int) if tpot_install_driver.rc is defined else -1 }}"
+          duration_s: "{{ tpot_install_duration_s | int }}"
+          flags: "{{ tpot_install_driver_flags }}"
+
+    - name: Say what upstream returned
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'checked only: upstream was not run' if ansible_check_mode
+             else ('upstream exited '
+                   ~ ((tpot_install_driver.rc | string) if tpot_install_driver.rc is defined
+                      else 'without a status')
+                   ~ ' after ' ~ (tpot_install_duration_s | int) ~ 's.'
+                   ~ ' A zero here is not evidence of success: upstream has no set -e'
+                   ~ ' and its last statement is an echo.') }}
+
+    - name: Look for the log upstream wrote about itself
+      ansible.builtin.stat:
+        path: "{{ tpot_install_upstream_log }}"
+      register: tpot_install_upstream_log_stat
+      check_mode: false
+
+    # 0600 in the installer's own 0750 log directory. It is upstream's Ansible
+    # log, so it holds host facts and package lists rather than credentials --
+    # but everything this run writes into that directory is written the same
+    # way, so that a future file which DOES hold one cannot be the first to
+    # have thought about it.
+    - name: Preserve upstream's own log before the next run deletes it
+      ansible.builtin.copy:
+        src: "{{ tpot_install_upstream_log }}"
+        dest: "{{ tpot_install_log_copy }}"
+        remote_src: true
+        owner: root
+        mode: "0600"
+      when: tpot_install_upstream_log_stat.stat.exists | default(false)
+      # always: must never replace a real diagnosis with a failure of its own.
+      failed_when: false
+      register: tpot_install_log_saved
+
+    - name: Say where upstream's log went
+      ansible.builtin.debug:
+        msg: >-
+          {{ ('upstream log copied to ' ~ tpot_install_log_copy)
+             if (tpot_install_upstream_log_stat.stat.exists | default(false))
+                and not (tpot_install_log_saved.failed | default(false))
+             else ('no ' ~ tpot_install_upstream_log ~ ' was found. Upstream deletes it and rewrites'
+                   ~ ' it on every run, so its absence means upstream stopped before it started its'
+                   ~ ' own playbook -- read this transcript instead.') }}
+
+# ---------------------------------------------------------------------------
+# The verdict, after the evidence has been collected. The time budget having
+# expired gets its own sentence, because the remedy is different: nothing is
+# wrong with the box, the install was simply still running.
+# ---------------------------------------------------------------------------
+- name: Refuse to continue when upstream never started
+  ansible.builtin.assert:
+    that:
+      - tpot_install_driver.rc is defined
+    fail_msg: >-
+      Upstream's installer produced no exit status at all, which means the
+      command never ran rather than that it failed: a missing working
+      directory, a become that was refused, or a program that could not be
+      executed. Ansible said "{{ tpot_install_driver.msg | default('nothing') }}".
+    success_msg: "upstream ran and returned an exit status"
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Refuse to continue when upstream ran out of time
+  ansible.builtin.assert:
+    that:
+      - (tpot_install_driver.rc | default(-1) | int) not in tpot_install_timeout_rcs
+    fail_msg: >-
+      Upstream's installer was still running after
+      {{ tpot_driver_install_timeout }} seconds and was stopped
+      ({{ tpot_install_driver.rc | default('no status') }}). Upstream's own
+      guidance for an install is thirty to ninety minutes and a slow mirror
+      can exceed that. Raise tpot_driver_install_timeout and run again: the
+      checkout it left behind is reused, so a second run is much shorter.
+      What it had written up to that point is in {{ tpot_install_log_copy }}.
+      The box has been changed and T-Pot is NOT installed.
+    success_msg: "upstream finished inside its time budget"
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Refuse to continue when upstream reported a failure
+  ansible.builtin.assert:
+    that:
+      - tpot_install_driver.rc | default(1) == 0
+    fail_msg: >-
+      Upstream's installer exited {{ tpot_install_driver.rc | default('unknown') }}.
+      It exits non-zero for a refused distribution, a port it needs that is
+      already bound, a sudo that asks for a password, and a failure of its own
+      playbook. Its own log is at {{ tpot_install_log_copy }} and the last
+      lines of this transcript carry its final message. The box has been
+      changed: assume packages were installed and services were reconfigured.
+    success_msg: "upstream exited 0 -- which is not the same as having succeeded"
+    quiet: true
+  when: not ansible_check_mode
+
+# Recorded only now, because it is a statement about what upstream was
+# actually given rather than about what this run intended. lib/result.sh
+# compares it with the ref above and reports `ref_consistent`; with no driver
+# run there is nothing to compare and null is the honest answer.
+- name: Record which ref upstream was handed as its payload
+  ansible.builtin.set_fact:
+    tpot_report_upstream: "{{ tpot_report_upstream | combine({'payload_ref': tpot_upstream_ref}) }}"
+  when: not ansible_check_mode
+
+- name: Record that a check run installed nothing
+  ansible.builtin.set_fact:
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings + ['this was a check run: upstream was never executed, so nothing '
+         ~ 'downstream of it -- the compose swap, the telemetry removal, the dashboard credential '
+         ~ 'and every verification -- describes a real box.'] }}
+  when: ansible_check_mode

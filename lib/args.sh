@@ -1100,15 +1100,27 @@ THE TWO-INVOCATION HAPPY PATH
   chmod 600 /root/tpot.yml
   install.sh --config /root/tpot.yml     # 20: installed, a reboot is required
   reboot
-  install.sh --verify-only               # 0: installed and verified
+  install.sh --verify-only --config /root/tpot.yml      # 0: verified
 
-  THE 20 AND THE 0 ABOVE ARE THE CONTRACT, NOT A TRANSCRIPT. This build has
-  never installed anything and cannot: site.yml and verify.yml are two of the
-  seventeen files preflight stage A requires and neither has been written. So
-  both of the runs that would touch this machine stop in stage A and exit 11
-  instead, having changed nothing. (--example-config is unaffected: it prints
-  and exits 0, well before preflight.) docs/exit-codes.md says what is
-  reachable today, and what is only specified.
+  THE ANSWER FILE IS REPEATED ON THE SECOND RUN ON PURPOSE. Verification
+  compares the box against the settings the install used -- the OS account,
+  the ports, the install type -- and a --verify-only run with no answer file
+  re-derives every one of them from the shipped defaults, so on a box that
+  changed any of them it checks a machine that does not exist. The post-boot
+  systemd unit has the same problem and solves it the same way: the install
+  writes the merged non-secret settings to verify-config.json under the state
+  directory (/var/lib/tpot-automation by default, or wherever --state-dir
+  points) and the unit passes --config to that file. Running it by hand with
+  either file is equivalent.
+
+  THE 20 AND THE 0 ABOVE ARE THE CONTRACT, NOT A TRANSCRIPT. No run of this
+  installer has ever finished on any machine. The play and its roles are in
+  the tree and a run reaches them once preflight passes, but finishing needs
+  root, a release the pinned upstream ref accepts, and a network -- and no
+  such run has been made or recorded. Every run so far has stopped in
+  preflight. (--example-config is unaffected: it prints and exits 0, well
+  before preflight.) docs/exit-codes.md says what is reachable today, and
+  what is only specified.
 
 AFTER IT FINISHES, READ THE NOTICE
   A finished box has moved administrative SSH to 64295 by default -- the

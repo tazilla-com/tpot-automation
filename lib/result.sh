@@ -40,7 +40,7 @@
 #   $RUNDIR/preflight.tsv        the checks and their verdicts  (lib/preflight.sh)
 #   $RUNDIR/deps.json            ansible-core and collections   (lib/deps.sh)
 #   $RUNDIR/ansible-report.json  upstream, invocation, accounts,
-#                                verification                   (site.yml/verify.yml)
+#                                verification                   (roles/report, in both plays)
 #   $RUNDIR/result-kv.tsv        what install.sh itself decided (res_set, here)
 #   lib/notice.sh                ports and notice lines         (notice_*)
 #
@@ -717,12 +717,20 @@ if report is not None:
 # value is replaced AND a warning says so, because a silent success would
 # hide a real defect behind a clean-looking document.
 #
-# It cannot fire in this build at all, and saying so is not a reason to leave
-# it wrong: the role that would populate `flags` has not been written, so
-# nothing reaches this pass today.  The code ships into that slice as it
-# stands here, and SECURITY.md tells a vulnerability reporter that
-# result.json holds no credential and invites them to attach it -- so the
-# masking has to be right before the thing that feeds it exists, not after.
+# `flags` has a writer now: roles/tpot_install builds the argv it hands
+# upstream out of one list, and roles/report sends that same list -- not a
+# second copy somebody has to keep in step with it.  What it holds is
+# `-s -t <type> -b <ref> -r <url>`, plus whatever tpot_upstream_extra_flags
+# adds, so the pass is fed and is still not expected to fire.  That role
+# refuses `-u` and `-p` as extra flags before it builds the vector, which is
+# the first line of defence and not the last: it compares whole elements, so
+# an ATTACHED value walks past it and arrives here.  This pass is what reads
+# it the way getopts would.  It has never fired, and nothing has exercised it
+# either: no run has reached the play at all.  The masking was written before
+# its feeder existed and that ordering was deliberate -- SECURITY.md tells a
+# vulnerability reporter that result.json holds no credential and invites them
+# to attach it, so this has to be right before the first run that could test
+# it, not after.
 #
 # It reads the list the way upstream's own getopts reads it, which is the
 # defect the first version had: it recognised only a value written as a

@@ -1,0 +1,105 @@
+---
+# roles/preflight/vars/main.yml -- the constants this role needs and no user
+# may set.
+#
+# WHY vars/ AND NOT defaults/
+#   tests/check-variable-surface.sh requires every tpot_*/ioc_* key defaulted
+#   in a role to be one of the fifty documented input keys, and correctly so:
+#   the example inventory is the supported input surface, and a knob nobody
+#   documented is a knob nobody can support. None of the values below is
+#   input. They are facts about upstream and about this box's filesystem
+#   layout, and vars/ is the precedence level an answer file cannot reach --
+#   which is exactly the property they want. The names are prefixed
+#   `preflight_` rather than `tpot_` so that no reader mistakes one for a
+#   setting and so that the gate's key expression never sees them.
+
+# ---------------------------------------------------------------------------
+# UPSTREAM'S OWN PORT CONFLICT SET. Not ours, not configurable.
+#
+# upstream install.sh line 274 sets myCONFLICT_PORTS="tcp/25 tcp/53 udp/53"
+# and its check_port_conflicts (line 149) aborts the install when any of them
+# is bound. Its own comment states that a listener on 127.0.0.1 counts,
+# because a loopback service conflicts with a container publishing the same
+# port on 0.0.0.0 -- which matters more than it sounds: a stock Debian netinst
+# ships exim4 listening on 127.0.0.1:25, so a box that satisfies every port in
+# tpot_required_ports can still be refused by upstream forty minutes into a
+# run, on a machine os_prep has already changed.
+#
+# Checking them here costs milliseconds while the box is still untouched.
+# ---------------------------------------------------------------------------
+preflight_upstream_conflict_tcp: [25, 53]
+preflight_upstream_conflict_udp: [53]
+
+# The one holder upstream exempts, quoted from its source rather than
+# paraphrased: `ss` truncates process names to fifteen characters, so the
+# systemd-resolved stub appears as `systemd-resolve` with no trailing d.
+# This role cannot apply that exemption -- see the ports section of
+# tasks/main.yml, which explains what it does instead.
+preflight_upstream_conflict_exempt_holder: "systemd-resolve"
+
+# ---------------------------------------------------------------------------
+# THE PORT PROBE
+#
+# 127.0.0.1 rather than 0.0.0.0: connecting to loopback reaches a listener
+# bound to 0.0.0.0 as well as one bound to loopback only, so this address sees
+# both of the shapes that matter. What it does NOT see is a listener bound
+# exclusively to one non-loopback address, and that blind spot is recorded in
+# every port record rather than left for somebody to discover.
+#
+# The timeout is short and deliberately so. `wait_for` with state=stopped
+# polls until the port closes or the timeout expires, so a busy port costs the
+# whole timeout; the default is 300 seconds, which would turn six busy ports
+# into half an hour of a preflight that is supposed to be measured in
+# milliseconds. Three seconds is long enough for a connect on loopback by a
+# very wide margin.
+# ---------------------------------------------------------------------------
+preflight_port_probe_host: "127.0.0.1"
+preflight_port_probe_timeout: 3
+
+# ---------------------------------------------------------------------------
+# PATHS THIS ROLE READS. Every one of them is read-only.
+# ---------------------------------------------------------------------------
+
+# The sysctl Elasticsearch requires, read through /proc rather than by running
+# sysctl(8): slurp is a read, works under --check, and needs no changed_when.
+preflight_max_map_count_path: /proc/sys/vm/max_map_count
+
+# The evidence that T-Pot is already on this box. Upstream's playbook copies
+# its unit here (installer/install/tpot.yml line 1197) and enables it, so the
+# file's existence is the cheapest honest signal that the ports this role is
+# about to probe are supposed to be busy.
+preflight_installed_unit: /etc/systemd/system/tpot.service
+
+# systemd, and the container prerequisite. /run/systemd/system exists only
+# when systemd is the running init -- the same test lib/preflight.sh makes --
+# and /sys/fs/cgroup is what a container runtime needs and what a box with a
+# non-systemd or heavily restricted kernel will not have.
+preflight_systemd_marker: /run/systemd/system
+preflight_cgroup_path: /sys/fs/cgroup
+
+# Virtualization types that mean "this is itself a container". T-Pot runs
+# dockerd, binds low ports and expects to own the host's sshd, none of which
+# survives nesting reliably. Recorded as a warning rather than a refusal,
+# because a container is exactly where a cheap distribution matrix check would
+# be run and this role must be able to say what it could and could not test
+# there.
+preflight_container_virt_types:
+  - container
+  - docker
+  - podman
+  - lxc
+  - openvz
+  - systemd_nspawn
+
+# The host's sshd configuration, and the drop-in directory current Debian and
+# Ubuntu Include from the top of it. Both are read for one question only: is
+# the end of the file inside a Match block. See tasks/main.yml.
+preflight_sshd_config: /etc/ssh/sshd_config
+preflight_sshd_config_dir: /etc/ssh/sshd_config.d
+
+# The line upstream appends, quoted exactly. It is a literal in upstream's
+# playbook (installer/install/tpot.yml line 638), NOT a template over
+# tpot_admin_ssh_port -- so this string is what will be appended whatever this
+# installer's own administrative port is set to, and the message that offers
+# the operator a fix has to name upstream's literal to be useful.
+preflight_sshd_upstream_line: "Port 64295"

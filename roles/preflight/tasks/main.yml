@@ -1,0 +1,1169 @@
+---
+# roles/preflight/tasks/main.yml -- the refusals, asserted where Ansible can
+# see them.
+#
+# ===========================================================================
+# WHY THIS ROLE EXISTS WHEN lib/preflight.sh ALREADY RAN
+# ===========================================================================
+#   install.sh performs two bash preflight stages before ansible-core is even
+#   on the box, and they are not duplicated here for the sake of it. This role
+#   asks the same questions again at a point where three things are true that
+#   were not true then:
+#
+#     * THE ANSWERS BECOME STRUCTURED OUTPUT. lib/preflight.sh writes TSV that
+#       lib/result.sh copies into result.json's `preflight` array. What this
+#       role appends to tpot_verify_results lands in the `verification` array
+#       instead, with the same five statuses and the same rule about what may
+#       be called a pass. A reader gets the same verdict from two independent
+#       measurements, and a disagreement between them is information.
+#     * `--check` REACHES HERE AND DOES NOT REACH THERE. A dry run performs
+#       step 9 and skips nothing before it, so this is the only preflight a
+#       `--check` run gets. Every task below is a read, so the dry run
+#       measures the same things the real one does.
+#     * TWO OF THE CHECKS HAVE NO BASH COUNTERPART AT ALL. The container
+#       capability question, and the sshd Match-block refusal further down,
+#       are new here.
+#
+# ===========================================================================
+# IT CREATES, WRITES AND INSTALLS NOTHING
+# ===========================================================================
+#   Every module used below is a read: set_fact, include_vars, stat, find,
+#   slurp, getent, wait_for and assert, plus one `df`. Nothing is created,
+#   nothing is written, no package is touched and no service is started. That
+#   is the property that makes it safe to run this role first, before the box
+#   has been established as one this installer may proceed on -- the installer
+#   this project replaces mutated its whole tree with `sed -i` and only then
+#   asked whether it was root.
+#
+# ===========================================================================
+# THE RECORD IS THE PRODUCT, NOT THE FAILURE
+# ===========================================================================
+#   Every check appends {id, phase, status, reason} to tpot_verify_results
+#   BEFORE anything asserts on it. Facts set in a block survive the rescue and
+#   the always, so a run that stops here still hands install.sh everything it
+#   measured before it stopped -- including the record of the check that
+#   stopped it.
+#
+#   A check that could not be exercised is `skipped` with a reason, and never
+#   `pass`. That distinction is the whole reason the accumulator is a list of
+#   records rather than a count: a number cannot tell "we looked and it was
+#   fine" from "we could not look". Failing closed on a hard check that could
+#   not be exercised is lib/preflight.sh's job, and it does it before this
+#   role runs; here the honest record is the contribution.
+#
+# ===========================================================================
+# NO CREDENTIAL PASSES THROUGH THIS ROLE
+# ===========================================================================
+#   Nothing below reads tpot_web_password, tpot_os_user_password or
+#   ioc_auth_header_value, and nothing below runs a command that could receive
+#   one. So no task here carries no_log, and that is a statement about what
+#   the role does rather than an omission: a no_log added defensively would
+#   hide a transcript this role exists to produce.
+#
+# ===========================================================================
+# NOTHING HERE HAS EVER RUN AGAINST AN INSTALLED T-POT
+# ===========================================================================
+#   No virtual machine, no root, no docker, no T-Pot -- not once, in this
+#   project. The role has been linted, and it has been executed against an
+#   unprivileged development box to prove that its expressions evaluate and
+#   its modules behave as written. Read every assertion below as what it is
+#   specified to do.
+# ===========================================================================
+
+- name: Record the stage, so a failure below can be given an exit code
+  # First task in the role, per the play contract. site.yml's rescue reads
+  # tpot_stage to write $RUNDIR/failure-class, and roles/report maps this
+  # string to 11 (EX_PREFLIGHT). A stage the map does not know becomes 40.
+  ansible.builtin.set_fact:
+    tpot_stage: preflight
+
+- name: Make sure the run's accumulators exist before anything appends to one
+  # site.yml and verify.yml initialise these as play vars and this role is
+  # normally reached through one of them. The defaulting is for the other
+  # case -- the role included directly, by hand or by a future test -- where
+  # the first append would otherwise fail on an undefined name and produce a
+  # traceback in place of a preflight. Setting a fact to the value it already
+  # has costs nothing and changes no precedence a later role depends on.
+  ansible.builtin.set_fact:
+    tpot_verify_results: "{{ tpot_verify_results | default([], true) }}"
+    tpot_run_warnings: "{{ tpot_run_warnings | default([], true) }}"
+
+# ===========================================================================
+# IS THIS A RUN THIS RELEASE CAN SERVE AT ALL
+#
+# The only check in this role that does not look at the box. It reads the
+# merged configuration and nothing else, and it is first because a request
+# this release cannot serve should be refused before anyone spends time
+# measuring whether a box could have served it.
+#
+# WHY THE REFUSAL IS ASKED HERE AND NOT ONLY IN roles/ioc_forward
+#   site.yml includes ioc_forward LAST, after finalize, so the assert that
+#   role exists for is reached only once os_prep, tpot_user, tpot_install,
+#   tpot_verify and finalize have all run. On a real box those five roles ARE
+#   the install: packages, an account, upstream's own installer, the sshd port
+#   move, the post-boot unit. So a run with ioc_forwarding_enabled true was
+#   refused at the far end of about ninety minutes, and the caller was handed
+#   exit 10 -- "your input was wrong, fix the request" -- about a machine that
+#   had just become a honeypot and needed a reboot. Both halves were true
+#   separately and the pair was useless: nothing in the number told the caller
+#   that the box had been changed, and the run had already done the expensive
+#   thing before asking the cheap question.
+#
+#   Measured, not reasoned: with the five mutating roles replaced by a
+#   stand-in that only records what they would have recorded, a run with the
+#   switch on reached that assert with tpot_reboot_required already true and
+#   wrote "10 ioc" into the run directory. That was executed here, on an
+#   unprivileged development box, against a stand-in -- no T-Pot was installed
+#   by it, and none ever has been by this project.
+#
+#   Asked here, the same question costs one comparison on a box nothing has
+#   touched, and the number install.sh hands its caller is 11 (EX_PREFLIGHT),
+#   whose documented meaning -- the box is not in a state this installer will
+#   act on, and NOTHING WAS CHANGED -- is true at this point in the run and is
+#   the half the caller cannot recover any other way.
+#
+# WHY THE COPY IN roles/ioc_forward STAYS, AND KEEPS A DIFFERENT NUMBER
+#   A gate that refuses in one place is a gate somebody can route around, and
+#   this one can be routed around by tag selection: site.yml applies the
+#   `preflight` tag to everything this role contains, so `--tags ioc_forward`
+#   runs the include and filters out every task inside it. Measured here: the
+#   "Preflight" include appeared in the transcript and not one preflight task
+#   below it did, while the refusal in roles/ioc_forward still fired. That
+#   role's assert is the last line of the defence and this one is the first;
+#   removing either leaves a path on which the switch is silently accepted.
+#
+#   The two report different codes on purpose, and it is not one condition
+#   with two answers. docs/exit-codes.md states as its first design property
+#   that every failure code names HOW FAR THE RUN GOT, and that is what the
+#   two numbers differ on: 11 says the run stopped before the first mutation,
+#   10 says it stopped in a stage that is reached only after the install. The
+#   alternative -- reporting 10 from here -- would mean setting tpot_stage to
+#   `ioc` inside this role and setting it back afterwards, which would make
+#   the run directory name a stage that never ran and would misreport any
+#   failure that landed between the two writes. Two honest numbers beat one
+#   number bought with a false stage.
+#
+# NOTHING IS FORWARDED, MEASURED OR CONNECTED TO HERE
+#   This asks whether a switch is on. It does not read ioc_endpoint_url, does
+#   not read the secret-typed ioc_auth_header_value, opens no socket and names
+#   no endpoint. Which of the reserved keys were supplied and ignored is
+#   roles/ioc_forward's warning to raise, on a run that is allowed to proceed,
+#   and duplicating it here would put the same sentence in the report twice.
+# ===========================================================================
+
+- name: Decide whether this run asked for IoC forwarding
+  # `default(false)` is not defensive clutter: the key has a schema default and
+  # a default in two roles, so in every path this project ships it is defined,
+  # but an undefined value must mean "nobody asked for forwarding" and let the
+  # run continue. Failing closed is the wrong direction for a switch whose
+  # absence IS the safe state, and a traceback here would cost the caller 40
+  # and the sentence that tells them what to do.
+  #
+  # `| bool` because the value may arrive as a string. lib/config.py types it
+  # from the schema, but `ansible-playbook -e ioc_forwarding_enabled=yes` run
+  # by hand passes the string, and `not "false"` is false -- the one shape in
+  # which this refusal would silently invert.
+  ansible.builtin.set_fact:
+    preflight_ioc_forwarding_requested: "{{ ioc_forwarding_enabled | default(false) | bool }}"
+
+- name: Record whether the run asked for a capability this release does not have
+  # Recorded BEFORE the assert below, like every other check in this role, so
+  # that the run that stops here still hands install.sh the record of what
+  # stopped it. Without this the report of a refused run carried no ioc_* entry
+  # at all: measured on the old arrangement, the document had seventeen
+  # verification records and not one of them mentioned the reservation.
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{
+           'id': 'ioc_forwarding',
+           'phase': 'preflight',
+           'status': ('fail' if (preflight_ioc_forwarding_requested | bool) else 'pass'),
+           'reason': ('ioc_forwarding_enabled is true and this release contains no forwarding code'
+                      if (preflight_ioc_forwarding_requested | bool)
+                      else none)
+         }] }}
+
+- name: Refuse a run that asks for IoC forwarding, before anything is changed
+  ansible.builtin.assert:
+    that:
+      - not (preflight_ioc_forwarding_requested | bool)
+    fail_msg: >-
+      ioc_forwarding_enabled is true, and IoC forwarding is not implemented in this release; see
+      docs/roadmap-ioc.md. There is no forwarding code anywhere in this installer -- no client, no
+      pipeline, no endpoint template -- so a run that continued would install a working T-Pot and
+      send nothing, for as long as nobody checked. Nothing on this box has been changed, and this
+      refusal is here rather than at the end of the run so that it stays true: the same assertion
+      exists in roles/ioc_forward, which runs after the install and therefore cannot say it.
+      The five ioc_ names are reserved so that this answer file stays valid when forwarding lands;
+      set ioc_forwarding_enabled to false to install now, and leave the other four values where
+      they are.
+    success_msg: >-
+      IoC forwarding is off, which is the only state this release implements
+    quiet: true
+
+# ===========================================================================
+# THE SUPPORT MATRIX
+#
+# support-matrix.yml is the one place either tier is written down, and this
+# role must not restate a single row of it. It is loaded, not parsed: the file
+# is YAML, include_vars is a real YAML reader, and tests/check-matrix-parse.sh
+# already proves that lib/matrix.sh, ansible-core's include_vars and PyYAML
+# produce byte-identical lists tier by tier. A second opinion here would be a
+# fourth reader, and an unchecked one.
+#
+# The path is derived from role_path rather than from playbook_dir so that the
+# role finds the matrix wherever it is included from. roles_path in
+# ansible.cfg resolves to the directory beside it, so two dirnames off
+# <repo>/roles/preflight is the repository root.
+# ===========================================================================
+
+- name: Load both support tiers from the repository's own matrix
+  ansible.builtin.include_vars:
+    file: "{{ role_path | dirname | dirname }}/support-matrix.yml"
+
+- name: Assert the support matrix produced two tiers
+  # An empty tier and a missing key are different things and support-matrix.yml
+  # says so itself: `[]` is a declaration that the tier is empty, an absent key
+  # is a malformed file. The supported tier SHIPS empty, because it is derived
+  # from the pinned upstream ref and ships unpinned -- so `[]` here is the
+  # normal state and must not be mistaken for a broken file. `is not string`
+  # is not decoration: Jinja's `sequence` test is true for strings too, and a
+  # tier accidentally written as a bare scalar would pass without it.
+  ansible.builtin.assert:
+    that:
+      - tpot_support_matrix_supported is defined
+      - tpot_support_matrix_supported is sequence
+      - tpot_support_matrix_supported is not string
+      - tpot_support_matrix_legacy is defined
+      - tpot_support_matrix_legacy is sequence
+      - tpot_support_matrix_legacy is not string
+    fail_msg: >-
+      support-matrix.yml did not yield the two tiers this installer reads.
+      Both tpot_support_matrix_supported and tpot_support_matrix_legacy must be
+      present and must be lists; an empty tier is written as an empty list on
+      its own line, which is a different thing from the key being absent. This
+      is a damaged installation rather than a problem with this box.
+    success_msg: >-
+      support-matrix.yml yielded both tiers
+      ({{ tpot_support_matrix_supported | length }} supported,
+      {{ tpot_support_matrix_legacy | length }} legacy)
+    quiet: true
+
+# ===========================================================================
+# WHICH TIER IS THIS BOX IN -- THREE OUTCOMES, NOT TWO
+#
+# Ansible's facts do not expose /etc/os-release's ID field, which is what the
+# matrix matches on, so it is reconstructed exactly the way support-matrix.yml
+# says to: distribution lower-cased with spaces removed. "Linux Mint" becomes
+# linuxmint, "Debian" becomes debian, "Ubuntu" becomes ubuntu. Check that
+# mapping when a distribution is added; it is a convention, not a guarantee.
+#
+# THE MATCH RULE, APPLIED IDENTICALLY TO BOTH TIERS. A row is "<id>:<version>"
+# and VERSION_ID matches it if it equals the row OR if its first dot-separated
+# component does. So instead of loosening the comparison, this builds the two
+# candidate rows the matrix names -- distribution_version first, then
+# distribution_major_version -- and asks whether either is an ELEMENT of the
+# tier. `intersect` is an exact element-by-element comparison, which is the
+# point: upstream's own install.sh does this job with a quoted `=~` against a
+# space-joined array and, measured under bash 5.2.37, that idiom accepts the
+# bare string "Linux" as a distribution name and accepts a value spanning two
+# array elements. lib/matrix.sh compares whole rows in a loop for the same
+# reason, and this must agree with it.
+#
+# Why two candidates rather than one: distribution_version can be MORE precise
+# than VERSION_ID. This role was executed on a Debian box reporting
+# distribution_version 13.6 where /etc/os-release carries VERSION_ID="13", so
+# the major-version candidate is what matches debian:13 there. It is not an
+# edge case; it is every Debian point release.
+#
+# ID_LIKE IS DELIBERATELY NOT CONSULTED, here or anywhere. Raspberry Pi OS
+# reports ID=raspbian with ID_LIKE=debian and would match a debian row through
+# it, while being a distribution nobody in this project has installed T-Pot on.
+# ===========================================================================
+
+- name: Identify this box the way the support matrix says to
+  ansible.builtin.set_fact:
+    preflight_os_id: "{{ ansible_facts.distribution | default('') | lower | replace(' ', '') }}"
+
+- name: Build the candidate matrix rows for this box
+  ansible.builtin.set_fact:
+    preflight_os_rows: >-
+      {{ [preflight_os_id ~ ':' ~ (ansible_facts.distribution_version | default('')),
+          preflight_os_id ~ ':' ~ (ansible_facts.distribution_major_version | default(''))]
+         | unique }}
+
+- name: Phrase the supported tier once, for the messages below
+  # The supported tier ships EMPTY, and an empty list rendered into a sentence
+  # reads as though something were missing. It is not: it is derived from the
+  # pinned upstream ref, the ref ships unpinned, and nothing may be claimed
+  # until it is. The phrase is built here rather than inline so that every
+  # message says it the same way -- and so that the messages stay flat prose,
+  # which a folded YAML scalar keeps on one line only while every line of it
+  # is indented alike.
+  ansible.builtin.set_fact:
+    preflight_supported_tier_text: >-
+      {{ tpot_support_matrix_supported | join(', ')
+         if tpot_support_matrix_supported | length > 0
+         else 'empty -- no upstream ref is pinned, so nothing may be claimed as supported' }}
+
+- name: Decide which tier this box is in
+  # Supported wins over legacy, because a row may legitimately be in both --
+  # debian:13 is what today's upstream accepts and also one of the nine the
+  # automation this project replaces ran on -- and a box that is tested must
+  # never be reported as merely documented.
+  ansible.builtin.set_fact:
+    preflight_os_tier: >-
+      {{ 'supported'
+         if (preflight_os_rows | intersect(tpot_support_matrix_supported) | length > 0)
+         else ('legacy'
+               if (preflight_os_rows | intersect(tpot_support_matrix_legacy) | length > 0)
+               else 'unsupported') }}
+
+- name: Record which tier matched
+  # SUPPORTED is a pass. LEGACY is a warn and not a pass: nothing has proven
+  # that row against the ref that is pinned, and upstream's own distribution
+  # gate may refuse the box outright before anything is installed. Waving it
+  # through silently is exactly how "works on nine distributions" outlived the
+  # evidence for it. UNSUPPORTED is a fail, or a warn when it has been forced.
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{
+           'id': 'os',
+           'phase': 'preflight',
+           'status': ('pass' if preflight_os_tier == 'supported'
+                      else 'warn' if preflight_os_tier == 'legacy'
+                      else 'warn' if (tpot_force_unsupported_os | bool)
+                      else 'fail'),
+           'reason': (preflight_os_id ~ ' ' ~ (ansible_facts.distribution_version | default('unknown'))
+                      ~ (' is in NEITHER tier'
+                         if preflight_os_tier == 'unsupported'
+                         else ' matched the ' ~ preflight_os_tier ~ ' tier')
+                      ~ ', on rows ' ~ (preflight_os_rows | join(', '))
+                      ~ '. Supported tier: ' ~ preflight_supported_tier_text
+                      ~ '. Legacy tier: ' ~ (tpot_support_matrix_legacy | join(', ')) ~ '.'
+                      ~ (' Proceeding because tpot_force_unsupported_os is set; that flag relaxes'
+                         ~ " this check only and cannot touch upstream's own distribution gate."
+                         if (preflight_os_tier == 'unsupported' and (tpot_force_unsupported_os | bool))
+                         else '')
+                      ~ (' The legacy tier is documented and reachable, never tested: it records'
+                         ~ ' where the automation this project replaces ran, and it is reached by'
+                         ~ ' pinning an older tpot_upstream_ref.'
+                         if preflight_os_tier == 'legacy' else ''))
+         }] }}
+
+- name: Refuse a distribution that is in neither tier
+  ansible.builtin.assert:
+    that:
+      - preflight_os_tier != 'unsupported'
+    fail_msg: >-
+      This box reports {{ preflight_os_id }}
+      {{ ansible_facts.distribution_version | default('with no version') }}, which produces the
+      matrix rows {{ preflight_os_rows | join(' and ') }}, and neither is in either tier of
+      support-matrix.yml. Supported tier: {{ preflight_supported_tier_text }}.
+      Legacy tier: {{ tpot_support_matrix_legacy | join(', ') }}.
+      Nothing on this box has been changed. Re-run with --force-unsupported-os to proceed
+      anyway and have the result recorded as forced -- but note that upstream's own
+      /etc/os-release gate runs before it reads any of its flags and has no override at all,
+      so forcing past this check on a release the pinned ref refuses buys a mutated box and an
+      upstream failure rather than an install. The way to reach an older release is the legacy
+      tier, which means pinning an older tpot_upstream_ref.
+    success_msg: "{{ preflight_os_id }} is in the {{ preflight_os_tier }} tier"
+    quiet: true
+  when: not (tpot_force_unsupported_os | bool)
+
+# ===========================================================================
+# MEMORY, CPU AND DISK
+#
+# Four measurements, one shape. They are collected into a list first and then
+# recorded and asserted by two loops, so that the thresholds, the wording and
+# the force-flag behaviour are written once instead of four times -- the bash
+# side does the same thing with _tpot_pf_record_threshold, and the two must
+# not drift in different directions.
+#
+# `measured: none` is how a measurement that could not be made is carried
+# through: it becomes a `skipped` record with a reason, and the assert passes
+# over it. That is not a hole. lib/preflight.sh treats all four of these as
+# HARD checks and fails the run closed on an inconclusive one before this role
+# is reached; re-failing here would give the operator a second, less
+# informative refusal for the same condition.
+# ===========================================================================
+
+- name: Find out where the T-Pot account's home directory is
+  # getent, not a guess at /home/<user>. The account's home is whatever
+  # /etc/passwd says it is, and on a re-run it exists and may be anywhere.
+  # fail_key: false makes a missing account a null value rather than a task
+  # failure, because on a fresh box the account NOT existing is the normal
+  # case: this role runs before tpot_user creates it.
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ tpot_os_user }}"
+    fail_key: false
+
+- name: Work out which directory's filesystem will hold the T-Pot data
+  # Field 4 of the getent record is the home directory: getent strips the
+  # account name, leaving password, uid, gid, gecos, directory, shell.
+  # When the account does not exist yet, /home/<user> is where tpot_user will
+  # put it, and its parent is the filesystem that matters -- so the answer is
+  # prospective, and the record says so rather than implying it was measured.
+  ansible.builtin.set_fact:
+    preflight_home_path: >-
+      {{ ansible_facts.getent_passwd[tpot_os_user][4]
+         if (ansible_facts.getent_passwd is defined
+             and ansible_facts.getent_passwd[tpot_os_user] is defined
+             and ansible_facts.getent_passwd[tpot_os_user] is not none
+             and (ansible_facts.getent_passwd[tpot_os_user] | length) > 4)
+         else '/home/' ~ tpot_os_user }}
+    preflight_home_exists: >-
+      {{ ansible_facts.getent_passwd is defined
+         and ansible_facts.getent_passwd[tpot_os_user] is defined
+         and ansible_facts.getent_passwd[tpot_os_user] is not none }}
+
+- name: Name the two directories whose free space decides this install
+  # Two filesystems, measured separately and on purpose: /home and
+  # /var/lib/docker are frequently different devices, and the one that fills
+  # is usually not the one somebody checked. T-Pot's default persistence cycle
+  # keeps thirty days of captured data and TPOT_PULL_POLICY defaults to
+  # `always`, so images are re-pulled at every start.
+  ansible.builtin.set_fact:
+    preflight_disk_targets:
+      - id: disk_home
+        path: "{{ preflight_home_path }}"
+        what: "free space on the filesystem that holds {{ tpot_os_user }}'s home"
+      - id: disk_docker
+        path: /var/lib/docker
+        what: "free space on the filesystem that holds /var/lib/docker"
+
+- name: Check whether those two directories exist yet
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  loop: "{{ preflight_disk_targets }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: preflight_disk_stat
+
+- name: Measure the free space behind each of them
+  # `df -P -k`, and a command rather than a module for a stated reason: no
+  # Ansible module reports free space for a PATH. ansible_facts.mounts reports
+  # it per filesystem, and matching a path to its filesystem from that is a
+  # longest-prefix problem that reads far worse in Jinja than df does in one
+  # line -- and would be a second implementation of something lib/preflight.sh
+  # already does with exactly this command, which is the drift this tree
+  # spends gates avoiding. -P forces the POSIX single-line format: without it
+  # a long device name wraps and field 4 becomes the wrong number. -k fixes
+  # the block size so the arithmetic below is not at the mercy of BLOCKSIZE.
+  #
+  # On a fresh box neither directory exists -- preflight runs before anything
+  # is created -- so the parent is measured instead, which is the same
+  # filesystem in every layout where the parent is not itself a mount point.
+  # If even the parent is missing, df exits non-zero, the measurement is null
+  # and the record says `skipped` rather than inventing a number.
+  #
+  # changed_when: false because a measurement changes nothing. check_mode:
+  # false for the same reason and one more: a --check run that silently
+  # skipped the disk measurement would report nothing about the condition
+  # that most often stops an install late.
+  ansible.builtin.command:
+    argv:
+      - df
+      - -P
+      - -k
+      - --
+      - "{{ item.stat.exists | ternary(item.item.path, item.item.path | dirname) }}"
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  loop: "{{ preflight_disk_stat.results }}"
+  loop_control:
+    label: "{{ item.item.id }}"
+  register: preflight_df
+
+- name: Collect the four resource measurements
+  ansible.builtin.set_fact:
+    preflight_resources:
+      - id: memory
+        what: total memory
+        unit: MiB
+        measured: "{{ ansible_facts.memtotal_mb | int if ansible_facts.memtotal_mb is defined else none }}"
+        min: "{{ tpot_min_memory_mb | int }}"
+        warn: "{{ tpot_warn_memory_mb | int }}"
+        note: ""
+        unmeasured: >-
+          ansible_facts.memtotal_mb was not gathered, so memory could not be compared with the
+          floor of {{ tpot_min_memory_mb }} MiB
+      - id: cpus
+        what: CPU count
+        unit: CPUs
+        measured: >-
+          {{ ansible_facts.processor_vcpus | int
+             if ansible_facts.processor_vcpus is defined
+             else (ansible_facts.processor_count | int
+                   if ansible_facts.processor_count is defined
+                   else none) }}
+        min: "{{ tpot_min_cpus | int }}"
+        warn: "{{ tpot_warn_cpus | int }}"
+        note: >-
+          . Upstream states no CPU figure anywhere and its installer contains no CPU check, so
+          this floor is this project's own and is set below both of the disputed inherited
+          numbers
+        unmeasured: >-
+          neither ansible_facts.processor_vcpus nor ansible_facts.processor_count was gathered,
+          so the CPU count could not be compared with the floor of {{ tpot_min_cpus }}
+      - id: disk_home
+        what: "{{ preflight_disk_targets[0].what }}"
+        unit: GiB
+        measured: >-
+          {{ ((preflight_df.results[0].stdout_lines[1].split()[3] | int) // 1048576)
+             if (preflight_df.results[0].rc | default(1)) == 0
+                and (preflight_df.results[0].stdout_lines | default([]) | length) > 1
+             else none }}
+        min: "{{ tpot_min_disk_gb | int }}"
+        warn: "{{ tpot_warn_disk_gb | int }}"
+        note: >-
+          {{ '. The account does not exist yet, so this is the filesystem that will hold its home'
+             if not (preflight_home_exists | bool) else '' }}
+        unmeasured: >-
+          df could not measure the filesystem behind {{ preflight_home_path }} or its parent, so
+          free space there could not be compared with the floor of {{ tpot_min_disk_gb }} GiB
+      - id: disk_docker
+        what: "{{ preflight_disk_targets[1].what }}"
+        unit: GiB
+        measured: >-
+          {{ ((preflight_df.results[1].stdout_lines[1].split()[3] | int) // 1048576)
+             if (preflight_df.results[1].rc | default(1)) == 0
+                and (preflight_df.results[1].stdout_lines | default([]) | length) > 1
+             else none }}
+        min: "{{ tpot_min_disk_gb | int }}"
+        warn: "{{ tpot_warn_disk_gb | int }}"
+        note: >-
+          {{ '. /var/lib/docker does not exist yet, so this is the filesystem that will hold it'
+             if not (preflight_disk_stat.results[1].stat.exists | default(false)) else '' }}
+        unmeasured: >-
+          df could not measure the filesystem behind /var/lib/docker or its parent, so free space
+          there could not be compared with the floor of {{ tpot_min_disk_gb }} GiB
+
+- name: Record every resource measurement, including the ones that could not be made
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{
+           'id': item.id,
+           'phase': 'preflight',
+           'status': ('skipped' if item.measured is none
+                      else ('warn' if (tpot_force_low_resources | bool) else 'fail')
+                      if (item.measured | int) < (item.min | int)
+                      else 'warn' if (item.measured | int) < (item.warn | int)
+                      else 'pass'),
+           'reason': (item.unmeasured | trim
+                      if item.measured is none
+                      else item.what ~ ' is ' ~ item.measured ~ ' ' ~ item.unit
+                           ~ '; the floor is ' ~ item.min ~ ' and ' ~ item.warn ~ ' is recommended'
+                           ~ (item.note | trim)
+                           ~ ((' -- BELOW THE FLOOR'
+                               ~ (', continuing only because tpot_force_low_resources is set'
+                                  if (tpot_force_low_resources | bool) else ''))
+                              if (item.measured | int) < (item.min | int)
+                              else (' -- below the recommendation'
+                                    if (item.measured | int) < (item.warn | int) else '')))
+         }] }}
+  loop: "{{ preflight_resources }}"
+  loop_control:
+    label: "{{ item.id }}"
+
+- name: Refuse a box that is below a hard resource floor
+  ansible.builtin.assert:
+    that:
+      - item.measured is none or (item.measured | int) >= (item.min | int)
+    fail_msg: >-
+      {{ item.what }} is {{ item.measured }} {{ item.unit }} and this installer requires at
+      least {{ item.min }} {{ item.unit }} ({{ item.warn }} {{ item.unit }} is the
+      recommendation). Nothing on this box has been changed. Re-run with
+      --force-low-resources to continue anyway; the result is recorded as forced, and a T-Pot
+      below the floor is expected to fill its disk or fail to start Elasticsearch rather than
+      to run slowly.
+    success_msg: >-
+      {{ item.id }}: {{ item.measured }} {{ item.unit }} is at or above the floor of
+      {{ item.min }}
+    quiet: true
+  loop: "{{ preflight_resources }}"
+  loop_control:
+    label: "{{ item.id }}"
+  when: not (tpot_force_low_resources | bool)
+
+# ===========================================================================
+# vm.max_map_count -- RECORDED, NEVER FAILED ON
+#
+# Elasticsearch will not start below it, and os_prep is what sets it. This
+# role reports the value the box has TODAY so that a run which later fails
+# inside Elasticsearch has the before value written down, and so that a reader
+# of result.json can tell a box that was already tuned from one this installer
+# tuned.
+#
+# It is worth knowing why os_prep setting it is load-bearing rather than
+# belt-and-braces: upstream writes the setting into /etc/sysctl.conf and never
+# applies it -- no sysctl -w, no reload -- and Debian 13's systemd-sysctl does
+# not read that file at all. So on a box where this value is low, upstream
+# alone does not fix it.
+#
+# Read through /proc with slurp rather than by running sysctl(8): it is a
+# read, it works under --check unmodified, and it needs no changed_when.
+# ===========================================================================
+
+- name: Read the current vm.max_map_count
+  ansible.builtin.slurp:
+    src: "{{ preflight_max_map_count_path }}"
+  register: preflight_max_map_count_raw
+  failed_when: false
+
+- name: Record vm.max_map_count without judging the box on it
+  ansible.builtin.set_fact:
+    preflight_max_map_count: >-
+      {{ (preflight_max_map_count_raw.content | b64decode | trim | int)
+         if (preflight_max_map_count_raw.content is defined
+             and (preflight_max_map_count_raw.content | b64decode | trim) is match('[0-9]+$'))
+         else none }}
+
+- name: Append the vm.max_map_count record
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{
+           'id': 'max_map_count',
+           'phase': 'preflight',
+           'status': ('skipped' if preflight_max_map_count is none
+                      else 'pass' if preflight_max_map_count >= (tpot_max_map_count | int)
+                      else 'warn'),
+           'reason': ('vm.max_map_count could not be read from '
+                      ~ preflight_max_map_count_path
+                      ~ '; os_prep will still set it to ' ~ tpot_max_map_count
+                      if preflight_max_map_count is none
+                      else 'vm.max_map_count is ' ~ preflight_max_map_count
+                           ~ (', at or above the ' ~ tpot_max_map_count ~ ' Elasticsearch requires'
+                              if preflight_max_map_count >= (tpot_max_map_count | int)
+                              else ', below the ' ~ tpot_max_map_count ~ ' Elasticsearch requires;'
+                                   ~ ' os_prep raises it in /etc/sysctl.d and reloads, which'
+                                   ~ ' upstream does not do'))
+         }] }}
+
+# ===========================================================================
+# IS T-POT ALREADY HERE
+#
+# Established BEFORE the ports are judged, because it changes what a busy port
+# means. On an installed box sshd has moved to the administrative port, 22 is
+# a honeypot container, and tcp/25 and tcp/53 are expected to be held by T-Pot
+# as well -- every one of which is a hard failure under the pre-install rules.
+# Without this, the documented recovery from exit 20 ("re-run it") would fail
+# at EX_PREFLIGHT on a box where nothing is wrong.
+#
+# The evidence is upstream's own unit file, which its playbook copies to
+# /etc/systemd/system/tpot.service and enables. That is a weaker signal than
+# the one lib/preflight.sh uses, which also reads the socket layout with `ss`;
+# this role's port probe cannot name a holder, so it cannot infer the layout
+# from the sockets and does not pretend to.
+# ===========================================================================
+
+- name: Look for the unit that says T-Pot is already installed
+  ansible.builtin.stat:
+    path: "{{ preflight_installed_unit }}"
+  register: preflight_installed_stat
+
+- name: Decide which port layout this box is in
+  ansible.builtin.set_fact:
+    preflight_installed: "{{ preflight_installed_stat.stat.exists | default(false) }}"
+    # Upstream's conflict set, phrased from the same list the probe loops
+    # over, so a message can never name a set the check did not make.
+    preflight_upstream_conflict_text: >-
+      {{ ((preflight_upstream_conflict_tcp | map('string') | map('regex_replace', '^', 'tcp/') | list)
+          + (preflight_upstream_conflict_udp | map('string') | map('regex_replace', '^', 'udp/') | list))
+         | join(', ') }}
+
+# ===========================================================================
+# THE PORTS -- THE UNION OF TWO DISJOINT SETS
+#
+# tpot_required_ports is ours: 22, 64294 (sensor to hive), 64295
+# (administrative ssh), 64297 (the dashboard) and 64298 (Elasticsearch).
+# Upstream's is tcp/25, tcp/53 and udp/53, from install.sh line 274, and the
+# two sets do not overlap anywhere. Upstream's check runs AFTER ours and after
+# os_prep has already changed the box, so a stock Debian netinst -- exim4 on
+# 127.0.0.1:25 -- would pass our list, be mutated, and be refused an hour
+# later by a check that costs milliseconds here. So the union is probed, in
+# two loops rather than one, because the two halves are not the same kind of
+# thing: ours is configurable and upstream's is not. Relaxing upstream's here
+# would not make the install work; it would only move the refusal to a point
+# where this installer had already changed the box.
+#
+# WHAT THIS PROBE CAN AND CANNOT SEE, STATED ONCE AND CARRIED INTO EVERY
+# RECORD:
+#
+#   * It connects to 127.0.0.1, which reaches a listener bound to 0.0.0.0 and
+#     one bound to loopback only. It does NOT see a listener bound
+#     exclusively to a single non-loopback address. lib/preflight.sh reads the
+#     socket table with `ss` and sees all of them; where the two disagree, it
+#     is right.
+#   * IT CANNOT NAME THE HOLDER. That is why port 22 is an exception here
+#     rather than a judgement: on a clean box 22 is held by the host's own
+#     sshd and must be, and this probe cannot tell that from a honeypot. The
+#     bash check can, and does.
+#   * IT CANNOT SEE UDP AT ALL. wait_for is TCP only, so upstream's udp/53 is
+#     recorded `skipped` with a reason and never asserted on.
+#
+# WHY `wait_for` AND NOT A FACT. A fact is gathered once, at the start of the
+# play, and describes the box as it was then. A port check has to be a live
+# probe or it is a memory of one.
+#
+# check_mode: false, because a probe changes nothing and because a --check run
+# that silently skipped the port check would say nothing about the condition
+# that most often refuses an install. wait_for declares no check-mode support,
+# so without this it would be skipped and every port would be recorded
+# `skipped` in a dry run.
+#
+# failed_when: false, and then the busy state is read back as `msg is
+# defined`. That is not idiomatic and it is not an accident: measured here on
+# ansible-core 2.21.2, `failed_when: false` rewrites the registered `failed`
+# to False, so `failed` cannot be read back at all, while a successful
+# wait_for returns no `msg` and a timed-out one returns "Timeout when waiting
+# for ... to stop." The alternative, ignore_errors, prints a red failure block
+# per busy port into a transcript this role exists to keep readable.
+# ===========================================================================
+
+- name: Probe the ports this installer requires to be free
+  ansible.builtin.wait_for:
+    host: "{{ preflight_port_probe_host }}"
+    port: "{{ item }}"
+    state: stopped
+    timeout: "{{ preflight_port_probe_timeout }}"
+  loop: "{{ tpot_required_ports | map('int') | list }}"
+  loop_control:
+    label: "tcp/{{ item }}"
+  failed_when: false
+  check_mode: false
+  register: preflight_ports_ours
+
+- name: Probe the TCP ports upstream refuses to install alongside
+  # difference(), so a port that appears in both sets is probed once. The
+  # upstream set is appended to ours and never substituted for it: a
+  # mistyped tpot_required_ports must not silently take upstream's three
+  # down with it.
+  ansible.builtin.wait_for:
+    host: "{{ preflight_port_probe_host }}"
+    port: "{{ item }}"
+    state: stopped
+    timeout: "{{ preflight_port_probe_timeout }}"
+  loop: "{{ preflight_upstream_conflict_tcp | difference(tpot_required_ports | map('int') | list) }}"
+  loop_control:
+    label: "tcp/{{ item }}"
+  failed_when: false
+  check_mode: false
+  register: preflight_ports_upstream
+
+- name: Record each of this installer's own ports
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{
+           'id': 'ports_tcp_' ~ item.item,
+           'phase': 'preflight',
+           'status': ('skipped' if (item.skipped | default(false))
+                      else 'pass' if (item.msg is not defined)
+                      else 'pass' if (item.item | int) == 22
+                      else 'warn' if (preflight_installed | bool)
+                      else 'fail'),
+           'reason': ('tcp/' ~ item.item ~ ' (required by this installer) was not probed: '
+                      ~ (item.skip_reason | default('the task was skipped'))
+                      if (item.skipped | default(false))
+                      else 'tcp/' ~ item.item ~ ' (required by this installer) is free on '
+                           ~ preflight_port_probe_host
+                      if (item.msg is not defined)
+                      else 'tcp/' ~ item.item ~ ' is in use. It is 22, which the host'
+                           ~ " machine's own sshd is expected to hold before an install; this"
+                           ~ ' probe cannot name the holder, and the ports check in'
+                           ~ ' lib/preflight.sh can and does'
+                      if (item.item | int) == 22
+                      else 'tcp/' ~ item.item ~ ' (required by this installer) is in use, and'
+                           ~ ' T-Pot is already installed here, so it is expected to be'
+                      if (preflight_installed | bool)
+                      else 'tcp/' ~ item.item ~ ' (required by this installer) is already in use')
+         }] }}
+  loop: "{{ preflight_ports_ours.results }}"
+  loop_control:
+    label: "tcp/{{ item.item }}"
+
+- name: Record each of upstream's own conflict ports
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{
+           'id': 'ports_tcp_' ~ item.item,
+           'phase': 'preflight',
+           'status': ('skipped' if (item.skipped | default(false))
+                      else 'pass' if (item.msg is not defined)
+                      else 'warn' if (preflight_installed | bool)
+                      else 'fail'),
+           'reason': ('tcp/' ~ item.item ~ " (upstream's own conflict set) was not probed: "
+                      ~ (item.skip_reason | default('the task was skipped'))
+                      if (item.skipped | default(false))
+                      else 'tcp/' ~ item.item ~ " (upstream's own conflict set) is free on "
+                           ~ preflight_port_probe_host
+                      if (item.msg is not defined)
+                      else 'tcp/' ~ item.item ~ ' is in use and T-Pot is already installed here,'
+                           ~ ' so it is expected to be'
+                      if (preflight_installed | bool)
+                      else 'tcp/' ~ item.item ~ " is in use. It is upstream's own conflict set,"
+                           ~ ' which this installer may not relax, and upstream counts a'
+                           ~ ' loopback-only listener')
+         }] }}
+  loop: "{{ preflight_ports_upstream.results }}"
+  loop_control:
+    label: "tcp/{{ item.item }}"
+
+- name: Record that upstream's UDP port could not be probed here
+  # wait_for speaks TCP only. udp/53 is therefore `skipped` with a reason and
+  # never a pass -- lib/preflight.sh covers it with a second `ss -u`
+  # invocation, and that is the check to read for it.
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{
+           'id': 'ports_udp_' ~ item,
+           'phase': 'preflight',
+           'status': 'skipped',
+           'reason': 'udp/' ~ item ~ " is in upstream's own conflict set and wait_for probes TCP"
+                     ~ ' only, so nothing here measured it. The ports check in lib/preflight.sh'
+                     ~ ' reads the UDP socket table directly and is the authority for this one.'
+                     ~ ' Upstream exempts a holder named ' ~ preflight_upstream_conflict_exempt_holder
+                     ~ ' and refuses any other'
+         }] }}
+  loop: "{{ preflight_upstream_conflict_udp }}"
+  loop_control:
+    label: "udp/{{ item }}"
+
+- name: Refuse to install onto a box whose required ports are already in use
+  ansible.builtin.assert:
+    that:
+      - item.msg is not defined
+    fail_msg: >-
+      tcp/{{ item.item }} is already in use on {{ preflight_port_probe_host }} and this
+      installer requires it to be free ({{ tpot_required_ports | join(', ') }} are the ports it
+      needs; 64294 carries sensor-to-hive data, {{ tpot_admin_ssh_port }} is where
+      administrative SSH moves to, and the remaining two are the dashboard and Elasticsearch).
+      Nothing on this box has been changed. Free the port, or set tpot_required_ports to a list
+      that does not include it if you know this box serves it deliberately. This probe cannot
+      name the process holding the port; `ss -lntp` will, and the preflight report that
+      install.sh already wrote names it too.
+    success_msg: "tcp/{{ item.item }} is free"
+    quiet: true
+  loop: "{{ preflight_ports_ours.results }}"
+  loop_control:
+    label: "tcp/{{ item.item }}"
+  when:
+    - not (preflight_installed | bool)
+    - (item.item | int) != 22
+    - not (item.skipped | default(false))
+
+- name: Refuse to install onto a box that upstream will refuse
+  ansible.builtin.assert:
+    that:
+      - item.msg is not defined
+    fail_msg: >-
+      tcp/{{ item.item }} is in use, and upstream's own installer aborts when it is -- its
+      conflict set is {{ preflight_upstream_conflict_text }}, it counts a listener on
+      127.0.0.1, and it has no override. This check is here so that refusal arrives now, on an unchanged box, rather
+      than forty minutes into a run that has already installed packages and rewritten this
+      host's sshd configuration. Nothing on this box has been changed. Free the port and re-run.
+      One holder is not a conflict: upstream skips a process named
+      {{ preflight_upstream_conflict_exempt_holder }} on 53, which is the systemd-resolved stub
+      as `ss` truncates it -- that stub listens on 127.0.0.53 and is invisible to this probe, so
+      seeing tcp/{{ item.item }} busy on {{ preflight_port_probe_host }} means something else
+      holds it.
+    success_msg: "tcp/{{ item.item }} is free"
+    quiet: true
+  loop: "{{ preflight_ports_upstream.results }}"
+  loop_control:
+    label: "tcp/{{ item.item }}"
+  when:
+    - not (preflight_installed | bool)
+    - not (item.skipped | default(false))
+
+# ===========================================================================
+# SYSTEMD, AND WHETHER THIS BOX CAN RUN CONTAINERS AT ALL
+#
+# T-Pot is a docker compose project fronted by a systemd unit that upstream's
+# playbook installs and enables. Two things have to be true of the host before
+# any of that means anything, and neither is expensive to establish:
+#
+#   * systemd is the running init. /run/systemd/system exists only when it is
+#     -- the same test lib/preflight.sh makes -- and ansible_facts.service_mgr
+#     is asked as well, so a box where the two disagree is visible rather than
+#     silently accepted on the weaker of them.
+#   * there is a cgroup filesystem. A container runtime needs one, and its
+#     absence is the shape of a kernel or a sandbox that cannot run dockerd.
+#
+# A box that is ITSELF a container is a warning and not a refusal. Nested
+# dockerd, low port binds and owning the host's sshd are all unreliable there,
+# so this is not a supported way to run T-Pot -- but running the cheap
+# distribution checks in a container is exactly the use this project has
+# anticipated for years, and a role that refused to run in one could never
+# report what it could and could not test there.
+# ===========================================================================
+
+- name: Look for the marks of a systemd host that can run containers
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ preflight_systemd_marker }}"
+    - "{{ preflight_cgroup_path }}"
+  register: preflight_platform_stat
+
+- name: Record what was found of the platform requirements
+  ansible.builtin.set_fact:
+    preflight_has_systemd: >-
+      {{ (preflight_platform_stat.results[0].stat.exists | default(false))
+         and (ansible_facts.service_mgr | default('') == 'systemd') }}
+    preflight_has_cgroup: "{{ preflight_platform_stat.results[1].stat.exists | default(false) }}"
+    preflight_in_container: >-
+      {{ (ansible_facts.virtualization_role | default('') == 'guest')
+         and ((ansible_facts.virtualization_type | default('')) in preflight_container_virt_types) }}
+
+- name: Append the systemd and container-capability records
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{
+           'id': 'systemd',
+           'phase': 'preflight',
+           'status': (preflight_has_systemd | bool) | ternary('pass', 'fail'),
+           'reason': (preflight_systemd_marker ~ ' exists and ansible_facts.service_mgr is systemd'
+                      if (preflight_has_systemd | bool)
+                      else preflight_systemd_marker ~ ' exists: '
+                           ~ (preflight_platform_stat.results[0].stat.exists | default(false)) | string
+                           ~ ', ansible_facts.service_mgr: '
+                           ~ (ansible_facts.service_mgr | default('not gathered')))
+         }, {
+           'id': 'docker_capable',
+           'phase': 'preflight',
+           'status': ('fail' if not (preflight_has_cgroup | bool)
+                      else 'warn' if (preflight_in_container | bool)
+                      else 'pass'),
+           'reason': (preflight_cgroup_path ~ ' does not exist, so this kernel has no cgroup'
+                      ~ ' filesystem for a container runtime to use'
+                      if not (preflight_has_cgroup | bool)
+                      else preflight_cgroup_path ~ ' exists, but this box reports itself as a '
+                           ~ (ansible_facts.virtualization_type | default('container'))
+                           ~ ' guest. T-Pot runs dockerd, binds low ports and takes over the'
+                           ~ " host's sshd; none of that is reliable nested, so this is not a"
+                           ~ ' supported place to install it'
+                      if (preflight_in_container | bool)
+                      else preflight_cgroup_path ~ ' exists and this box is not itself a'
+                           ~ ' container (virtualization_type: '
+                           ~ (ansible_facts.virtualization_type | default('none reported')) ~ ')')
+         }] }}
+
+- name: Refuse a host that cannot run what T-Pot is made of
+  ansible.builtin.assert:
+    that:
+      - preflight_has_systemd | bool
+      - preflight_has_cgroup | bool
+    fail_msg: >-
+      This host is missing something T-Pot requires of it.
+      systemd: {{ preflight_systemd_marker }} exists =
+      {{ preflight_platform_stat.results[0].stat.exists | default(false) }},
+      ansible_facts.service_mgr = {{ ansible_facts.service_mgr | default('not gathered') }} --
+      upstream installs and enables a systemd unit, so a host running some other init cannot
+      start T-Pot even if every container is pulled.
+      cgroups: {{ preflight_cgroup_path }} exists =
+      {{ preflight_platform_stat.results[1].stat.exists | default(false) }} -- a container
+      runtime has nowhere to put a container without it.
+      Nothing on this box has been changed.
+    success_msg: systemd is running and this kernel has a cgroup filesystem
+    quiet: true
+
+# ===========================================================================
+# THE sshd CONFIGURATION -- THE CHECK THAT PREVENTS A TOTAL LOCKOUT
+#
+# THE FAILURE IT PREVENTS, IN ORDER:
+#
+#   1. Upstream's playbook moves administrative SSH by appending a line to
+#      /etc/ssh/sshd_config with lineinfile and `insertafter: EOF`
+#      (installer/install/tpot.yml lines 635-640). It is a literal line,
+#      "Port 64295", not a template over anything this installer sets.
+#   2. `Port` is not a keyword sshd permits inside a Match block. If the tail
+#      of the effective configuration is inside one, the appended line lands
+#      inside it.
+#   3. `sshd -t` then exits 255, and Debian's ssh.service carries
+#      RestartPreventExitStatus=255.
+#   4. So sshd is not restarted -- and it is not listening on 64295 either,
+#      because the configuration that would have moved it is the one that will
+#      not parse. The box is then reachable on NEITHER port, with nothing in
+#      the installer's own output pointing at sshd.
+#
+#   This chain was measured for this project on 2026-09-04. It has never been
+#   observed on a machine this project installed T-Pot on, because there has
+#   not been one.
+#
+# WHY "CONTAINS A Match" IS THE SAME QUESTION AS "ENDS INSIDE ONE". A Match
+# block runs to the next Match or to the end of the file, and the next Match
+# opens a block of its own. There is no directive that closes one and returns
+# to the global scope -- `Match all` is still a Match block, and Port is still
+# refused inside it. So a single Match anywhere in the file means everything
+# after it, end of file included, is inside a block.
+#
+# WHY THE DROP-IN DIRECTORY IS READ TOO. Current Debian and Ubuntu ship
+# `Include /etc/ssh/sshd_config.d/*.conf` at the TOP of sshd_config, and an
+# included file that ends inside a Match block leaves the including file
+# inside it as well. So a Match hidden in a drop-in has the same effect as one
+# written in the main file, and checking only the main file would miss the
+# configuration a cloud image is most likely to ship.
+#
+# WHAT THIS CHECK DOES NOT DO: it does not parse sshd_config. It looks for
+# directive lines whose first word is `match` or `include` after trimming and
+# lower-casing, which is enough for the question being asked and is not enough
+# to be called a parser. The definitive test would be to append the line and
+# run `sshd -t`, and this role writes nothing, so it does not.
+# ===========================================================================
+
+- name: Read the host's sshd configuration
+  ansible.builtin.slurp:
+    src: "{{ preflight_sshd_config }}"
+  register: preflight_sshd_raw
+  failed_when: false
+
+- name: List the sshd drop-in files, if this host has any
+  ansible.builtin.find:
+    paths: "{{ preflight_sshd_config_dir }}"
+    patterns: "*.conf"
+    file_type: file
+  register: preflight_sshd_dropins
+  failed_when: false
+
+- name: Read each sshd drop-in
+  ansible.builtin.slurp:
+    src: "{{ item.path }}"
+  loop: "{{ preflight_sshd_dropins.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path }}"
+  failed_when: false
+  register: preflight_sshd_dropin_raw
+
+- name: Work out whether the end of sshd_config sits inside a Match block
+  ansible.builtin.set_fact:
+    preflight_sshd_readable: "{{ preflight_sshd_raw.content is defined }}"
+    preflight_sshd_main_match: >-
+      {{ (preflight_sshd_raw.content | default('') | b64decode).splitlines()
+         | map('trim') | map('lower') | select('match', 'match') | list | length > 0 }}
+    preflight_sshd_main_include: >-
+      {{ (preflight_sshd_raw.content | default('') | b64decode).splitlines()
+         | map('trim') | map('lower') | select('match', 'include') | list | length > 0 }}
+    preflight_sshd_dropin_match: >-
+      {{ (preflight_sshd_dropin_raw.results | default([])
+          | selectattr('content', 'defined')
+          | map(attribute='content') | map('b64decode') | join('\n')).splitlines()
+         | map('trim') | map('lower') | select('match', 'match') | list | length > 0 }}
+
+- name: Decide the verdict on the sshd configuration
+  ansible.builtin.set_fact:
+    preflight_sshd_tail_in_match: >-
+      {{ (preflight_sshd_readable | bool)
+         and ((preflight_sshd_main_match | bool)
+              or ((preflight_sshd_main_include | bool) and (preflight_sshd_dropin_match | bool))) }}
+
+- name: Phrase where the Match block came from
+  # Same reason as the supported-tier phrase above: a conditional written
+  # inline in a folded scalar puts real newlines into the middle of a
+  # sentence, because YAML keeps a more-indented line verbatim.
+  ansible.builtin.set_fact:
+    preflight_sshd_match_where: >-
+      {{ 'because it contains a Match directive of its own'
+         if (preflight_sshd_main_match | bool)
+         else 'because a file it includes from ' ~ preflight_sshd_config_dir
+              ~ ' contains one, and an included file that ends inside a Match block leaves the'
+              ~ ' including file inside it' }}
+
+- name: Record the sshd Match-block finding
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{
+           'id': 'sshd_match_block',
+           'phase': 'preflight',
+           'status': ('skipped' if not (preflight_sshd_readable | bool)
+                      else 'fail' if (preflight_sshd_tail_in_match | bool)
+                      else 'pass'),
+           'reason': (preflight_sshd_config ~ ' could not be read, so it is not known whether the'
+                      ~ ' line upstream appends would land inside a Match block'
+                      if not (preflight_sshd_readable | bool)
+                      else 'the effective sshd configuration ends inside a Match block ('
+                           ~ ('a Match directive in ' ~ preflight_sshd_config
+                              if (preflight_sshd_main_match | bool)
+                              else 'a Match directive in a file included from '
+                                   ~ preflight_sshd_config_dir)
+                           ~ '), so upstream appending "' ~ preflight_sshd_upstream_line
+                           ~ '" at end of file would place it inside that block, sshd -t would'
+                           ~ ' exit 255 and sshd would start on neither port'
+                      if (preflight_sshd_tail_in_match | bool)
+                      else preflight_sshd_config ~ ' ends in the global scope, so the line'
+                           ~ ' upstream appends at end of file will be a global Port directive')
+         }] }}
+
+- name: Refuse an sshd configuration that upstream's edit would break
+  ansible.builtin.assert:
+    that:
+      - not (preflight_sshd_tail_in_match | bool)
+    fail_msg: >-
+      {{ preflight_sshd_config }} ends inside a Match block {{ preflight_sshd_match_where }},
+      and installing T-Pot on this box would lock you out of it completely.
+      Upstream's playbook appends the literal line "{{ preflight_sshd_upstream_line }}" to this
+      file with insertafter EOF. Port is not permitted inside a Match block, so the appended
+      line would not parse, `sshd -t` would exit 255, and the ssh unit refuses to restart on
+      that status -- leaving sshd listening on neither 22 nor
+      {{ preflight_sshd_upstream_line | regex_replace('^Port ', '') }}.
+      Nothing on this box has been changed.
+      THE FIX, and it takes one line: add "{{ preflight_sshd_upstream_line }}" to
+      {{ preflight_sshd_config }} yourself, ABOVE its first Match block, and re-run.
+      Upstream's lineinfile adds the line only when the file does not already contain it, so a
+      copy in the global scope makes its append a no-op. Moving the Match blocks so that they
+      are not the last thing the parser sees works too. Note that the port in that line is
+      upstream's own literal and does not follow tpot_admin_ssh_port.
+    success_msg: the sshd configuration ends in the global scope
+    quiet: true
+
+# ===========================================================================
+# WHAT THE RUN SHOULD CARRY AWAY
+# ===========================================================================
+
+- name: Gather this stage's own records, so the summary counts only them
+  # verify.yml does not run this role and site.yml runs it first, so in
+  # practice these are the only records that exist yet. Filtering on the phase
+  # anyway costs nothing and keeps the count true if that ever stops being
+  # the case.
+  ansible.builtin.set_fact:
+    preflight_own_records: >-
+      {{ tpot_verify_results | selectattr('phase', 'equalto', 'preflight') | list }}
+
+- name: Carry this stage's warnings and gaps into the run's warning list
+  # Both `warn` and `skipped` become warnings, and deliberately. A warning is
+  # for something a reader should look at, and "this check could not be run"
+  # qualifies at least as much as "this value is below the recommendation" --
+  # a --check run, or a run in a container, is mostly made of the second kind
+  # and its report would otherwise read as though everything had been tested.
+  # lib/result.sh deduplicates the merged list.
+  ansible.builtin.set_fact:
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings
+         + ['preflight ' ~ item.id ~ ': ' ~ (item.reason | default('no reason was recorded'))] }}
+  loop: "{{ preflight_own_records | selectattr('status', 'in', ['warn', 'skipped']) | list }}"
+
+  loop_control:
+    label: "{{ item.id }}"
+
+- name: Say what preflight established
+  # Deliberately not silent on success. This is the last chance to see the
+  # shape of the box before anything changes it, and a transcript that says
+  # nothing here is the one people read at three in the morning.
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'preflight: ' ~ preflight_os_id ~ ' '
+         ~ (ansible_facts.distribution_version | default('unknown'))
+         ~ ' in the ' ~ preflight_os_tier ~ ' tier; '
+         ~ (preflight_own_records | selectattr('status', 'equalto', 'pass')
+            | list | length) ~ ' passed, '
+         ~ (preflight_own_records | selectattr('status', 'equalto', 'warn')
+            | list | length) ~ ' warned, '
+         ~ (preflight_own_records | selectattr('status', 'equalto', 'fail')
+            | list | length) ~ ' failed, '
+         ~ (preflight_own_records | selectattr('status', 'equalto', 'skipped')
+            | list | length) ~ ' could not be checked; T-Pot '
+         ~ ('is already installed here' if (preflight_installed | bool)
+            else 'is not installed here')
+         ~ '; nothing has been changed.' }}

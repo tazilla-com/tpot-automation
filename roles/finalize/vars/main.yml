@@ -1,0 +1,118 @@
+---
+# roles/finalize/vars/main.yml -- the internal constants of the finalize role.
+#
+# WHY vars/ AND NOT defaults/
+#   None of this is user input, and none of it may become user input by
+#   accident. tests/check-variable-surface.sh check 4 would reject these keys
+#   outright (they are not in lib/varschema.json), and the wrong way to
+#   satisfy that gate is to document a knob nobody should turn. vars/ is not
+#   scanned, and -- the property that actually matters here -- vars/ outranks
+#   an answer file, so no configuration can point the permanent installer
+#   copy or the systemd unit somewhere else.
+#
+#   roles/report/vars/main.yml carries its stage-to-exit-code map for exactly
+#   the same reasons; this file is the same idea applied to three paths.
+
+# Where the installer tree is copied so that it outlives the run directory.
+#
+# THE TWO-INVOCATION CONTRACT DEPENDS ON THIS PATH EXISTING FOREVER. An
+# unattended install ends at exit 20 -- installed, a reboot is required, not
+# yet verified -- and the second half of verification happens after that
+# reboot, from the systemd unit this role installs. The unit runs an
+# install.sh, and it cannot be the one the operator ran: that copy may have
+# been a tarball in /tmp, a clone in a home directory, or a checkout on a
+# removable disk, and none of those are still there on the next boot.
+#
+# /usr/local/lib is the FHS location for host-local, non-package software
+# that is not on PATH. It is not /opt (that is for self-contained third-party
+# products) and it is not /usr/local/sbin (this is a tree, not one binary).
+tpot_finalize_dest: /usr/local/lib/tpot-automation
+
+# The unit, and where it lands. /etc/systemd/system is the administrator's
+# own directory: it outranks anything a package ships, which is right for a
+# unit no package owns.
+tpot_finalize_unit_name: tpot-automation-verify.service
+tpot_finalize_unit_path: /etc/systemd/system/tpot-automation-verify.service
+
+# The marker whose EXISTENCE arms the post-boot verification, and whose
+# REMOVAL disarms it. install.sh reads it -- the presence of this file is
+# what it writes into result.json as reboot.post_boot_verify_armed -- and the
+# unit deletes it from ExecStartPost, which systemd runs only after a
+# successful ExecStart. See the template for why that is the whole design.
+tpot_finalize_marker_path: "{{ tpot_state_dir }}/verify-pending"
+
+# The answer file the post-boot verification unit reads, and the one path in
+# this role whose LOCATION is decided by rules the installer enforces rather
+# than by taste. Both were read out of the code and confirmed by running it:
+#
+#   LOCATION. lib/config.py's check_location_rule and lib/preflight.sh's
+#   answer_file check both refuse an answer file whose resolved path is inside
+#   the installer tree. For the post-boot run the installer tree is
+#   tpot_finalize_dest -- install.sh derives REPO_DIR from the resolved
+#   location of its own file -- so this file may NOT sit beside install.sh,
+#   however tidy that would be. It goes under tpot_state_dir, beside the
+#   result document and the arming marker, which is where this installer
+#   already keeps what it wants to survive the run.
+#
+#   PERMISSION. check_permission_rule demands root ownership and mode 0600 or
+#   0400 only of a file that supplies a SECRET-typed key, and this one never
+#   does: it is built from the merged PUBLIC document, which lib/config.py
+#   writes with every secret-typed key removed rather than blanked. It is
+#   written root-owned 0600 regardless. The rule that is not enforced today is
+#   the one a future secret would depend on, and a file describing how this
+#   box gets verified has no reason to be readable by anyone but root.
+#
+# .json and not .yml, deliberately. lib/config.py parses an answer file with
+# PyYAML when it is installed, and falls back to a JSON parser it selects by
+# the file's suffix when it is not. A .json file is read correctly either way;
+# a .yml file on a box without PyYAML is refused with a message about
+# installing python3-yaml, which is a strange thing for a unit to fail on at
+# three in the morning.
+tpot_finalize_verify_config_path: "{{ tpot_state_dir }}/verify-config.json"
+
+# The name of the environment variable that carries the system-wide default
+# locale in /etc/default/locale, written here rather than spelled out in the
+# task that uses it.
+#
+# THAT IS NOT STYLE, AND IT IS WORTH THE SENTENCE. tests/check-locale.sh
+# greps every file in this tree for a locale assignment and fails when the
+# value is empty, because an empty locale is what makes ansible-core refuse
+# to start ("Ansible requires the locale encoding to be UTF-8; Detected
+# None"). A templated assignment looks exactly like an empty one to that
+# grep: the value begins with a brace, the character class stops, and the
+# gate sees an assignment to nothing. The gate is right to hunt that shape
+# and its exemption marker is explicitly not for lines that run during an
+# install -- so the fix is to write the line so the rule does not fire,
+# rather than to silence a rule that is doing its job. The task below builds
+# `<name>=<value>` from this key and the operator's locale, which is the same
+# argument update-locale would have received either way.
+tpot_finalize_locale_env_name: LANG
+
+# What is NOT copied into the permanent tree, as tar sees the member names.
+#
+#   ./.git               history, and the private working repository's
+#                        remotes. The permanent copy is a runtime artefact,
+#                        not a checkout; nothing in it needs to know where it
+#                        came from, and a bare `git -C` in that directory
+#                        should find nothing to talk to.
+#   ./inventories/local  regenerated by install.sh on every run, including by
+#                        the post-boot run itself. Copying one run's
+#                        generated inventory into the tree that generates the
+#                        next one is how a stale artefact starts looking
+#                        authoritative.
+#
+# Everything else goes, and that is deliberate rather than lazy: preflight
+# stage A checks the tree it is about to execute against a 17-file manifest
+# and refuses a partial one, and inventories/example is not documentation at
+# run time -- lib/args.sh parses it for the known-key and secret-key lists on
+# every invocation. A "minimal" copy is a copy that cannot run.
+tpot_finalize_exclusions:
+  - ./.git
+  - ./inventories/local
+
+# The floor below which the credential tripwire does not search. It is
+# lib/log.sh's _TPOT_TRIPWIRE_MIN_LEN, restated here because the two scans
+# want the same answer for the same reason: a literal search whose hit costs
+# the run has a much lower tolerance for coincidence than a redactor does,
+# and a short value occurs in ordinary text by accident.
+tpot_finalize_tripwire_min_len: 8

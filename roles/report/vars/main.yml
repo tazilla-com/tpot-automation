@@ -1,0 +1,70 @@
+---
+# roles/report/vars/main.yml -- the stage-to-exit-code map, and the one place
+# the play writes an exit code down.
+#
+# WHY THESE ARE IN vars/ AND NOT defaults/
+#   Neither is user input. tests/check-variable-surface.sh requires every
+#   `tpot_*` key defaulted in a role to exist in lib/varschema.json and in
+#   inventories/example/group_vars/all.yml -- correctly, because that file is
+#   the documented input surface and a knob nobody documented is a knob
+#   nobody can support. Putting an internal mapping there would either break
+#   that gate or, worse, get "fixed" by documenting a variable no user should
+#   ever set. vars/ is not scanned, and vars/ cannot be overridden by an
+#   answer file, which is exactly the property this map wants.
+#
+# WHERE THE NUMBERS COME FROM, AND WHAT KEEPS THEM HONEST
+#   lib/exitcodes.sh is the source of truth for what each code MEANS.
+#   docs/exit-codes.md carries the stage-to-code table a reader sees. This
+#   file is the third copy, and it is the one the machine acts on -- so it is
+#   the one that would send a caller down the wrong branch if it drifted.
+#   tests/check-stage-map.sh exists for exactly that: it asserts this map
+#   equals the table in docs/exit-codes.md, and that every code here is one
+#   lib/exitcodes.sh actually defines. Do not edit this map alone.
+#
+# THE DEFAULT IS 40, AND THAT IS DELIBERATE
+#   A stage that is not in this map produces EX_INTERNAL, not a guess at the
+#   nearest plausible code. "The play failed somewhere this installer does
+#   not have a name for" is a defect in the installer, and 40 is what says
+#   so. install.sh applies the same rule from the other side: a
+#   failure-class file whose first field is not a code it recognises is 40.
+
+# stage -> exit code. The stage strings are the ones each role sets as
+# `tpot_stage` in its first task; adding a role means adding a row here and
+# in docs/exit-codes.md together. tests/check-stage-map.sh enforces exactly
+# that: it fails when a `tpot_stage:` literal anywhere in the tree has no row
+# here, which is the drift that would otherwise report an ordinary failure as
+# "a bug in this installer".
+#
+# SET IT AS A LITERAL, NOT FROM A VARIABLE. The gate finds stages by matching
+# `tpot_stage: <name>` in the YAML. A stage assembled from a variable is
+# invisible to it and always will be, so it would silently lose the one check
+# that keeps this map total.
+tpot_report_stage_exit_codes:
+  # The plays set this before any role has claimed a stage, so a failure in
+  # the very first include really can report it. 40 is the true answer and
+  # not a gap: the play broke before it got far enough to have a better one.
+  init: 40
+  # The same conditions as lib/preflight.sh stages A and B, re-asserted where
+  # --check can see them.
+  preflight: 11
+  # Everything os_prep does is package and system preparation.
+  os_prep: 13
+  # An account this project fully controls did not reach the state it
+  # announced. That is a defect here or a broken box, and either way the
+  # transcript is required reading -- so it is 40, not a softer code.
+  user: 40
+  # The pinned upstream installer could not be fetched, or its sha256 did not
+  # match what the pin says it should be.
+  upstream: 14
+  # Upstream's own installer failed, or exceeded tpot_driver_install_timeout.
+  driver: 15
+  # T-Pot's .env is missing or unwritable, which means the install did not
+  # finish. Same class as the driver failing, because it is one.
+  env: 15
+  # Installed, and an assertion about the result failed.
+  verify: 16
+  # T-Pot is installed but the run never reached a verified state.
+  finalize: 16
+  # ioc_forwarding_enabled was set true and forwarding is not implemented in
+  # this release. A usage error, because the input was the problem.
+  ioc: 10

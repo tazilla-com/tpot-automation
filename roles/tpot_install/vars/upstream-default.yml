@@ -1,0 +1,73 @@
+---
+# roles/tpot_install/vars/upstream-default.yml -- the LOUD FALLBACK.
+#
+# WHAT THIS FILE IS FOR. roles/tpot_install loads the data file named after the
+# pinned upstream ref, and falls back to this one when there is none
+# (tasks/fetch-upstream.yml, ansible.builtin.first_found). Its job is to make
+# that fall-back FAIL, immediately and with a sentence, rather than to stand in
+# for the missing file.
+#
+# WHY EVERYTHING BELOW IS EMPTY. A per-ref data file carries three things
+# nothing can infer: the sha256 of upstream's install.sh, the container count of
+# each edition, and the install types that ref knows about. All three are
+# properties of ONE upstream commit. A fallback carrying numbers from some other
+# commit is worse than no fallback at all -- the run would fetch an installer
+# whose checksum was never checked against anything, install it, and then
+# "verify" the result against a container count belonging to a different ref.
+# That produces either a rubber stamp or a false alarm, and in both cases a
+# report that reads exactly like a successful one.
+#
+# WHAT HAPPENS WHEN THIS FILE IS THE ONE THAT GETS LOADED. Two things, in this
+# order, and both of them name the tool:
+#
+#   1. roles/tpot_install appends a warning to the run saying that the numbers
+#      in use belong to some other ref and that tools/pin-upstream.sh must be
+#      run for the pinned one;
+#   2. its next assertion -- "Refuse to install without a sha256 for the pinned
+#      installer" -- fails, because the sha256 below is empty. The run stops at
+#      the upstream stage, which is exit 14, and exit 14 means precisely that
+#      nothing of upstream's has been executed.
+#
+# THE FIX IS NEVER TO EDIT THIS FILE. It is:
+#
+#     tools/pin-upstream.sh <the full 40-character commit sha>
+#
+# which writes roles/tpot_install/vars/upstream-<that ref>.yml beside this one,
+# derives the supported tier from that ref's own distribution gate, and updates
+# support-matrix.yml in the same edit. Read the diff, then commit it.
+#
+# THIS FILE IS NOT EVIDENCE OF ANYTHING, and neither is the one the tool writes.
+# No T-Pot has been installed by this project, at any ref, on any release. The
+# ledger for real runs is tests/MATRIX-STATUS.md.
+
+tpot_install_upstream:
+  # The marker a reader (and any future consumer) can test. Everything else
+  # here is empty, and this says the emptiness is deliberate.
+  is_fallback: true
+
+  # EMPTY ON PURPOSE. This is the value that stops the run: roles/tpot_install
+  # requires 64 lowercase hex characters and gets nothing, so it refuses before
+  # anything is fetched. Do not put a checksum here -- a checksum that is not
+  # the pinned ref's is a security control that passes while checking nothing.
+  sha256: ""
+
+  # EMPTY ON PURPOSE. The role has its own default for the telemetry service
+  # name and would apply it, but no run reaches that code with this file
+  # loaded: the assertion above fires first.
+  telemetry_service: ""
+
+  # EMPTY ON PURPOSE. An empty list means the role skips its "does this ref
+  # know this install type" assertion rather than answering it from another
+  # ref's data, which would be an answer about the wrong software.
+  install_types: []
+
+  # EMPTY ON PURPOSE. Keyed by install type letter in a real data file. There
+  # is no honest number to put here: upstream states a container count nowhere,
+  # and the only source is the compose file at the ref actually being pinned.
+  min_containers: {}
+
+  # There is no ref, so there is nothing derived from one.
+  ref: ""
+  url: ""
+  supported: []
+  proven: false
