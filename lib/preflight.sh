@@ -338,9 +338,11 @@ _PF_PORT_LAYOUT="unknown"
 # the cheapest missing test in this file. Until they exist, the honest word
 # for those three checks is "unexercised", not "covered".
 #
-# There is no test runner for this file either: tests/ holds the build gates
-# and the matrix parser test, and the bats suite named throughout these
-# comments (tests/bats/) has not been written.
+# The bats suite named throughout these comments EXISTS as of 2026-09-04 --
+# tests/bats/preflight.bats runs this file's stages against fixtures and
+# compares what they recorded with pf_ids(). What it does NOT do is set these
+# variables: they remain a seam for a caller that needs to substitute a
+# /proc file, and nothing in the suite or the tree does that today.
 #
 # NOTHING SETS THESE IN PRODUCTION and nothing should: install.sh does not
 # read them, they are not input keys, and lib/config.py has never heard of
@@ -985,10 +987,10 @@ _tpot_pf_free_gb() {
 #   True once lib/matrix.sh is loaded. install.sh normally sources it before
 #   this file; the fallback exists so that a bats test, or a container tier
 #   that runs preflight with no Ansible on the box, can source lib/preflight.sh
-#   alone and still get a real answer instead of a crash. NEITHER OF THOSE
-#   CALLERS EXISTS YET -- there is no tests/bats/ and no container tier in this
-#   tree -- but sourcing this file by itself is the first thing either would
-#   do, and the fallback costs one loop.
+#   alone and still get a real answer instead of a crash. THE FIRST OF THOSE
+#   CALLERS NOW EXISTS: tests/bats/preflight.bats sources this file by itself
+#   and exercises this path, which is what the fallback was written for. There
+#   is still no container tier in this tree.
 # ---------------------------------------------------------------------------
 _tpot_pf_need_matrix() {
     local candidate here

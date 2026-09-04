@@ -357,6 +357,32 @@ EOF
 EOF
 }
 
+_fixture_check_matrix_parse() {
+    local d=$1
+    mkdir -p "$d/lib" "$d/tests/os-release"
+    # The reader and the data it reads are one unit: copy the REAL lib/matrix.sh
+    # and the REAL fixtures, and corrupt only support-matrix.yml. A self-test
+    # that ran an old reader against new data would prove something nobody ships.
+    cp -- "$REPO_ROOT/lib/matrix.sh" "$d/lib/" 2>/dev/null || return 1
+    cp -- "$REPO_ROOT"/tests/os-release/* "$d/tests/os-release/" 2>/dev/null || return 1
+    # Two violations at once, because the gate exists for both and proving one
+    # would leave the other as unverified as it was:
+    #   (a) THE PIN INVARIANT BROKEN. A ref is recorded and the supported tier it
+    #       was supposedly derived from is empty -- a claim with no evidence
+    #       under it, which is the whole of D-07 expressed as a check.
+    #   (b) A DUPLICATE ROW within one tier, which makes the two readers disagree
+    #       about how many releases the tier contains.
+    _write "$d/support-matrix.yml" <<'EOF'
+---
+tpot_support_matrix_supported_ref: "0000000000000000000000000000000000000000"
+tpot_support_matrix_supported: []
+tpot_support_matrix_legacy:
+  - "debian:12"
+  - "debian:12"
+  - "ubuntu:22.04"
+EOF
+}
+
 _fixture_for() {
     case $1 in
         check-no-tty.sh)           printf '_fixture_check_no_tty' ;;
@@ -370,6 +396,7 @@ _fixture_for() {
         check-references.sh)       printf '_fixture_check_references' ;;
         check-stage-map.sh)        printf '_fixture_check_stage_map' ;;
         check-example-parity.sh)   printf '_fixture_check_example_parity' ;;
+        check-matrix-parse.sh)     printf '_fixture_check_matrix_parse' ;;
         *)                         printf '' ;;
     esac
 }

@@ -8,10 +8,12 @@
 #      every row well-formed, no duplicates within a tier, and each tier's key
 #      present. A tier declared `[]` is empty and valid; a tier whose key is
 #      absent is a malformed file and must be refused.
-#   2. The shipped support-matrix.yml is HONEST about not being pinned: its
-#      supported tier is empty and so is the ref it was derived from, together.
-#      That invariant is the whole of D-07 expressed as a check -- a supported
-#      tier with no pin behind it is a claim with no evidence under it.
+#   2. The shipped support-matrix.yml is HONEST about its pin: the supported
+#      tier and the ref it was derived from are empty together, or populated
+#      together, and never one without the other. That invariant is the whole of
+#      D-07 expressed as a check -- a supported tier with no pin behind it is a
+#      claim with no evidence under it. The file is pinned today (D-11), so the
+#      populated half is the one now exercised against it.
 #   3. A REAL YAML PARSER, reading the same file, produces the byte-identical
 #      list for each tier, in the same order. That is the point: preflight
 #      stage A greps this file before Ansible exists on the box, and the
@@ -28,13 +30,20 @@
 #      tier and row against BOTH matrix files.
 #   6. Tier precedence: a release listed in both tiers resolves as supported.
 #
-# THE SECOND MATRIX FILE, AND WHY THERE IS ONE
-#   support-matrix.yml ships with an EMPTY supported tier because no upstream
-#   ref is pinned yet. Everything about the supported tier would therefore go
-#   unexecuted. tests/os-release/support-matrix.pinned-example.yml is a matrix
-#   as it will look once tools/pin-upstream.sh has run, and every assertion
-#   below runs against both files. It is scaffolding, not a claim: no release
-#   in it has been installed by anyone here.
+# THE SECOND MATRIX FILE, AND WHY THERE IS STILL ONE
+#   It was written when support-matrix.yml had an EMPTY supported tier, so that
+#   the supported half of the reader was exercised at all.
+#
+#   D-11 pinned a commit on 2026-09-04 and the shipped file now carries two
+#   supported rows, so it exercises that half by itself. The pinned example is
+#   KEPT because agreeing is a fact worth checking rather than assuming: it
+#   carries a ref this project will never pin and a tier written by hand, so
+#   running every assertion against both proves the reader gives the same answer
+#   for a matrix it has never seen as for the one it ships with.
+#
+#   NEITHER FILE IS A CLAIM THAT ANYTHING WAS INSTALLED. No release in either
+#   has been installed by anyone here; tests/MATRIX-STATUS.md is where that
+#   evidence would live, and it does not exist.
 #
 # HOW IT PICKS ITS REFERENCE READER, AND WHY IT SAYS WHICH
 #   ansible-playbook, when it is on PATH, is the real consumer: the playbook
@@ -58,7 +67,26 @@
 set -euo pipefail
 shopt -s inherit_errexit
 
-REPO_DIR=$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)
+# WHY THIS HONOURS GATE_SCAN_ROOT, THOUGH IT DOES NOT USE gate-common.sh
+#   This gate carries its own harness -- it makes hundreds of individual
+#   assertions rather than reporting findings against file:line, so the shared
+#   one does not fit. But tests/run-gates.sh --self-test proves a gate can FAIL
+#   by pointing GATE_SCAN_ROOT at a deliberately violating tree, and a gate that
+#   resolves its own inputs from $0 ignores that entirely: it re-runs against
+#   the real repository and passes, and the runner reports it UNPROVEN.
+#
+#   That is exactly what happened here. This file was the one gate the
+#   self-test could not prove, and the reason was recorded as "no negative
+#   fixture is registered for it" -- which was true, and was the SYMPTOM. The
+#   cause was that no fixture could have worked, because nothing this gate read
+#   could be redirected. Honouring the variable is the whole fix; the fixture
+#   in run-gates.sh then does what it does for every other gate.
+#
+#   lib/matrix.sh is read from the scan root too, so the fixture must copy it.
+#   That is deliberate rather than convenient: the reader and the data it reads
+#   are one unit, and a self-test that ran the CURRENT reader against OLD data
+#   would be proving something nobody ships.
+REPO_DIR=${GATE_SCAN_ROOT:-$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)}
 readonly REPO_DIR
 readonly FIXTURE_DIR="${REPO_DIR}/tests/os-release"
 readonly MANIFEST="${FIXTURE_DIR}/expected.tsv"

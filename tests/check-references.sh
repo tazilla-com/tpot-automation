@@ -177,8 +177,7 @@ gate_begin 'references' 'every path named here exists, or is declared absent her
 # they are what a reader gets instead of the file.
 # ---------------------------------------------------------------------------
 readonly -a KNOWN_ABSENT=(
-    "tests/bats"$'\t'"the unit-test suite; no bats on this box and none in CI yet"
-    "tests/fixtures"$'\t'"the /proc and configuration fixtures the unit suite would read; three config files already carve out the path"
+    "tests/fixtures"$'\t'"the /proc fixtures a preflight test would substitute for the real ones; the unit suite exists and builds its fixtures in its own scratch instead, so nothing needs this path yet"
     "tests/MATRIX-STATUS.md"$'\t'"which (ref x distribution) pairs have been proven on a real box, with dates (D-07); nothing has been proven, so there is no file"
     ".github"$'\t'"the CI workflows, including the release gate that refuses a tag while the matrix status is missing or stale"
     "docs/answer-file.md"$'\t'"the answer-file reference, cited by lib/config.py"
