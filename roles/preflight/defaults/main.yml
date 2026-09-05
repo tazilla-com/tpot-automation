@@ -57,8 +57,20 @@ tpot_os_user: "honeypot"
 tpot_max_map_count: 262144
 
 # Memory, in MiB: the hard floor and the recommendation. Below the floor the
-# run stops; between the two it warns and continues. 8192 is upstream's stated
+# run stops -- the comparison is the one described below, not this figure
+# verbatim; between the two it warns and continues. 8192 is upstream's stated
 # minimum for a sensor and 16384 what it recommends for a hive.
+#
+# THE FLOOR IS COMPARED WITH A 0.95 TOLERANCE AND THIS NUMBER DOES NOT MOVE.
+# MemTotal is physical RAM minus what firmware and the kernel reserved before
+# anything could count it, so a machine provisioned with exactly 8192 MiB
+# reports less than that -- 7880 MiB on one of this project's own guests -- and
+# would be refused for meeting the documented minimum exactly. tasks/main.yml
+# carries the tolerance per item, applies it to memory alone and names both
+# numbers in every record; lib/preflight.sh applies the same factor before the
+# play starts. Lowering the key here instead would change what the product asks
+# for, which is a different decision from allowing for how memory is counted,
+# and it would also move the recommendation's meaning without saying so.
 tpot_min_memory_mb: 8192
 tpot_warn_memory_mb: 16384
 

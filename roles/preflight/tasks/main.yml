@@ -62,13 +62,28 @@
 #   hide a transcript this role exists to produce.
 #
 # ===========================================================================
-# NOTHING HERE HAS EVER RUN AGAINST AN INSTALLED T-POT
+# WHERE THIS ROLE HAS RUN, AND WHAT THAT DOES AND DOES NOT COVER
 # ===========================================================================
-#   No virtual machine, no root, no docker, no T-Pot -- not once, in this
-#   project. The role has been linted, and it has been executed against an
-#   unprivileged development box to prove that its expressions evaluate and
-#   its modules behave as written. Read every assertion below as what it is
-#   specified to do.
+#   It has run as root, on real hosts, at the head of runs that installed
+#   T-Pot and left it running. tests/MATRIX-STATUS.md is the dated record of
+#   which hosts and at which upstream ref; it is the only file in this tree
+#   entitled to call a platform tested, and it is the file to extend when
+#   another platform is installed rather than this comment.
+#
+#   That is not the same as every branch below having been exercised, and the
+#   difference is worth stating because it does not shrink on its own. A
+#   refusal fires only on a box in the state it refuses, and a host somebody
+#   installs a honeypot on is an ordinary one: the sshd Match-block refusal,
+#   the neither-tier refusal, the busy-port refusals and the container
+#   capability warning have not been watched firing on a host that arrived in
+#   that state. Nor does anything under tests/ drive this role -- the bats
+#   suite covers lib/preflight.sh, which is the other copy of most of these
+#   questions and not this one.
+#
+#   The resource floors are the exception, and they are the reason the
+#   tolerance further down exists: a run measured 7880 MiB against the
+#   8192 MiB floor, recorded it as forced, and continued. Read an assertion
+#   nobody has watched fire as what it is specified to do.
 # ===========================================================================
 
 - name: Record the stage, so a failure below can be given an exit code
@@ -113,9 +128,10 @@
 #   Measured, not reasoned: with the five mutating roles replaced by a
 #   stand-in that only records what they would have recorded, a run with the
 #   switch on reached that assert with tpot_reboot_required already true and
-#   wrote "10 ioc" into the run directory. That was executed here, on an
-#   unprivileged development box, against a stand-in -- no T-Pot was installed
-#   by it, and none ever has been by this project.
+#   wrote "10 ioc" into the run directory. That was a stand-in on a
+#   development box, so what it demonstrates is the ORDERING -- which role
+#   reaches which assert, and with what already recorded -- and not what an
+#   install does to a machine. Nothing was installed by it.
 #
 #   Asked here, the same question costs one comparison on a box nothing has
 #   touched, and the number install.sh hands its caller is 11 (EX_PREFLIGHT),
@@ -387,6 +403,40 @@
 # HARD checks and fails the run closed on an inconclusive one before this role
 # is reached; re-failing here would give the operator a second, less
 # informative refusal for the same condition.
+#
+# WHY MEMORY -- AND ONLY MEMORY -- IS COMPARED WITH A TOLERANCE
+#   MemTotal is physical RAM minus whatever firmware and the kernel reserved
+#   before anything could count it. That is true on every Linux and is not a
+#   quirk of any platform, so a machine provisioned with exactly the number in
+#   the documented minimum reports less than it and can never meet a floor
+#   written in the units the machine was sold in. Measured on this project's
+#   own guests: 7880 MiB on one provisioned at 8192 MB, and 8876 and 8864 MiB
+#   on two provisioned at 9216 MB.
+#
+#   So every item below carries a `tolerance`, and it is 0.95 for memory and
+#   1.0 for everything else. A CPU count and a free-space figure in GiB are
+#   reported as the whole numbers they are, with no reservation taken off the
+#   top, so widening those would not be an allowance for how a quantity is
+#   counted -- it would be a lower floor written somewhere nobody reads.
+#
+#   THE FLOOR ITSELF DOES NOT MOVE. tpot_min_memory_mb stays 8192, which is
+#   upstream's stated Sensor figure and the number the documentation quotes;
+#   the comparison is made against floor x tolerance, and both numbers are
+#   named in every record and every refusal so that nobody has to recompute
+#   the second one. An 8192 that quietly means 7782 would be a value that is
+#   right in this file and wrong in the file explaining it.
+#
+#   THIS IS THE SECOND COPY OF THAT ARITHMETIC, AND THE COPIES MUST AGREE.
+#   lib/preflight.sh applies the same factor to the same figure at stage B,
+#   before anything is mutated; this role asks again after the play has
+#   started, which on a real run is after os_prep may have changed the box. A
+#   box that passed there and failed here would fail late for a reason an
+#   early preflight exists to catch. They agree by construction rather than by
+#   coincidence: ansible_facts.memtotal_mb is MemTotal in kB integer-divided
+#   by 1024, which is the arithmetic the shell half does by hand, and the
+#   effective floor is derived the same way on both sides -- the tolerance
+#   taken to whole percent and applied with integer division, so 8192 becomes
+#   7782 in both and there is no float rounding for them to differ over.
 # ===========================================================================
 
 - name: Find out where the T-Pot account's home directory is
@@ -479,13 +529,22 @@
   register: preflight_df
 
 - name: Collect the four resource measurements
+  # preflight_thresholds is emptied here rather than defaulted where it is
+  # filled: the task that fills it appends in a loop, and an appending loop
+  # that starts from `default([])` grows the list on a second include of this
+  # role instead of rebuilding it.
   ansible.builtin.set_fact:
+    preflight_thresholds: []
     preflight_resources:
       - id: memory
         what: total memory
         unit: MiB
         measured: "{{ ansible_facts.memtotal_mb | int if ansible_facts.memtotal_mb is defined else none }}"
         min: "{{ tpot_min_memory_mb | int }}"
+        # The one item that is not compared with its floor as written. See the
+        # block comment above for why it is memory alone, and why the floor
+        # stays 8192 rather than being lowered to what a real 8 GB box reports.
+        tolerance: 0.95
         warn: "{{ tpot_warn_memory_mb | int }}"
         note: ""
         unmeasured: >-
@@ -501,6 +560,9 @@
                    if ansible_facts.processor_count is defined
                    else none) }}
         min: "{{ tpot_min_cpus | int }}"
+        # 1.0: a CPU count is a whole number reported as it is, with nothing
+        # reserved off the top for anyone to allow for.
+        tolerance: 1.0
         warn: "{{ tpot_warn_cpus | int }}"
         note: >-
           . Upstream states no CPU figure anywhere and its installer contains no CPU check, so
@@ -518,6 +580,9 @@
                 and (preflight_df.results[0].stdout_lines | default([]) | length) > 1
              else none }}
         min: "{{ tpot_min_disk_gb | int }}"
+        # 1.0: df already reports what is free rather than what was fitted, so
+        # there is nothing here that a tolerance would be allowing for.
+        tolerance: 1.0
         warn: "{{ tpot_warn_disk_gb | int }}"
         note: >-
           {{ '. The account does not exist yet, so this is the filesystem that will hold its home'
@@ -534,6 +599,8 @@
                 and (preflight_df.results[1].stdout_lines | default([]) | length) > 1
              else none }}
         min: "{{ tpot_min_disk_gb | int }}"
+        # 1.0, for the same reason as the filesystem above it.
+        tolerance: 1.0
         warn: "{{ tpot_warn_disk_gb | int }}"
         note: >-
           {{ '. /var/lib/docker does not exist yet, so this is the filesystem that will hold it'
@@ -542,7 +609,39 @@
           df could not measure the filesystem behind /var/lib/docker or its parent, so free space
           there could not be compared with the floor of {{ tpot_min_disk_gb }} GiB
 
+- name: Work out the effective floor each measurement is actually compared with
+  # ONE statement of the arithmetic, consumed by both the record below and the
+  # assert below that. Writing `measured < min` twice was survivable while the
+  # two sides were the same expression; with a per-item factor in it, two
+  # copies are two chances to apply the tolerance to a different set of items
+  # than the report says it was applied to.
+  #
+  # Whole percent and integer division, and that is not a style preference:
+  # it is what makes this agree with lib/preflight.sh, which has no floats at
+  # all. 8192 * 95 // 100 is 7782 on both sides. Multiplying by 0.95 as a
+  # float gives 7782.400000000001 here and something the shell would have to
+  # round by hand there, and the two arrangements differ at exactly one
+  # value -- which is the value a box would have to report in order to be
+  # refused by one half of this installer and accepted by the other.
+  #
+  # `round` before `int` and not `int` alone: `0.95 * 100` is 94.999... in
+  # binary floating point on some inputs, and truncating that would silently
+  # turn a 0.95 tolerance into 0.94.
+  ansible.builtin.set_fact:
+    preflight_thresholds: >-
+      {{ preflight_thresholds
+         + [item | combine({'floor': ((item.min | int)
+                                      * (((item.tolerance | float) * 100) | round | int)) // 100})] }}
+  loop: "{{ preflight_resources }}"
+  loop_control:
+    label: "{{ item.id }}"
+
 - name: Record every resource measurement, including the ones that could not be made
+  # `item.floor` is the number compared against and `item.min` is the number
+  # the documentation states; on every item but memory they are equal. Both
+  # are written into the reason when they differ, because a reader who sees
+  # only one of them cannot tell a floor that was met from a floor that was
+  # allowed for.
   ansible.builtin.set_fact:
     tpot_verify_results: >-
       {{ tpot_verify_results + [{
@@ -550,41 +649,61 @@
            'phase': 'preflight',
            'status': ('skipped' if item.measured is none
                       else ('warn' if (tpot_force_low_resources | bool) else 'fail')
-                      if (item.measured | int) < (item.min | int)
+                      if (item.measured | int) < (item.floor | int)
                       else 'warn' if (item.measured | int) < (item.warn | int)
                       else 'pass'),
            'reason': (item.unmeasured | trim
                       if item.measured is none
                       else item.what ~ ' is ' ~ item.measured ~ ' ' ~ item.unit
-                           ~ '; the floor is ' ~ item.min ~ ' and ' ~ item.warn ~ ' is recommended'
+                           ~ '; the floor is ' ~ item.min
+                           ~ ((', compared against ' ~ item.floor ~ ' after the '
+                               ~ item.tolerance ~ ' measurement tolerance this item carries')
+                              if (item.floor | int) != (item.min | int) else '')
+                           ~ ' and ' ~ item.warn ~ ' is recommended'
                            ~ (item.note | trim)
                            ~ ((' -- BELOW THE FLOOR'
                                ~ (', continuing only because tpot_force_low_resources is set'
                                   if (tpot_force_low_resources | bool) else ''))
-                              if (item.measured | int) < (item.min | int)
+                              if (item.measured | int) < (item.floor | int)
                               else (' -- below the recommendation'
                                     if (item.measured | int) < (item.warn | int) else '')))
          }] }}
-  loop: "{{ preflight_resources }}"
+  loop: "{{ preflight_thresholds }}"
   loop_control:
     label: "{{ item.id }}"
 
 - name: Refuse a box that is below a hard resource floor
+  # WHICH `forced` FIELD THE MESSAGE NAMES, AND WHY IT IS SPELLED OUT.
+  # result.json carries two fields by that name and they answer different
+  # questions. `invocation.forced` is a LIST OF FLAG NAMES, appended to by
+  # install.sh for each of tpot_force_unsupported_os, tpot_force_low_resources
+  # and tpot_force_reinstall that is set, and it is the one that records this
+  # refusal being waived. `host.forced` is a BOOLEAN and comes from
+  # _PF_OS_FORCED in lib/preflight.sh, which only tpot_force_unsupported_os
+  # ever sets -- so it stays false on a run that forced its way past a
+  # resource floor. Somebody auditing a fallen-over box for whether a floor
+  # was overridden will reach for the boolean, read false, and conclude the
+  # box met the floor. The message says invocation.forced by name so that the
+  # first place they look is the field that answers them.
   ansible.builtin.assert:
     that:
-      - item.measured is none or (item.measured | int) >= (item.min | int)
+      - item.measured is none or (item.measured | int) >= (item.floor | int)
     fail_msg: >-
-      {{ item.what }} is {{ item.measured }} {{ item.unit }} and this installer requires at
-      least {{ item.min }} {{ item.unit }} ({{ item.warn }} {{ item.unit }} is the
-      recommendation). Nothing on this box has been changed. Re-run with
-      --force-low-resources to continue anyway; the result is recorded as forced, and a T-Pot
+      {{ item.what }} is {{ item.measured }} {{ item.unit }}. This installer's floor is
+      {{ item.min }} {{ item.unit }} and the measurement is compared against
+      {{ item.floor }} {{ item.unit }}, which is that floor times the {{ item.tolerance }}
+      tolerance this item carries ({{ item.warn }} {{ item.unit }} is the recommendation).
+      Nothing on this box has been changed. Re-run with --force-low-resources to continue
+      anyway; the flag name is then recorded in result.json under invocation.forced, which is a
+      list of flag names and is the field to read when asking whether a floor was waived --
+      host.forced is a different question and answers only tpot_force_unsupported_os. A T-Pot
       below the floor is expected to fill its disk or fail to start Elasticsearch rather than
       to run slowly.
     success_msg: >-
-      {{ item.id }}: {{ item.measured }} {{ item.unit }} is at or above the floor of
-      {{ item.min }}
+      {{ item.id }}: {{ item.measured }} {{ item.unit }} is at or above {{ item.floor }}, the
+      floor of {{ item.min }} taken at this item's {{ item.tolerance }} tolerance
     quiet: true
-  loop: "{{ preflight_resources }}"
+  loop: "{{ preflight_thresholds }}"
   loop_control:
     label: "{{ item.id }}"
   when: not (tpot_force_low_resources | bool)
@@ -990,9 +1109,14 @@
 #      not parse. The box is then reachable on NEITHER port, with nothing in
 #      the installer's own output pointing at sshd.
 #
-#   This chain was measured for this project on 2026-09-04. It has never been
-#   observed on a machine this project installed T-Pot on, because there has
-#   not been one.
+#   This chain was measured for this project on 2026-09-04, against a
+#   configuration constructed to have the shape it needs. It has not been met
+#   on a host this project installed T-Pot on: on every host in
+#   tests/MATRIX-STATUS.md the appended line took effect and administrative
+#   SSH moved, which is only possible if the tail of that file was in the
+#   global scope. That says which hosts have been met, not how rare the shape
+#   is -- an image whose sshd_config.d drop-in ends inside a Match block is an
+#   ordinary thing to be handed, and this check costs a slurp.
 #
 # WHY "CONTAINS A Match" IS THE SAME QUESTION AS "ENDS INSIDE ONE". A Match
 # block runs to the next Match or to the end of the file, and the next Match

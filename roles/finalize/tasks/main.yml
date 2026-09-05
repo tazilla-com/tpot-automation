@@ -4,7 +4,7 @@
 # that makes an unattended install honest about itself afterwards.
 #
 # WHAT THIS ROLE IS FOR
-#   Four things, and they are less unrelated than they look:
+#   Five things, and they are less unrelated than they look:
 #
 #     1. The locale, if one was asked for. It is applied HERE, at the end,
 #        for a reason given in full above the block below: everything this
@@ -31,6 +31,13 @@
 #        the half of the two-invocation contract that does not require anyone
 #        to come back: `install.sh` -> 20 -> reboot -> the unit -> 0.
 #
+#     5. Rotation for this installer's own transcripts. Every invocation
+#        leaves two log files behind, and one that drove upstream leaves a
+#        third; nothing else in this tree bounds how many of them a
+#        long-lived honeypot accumulates. It is here rather than in os_prep
+#        because it is part of what the install LEAVES, like 2 and 4, and not
+#        part of preparing the OS. Section 6.
+#
 # WHAT IT MUST NOT DO, AND WHY EACH ONE IS WRITTEN DOWN
 #   * It does not START the unit. Starting it now would run verification
 #     against the pre-reboot box, which is precisely the state this project
@@ -45,11 +52,22 @@
 #     with every secret-typed key removed. "Supposed to" is why there are two
 #     tripwires below rather than two comments.
 #
-# NOTHING HERE HAS EVER RUN AGAINST A REAL BOX. No VM, no root, no T-Pot, no
-# systemd unit has ever been installed by this project. Every assertion below
-# is what this role is specified to do. Where a fact about systemd or about
-# upstream is stated, it was read from the manual page or from upstream's
-# source and the citation is given inline.
+# THIS ROLE HAS RUN AGAINST REAL BOXES, AND ITS HALF OF THE CONTRACT HAS
+# CLOSED. On the platforms dated in tests/MATRIX-STATUS.md the tree was
+# copied, the answer file was written, and the unit was installed and
+# enabled -- and on one of them the unit then FIRED on the next boot with
+# nobody present, caught T-Pot still starting, and recorded exit 16 rather
+# than reporting success. A later run, once the containers had settled,
+# returned 0. That is both halves of section 4's design working, including
+# the half that refuses.
+#
+# tests/MATRIX-STATUS.md is the authority on what has been observed, and its
+# "Not verified" sections are the list of what has not. Read the refusals
+# below, both credential tripwires and every check-mode path as specified
+# rather than seen unless that file says otherwise. Where a fact about systemd
+# or about upstream is stated, it was read from the manual page or from
+# upstream's source and the citation is given inline; a run that worked is not
+# evidence that the reason given is the right one.
 
 - name: Enter the finalize stage
   # First task, before anything can fail. site.yml's rescue turns this into
@@ -940,3 +958,137 @@
   # further up says what check mode did instead.
   when:
     - not ansible_check_mode
+# ===========================================================================
+# 6. LOG ROTATION FOR THIS INSTALLER'S OWN TRANSCRIPTS
+# ===========================================================================
+#
+# WHAT ACCUMULATES, AND WHY NOTHING ELSE BOUNDS IT
+#   Every invocation of install.sh writes two files into tpot_log_dir --
+#   install-<run id>.log and ansible-<run id>.log, 0600 in a 0750 directory
+#   -- and any run that reached upstream leaves a third,
+#   upstream-install-<run>.log, whose name is deliberately run-scoped so that
+#   a retry cannot destroy the failure it was run to diagnose. Those files do
+#   not GROW after their run ends; they accumulate,
+#   one set per run, on a box nobody logs into again. The policy installed
+#   here is what puts a bound on how many runs' worth survive, and it is the
+#   `create 0600 root root` line in it that matters most: a rotated
+#   transcript must not become world-readable, because a transcript is
+#   exactly the artefact both of this platform's credential incidents were.
+#
+# THE POLICY IS A SHIPPED FILE, NOT A TEMPLATE
+#   lib/tpot-automation.logrotate is readable as logrotate syntax and carries
+#   one placeholder, @TPOT_LOG_DIR@, because --log-dir can move the directory
+#   being rotated. A packager can install that file directly, and a reader
+#   can see the whole policy without reading Jinja or shell. Substituting the
+#   placeholder is the only thing done to it here.
+#
+# WHY THIS ROLE AND NOT os_prep, AND WHAT THAT COSTS
+#   os_prep prepares the operating system to run T-Pot. This is not that: it
+#   is part of what the installer LEAVES BEHIND, the same class as the
+#   permanent tree in section 2 and the unit in section 4, and it belongs
+#   with them. The cost is real and is stated rather than hidden -- a run
+#   that fails before finalize installs no policy, so a debugging loop of
+#   failed runs accumulates transcripts unrotated. That is the right way
+#   round: those are the transcripts somebody is about to read.
+#
+# NEITHER OF THE TWO CONDITIONS THAT CAN STOP IT FAILS THE RUN
+#   Rotation is housekeeping. A T-Pot that is installed, verified and armed
+#   must not be reported as a failed install because logrotate is not on the
+#   box. So an absent /etc/logrotate.d, and an absent policy file, are each
+#   recorded as a run warning -- which reaches result.json -- rather than
+#   raised. Note that lib/tpot-automation.logrotate is NOT in preflight stage
+#   A's 17-file manifest, so a partially extracted tree reaches this point
+#   without having been refused; the file check below is what notices.
+# ===========================================================================
+
+- name: Look for the directory logrotate reads its policies from
+  # Its absence is not a broken box -- it means logrotate is not installed,
+  # which is ordinary on a minimal cloud image and is nothing this installer
+  # undertakes to fix. Nothing in the support matrix requires it.
+  ansible.builtin.stat:
+    path: "{{ tpot_finalize_logrotate_dir }}"
+  register: tpot_finalize_logrotate_dir_stat
+  check_mode: false
+
+- name: Look for the shipped log-rotation policy
+  ansible.builtin.stat:
+    path: "{{ tpot_finalize_logrotate_source }}"
+  register: tpot_finalize_logrotate_src_stat
+  check_mode: false
+
+- name: Decide whether log rotation can be configured
+  # One fact, read by everything below it, so the two stats are compared once
+  # and the reasons cannot drift apart between the warning and the write.
+  ansible.builtin.set_fact:
+    tpot_finalize_logrotate_ready: >-
+      {{ (tpot_finalize_logrotate_dir_stat.stat.isdir | default(false))
+         and (tpot_finalize_logrotate_src_stat.stat.exists | default(false)) }}
+
+- name: Record that log rotation could not be configured
+  # Said out loud and carried into result.json, because an installer that
+  # quietly did not do one of the things it says it does is the failure mode
+  # this whole tree is written against. The message names WHICH of the two
+  # conditions was missing, because the remedies are entirely different.
+  ansible.builtin.set_fact:
+    tpot_run_warnings: "{{ tpot_run_warnings + ['log rotation was NOT configured for ' ~
+                           tpot_log_dir ~ ': ' ~
+                           ((tpot_finalize_logrotate_dir ~ ' does not exist, so logrotate is not
+                             installed on this box')
+                            if not (tpot_finalize_logrotate_dir_stat.stat.isdir | default(false))
+                            else (tpot_finalize_logrotate_source ~ ' is missing from the installer
+                                  tree')) ~
+                           '. A transcript and an ansible log are written there on every run,
+                            plus a copy of the upstream installer log on any run that got that
+                            far, and nothing else removes them -- so that directory grows without
+                            bound until somebody bounds it.'] }}"
+  when:
+    - not (tpot_finalize_logrotate_ready | bool)
+
+- name: Read the shipped log-rotation policy
+  # slurp rather than lookup(): lookup() reads on the CONTROLLER, and while
+  # this play is local today, a file read that silently means "somewhere
+  # else" the moment the connection changes is the kind of assumption this
+  # tree does not leave lying around.
+  ansible.builtin.slurp:
+    src: "{{ tpot_finalize_logrotate_source }}"
+  register: tpot_finalize_logrotate_raw
+  when:
+    - tpot_finalize_logrotate_ready | bool
+
+- name: Install the log-rotation policy
+  # 0644, not 0600: logrotate reads this file, and a policy root alone can
+  # read is a policy that does not run. It holds no secret -- it is a
+  # directory name and a rotation count -- so there is nothing to protect
+  # here. What must not become readable is the rotated TRANSCRIPT, and the
+  # `create 0600 root root` line inside the policy is what settles that.
+  #
+  # The substitution is a single replace of one literal token. It is not a
+  # template pass: nothing in that file may be interpreted as Jinja, and a
+  # logrotate policy is full of braces.
+  ansible.builtin.copy:
+    content: "{{ tpot_finalize_logrotate_raw.content | b64decode
+                 | replace(tpot_finalize_logrotate_placeholder, tpot_log_dir) }}"
+    dest: "{{ tpot_finalize_logrotate_dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - tpot_finalize_logrotate_ready | bool
+
+- name: Report what log rotation was configured
+  # Three outcomes, and check mode is one of them. A copy task in check mode
+  # reports `changed` without writing, so a message that read "is configured"
+  # there would be this role claiming a file it had not created -- the same
+  # class of untruth section 5 records a warning about. Nothing on the box
+  # differs either way, so saying which run this was is enough here.
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('log rotation was not configured; see the warning above. '
+          ~ tpot_log_dir ~ ' will keep every run it is given.')
+         if not (tpot_finalize_logrotate_ready | bool)
+         else (('check mode: log rotation for ' ~ tpot_log_dir
+                ~ ' would be configured in ' ~ tpot_finalize_logrotate_dest
+                ~ ', and nothing was written')
+               if ansible_check_mode
+               else ('log rotation for ' ~ tpot_log_dir ~ ' is configured in '
+                     ~ tpot_finalize_logrotate_dest)) }}

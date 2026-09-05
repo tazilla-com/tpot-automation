@@ -46,9 +46,28 @@
 #   "we looked and it was fine" from "we could not look", and it is the second
 #   one that green-lights a box nobody has examined.
 #
-# NOTHING HERE HAS EVER RUN AGAINST AN INSTALLED BOX. No VM, no root, no
-# docker, no T-Pot, ever. Every assertion below is what this role is SPECIFIED
-# to check. None of it has been observed.
+# WHAT HAS BEEN OBSERVED
+#   This role ran against a real installed host and every check it declared at
+#   the time passed: ubuntu:26.04, standard edition, telemetry off, 2026-09-05,
+#   dated in tests/MATRIX-STATUS.md. The two-invocation contract was observed
+#   end to end -- site.yml to exit 20, reboot, verify.yml to exit 0.
+#
+#   That is one edition on one release, so it is evidence that the role works
+#   and not that every branch in it has been taken. The `fail` arms, the
+#   editions whose compose files differ, and the telemetry-on path are still
+#   only reasoned about. Say which of the two you are relying on when you write
+#   about this role: a `pass` branch here is measured, a `fail` branch is
+#   specified.
+#
+# THE STATUS VOCABULARY, AND THE ONE ADDITION TO IT
+#   pass, fail, skipped and inconclusive mean what the blocks below say they
+#   mean. `warn` is the fifth, and today exactly one check emits it:
+#   compose_count_matches_pin, which compares the service count on the box
+#   against the count tools/pin-upstream.sh measured at pin time. It NEVER
+#   fails the play, and there is no assertion beside it -- a disagreement there
+#   means "somebody should look at this", not "this install is broken". The
+#   word is not invented here: lib/preflight.sh has used it with the same
+#   meaning since before this role existed.
 
 # ---------------------------------------------------------------------------
 # The stage, first, before anything can fail.

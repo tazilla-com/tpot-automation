@@ -48,17 +48,21 @@
 #   runs the image pull through sudo (upstream install.sh:718), which the
 #   NOPASSWD rule below already covers.
 #
-# NOTHING HERE HAS EVER RUN AGAINST A REAL BOX. No virtual machine, no root,
-# no account, no T-Pot -- not once, anywhere in this project. Every sentence
-# above describes what these tasks are SPECIFIED to do.
+# THIS ROLE HAS RUN AGAINST REAL BOXES, on the platforms dated in
+# tests/MATRIX-STATUS.md -- that file is the authority and this comment does
+# not repeat its rows. The account was created and the NOPASSWD rule written,
+# and upstream then drove a whole install through both, which is the only
+# real test of whether they are right. What was exercised is the DEFAULT
+# account policy, `locked`, on a box where the account did not already exist.
 #
-# What WAS actually done, so that the difference is on the record: upstream's
-# installer was opened at the pinned commit and every line cited below was
-# looked at; ansible-core's own user module and community.general's sudoers
-# module were opened for the two behaviours this file leans on (the plaintext
-# warning, and the lock prefix); and every expression in this file was
-# exercised against fabricated getent output on the machine it was written
-# on. No account was created by any of that.
+# What was NOT, so the difference stays on the record: the `set` password
+# policy and the hashing probe that gates it; an account that already exists,
+# and the warnings this role raises about one. Those still rest on what was
+# done at the desk -- upstream's installer opened at the pinned commit and
+# every line cited below looked at; ansible-core's own user module and
+# community.general's sudoers module opened for the two behaviours this file
+# leans on (the plaintext warning, and the lock prefix); and every expression
+# in this file exercised against fabricated getent output.
 
 # ---------------------------------------------------------------------------
 # The stage marker. First task, before anything can fail: site.yml's rescue
@@ -229,10 +233,12 @@
 # no credential, needs no no_log, and fails in the open with the real message
 # attached to a task whose name says what was being attempted.
 #
-# NOT VERIFIED ON ANY DISTRIBUTION: this box is not one of the supported
-# two, and nothing in this project has ever run an install. The probe is
-# reasoning about versions, and it exists so that the reasoning is tested by
-# the machine rather than trusted.
+# NOT VERIFIED ON ANY DISTRIBUTION, INCLUDING THE INSTALLED ONES. Every run
+# dated in tests/MATRIX-STATUS.md used the default account policy, `locked`,
+# and the task below is gated on `set` -- so it was skipped on all of them,
+# and a box that has T-Pot on it says nothing about whether this works there.
+# The probe is reasoning about versions, and it exists so that the reasoning
+# is tested by the machine rather than trusted.
 # ---------------------------------------------------------------------------
 - name: Prove this box can hash a password before it is handed one
   ansible.builtin.assert:

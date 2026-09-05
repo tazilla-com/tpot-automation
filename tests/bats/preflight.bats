@@ -9,14 +9,22 @@
 #     * above pf_ids -- "tests/bats/preflight.bats compares this with what a
 #       full run recorded, so a check that was added without being documented,
 #       or documented without being performed, fails the build";
-#     * beside THE FOUR TEST SEAMS -- three of which (PF_PROC_MEMINFO,
+#     * beside THE SIX TEST SEAMS -- three of which (PF_PROC_MEMINFO,
 #       PF_PROC_CPUINFO, PF_PROC_MAX_MAP_COUNT) had never been pointed at
 #       anything, so the threshold arithmetic of memory, cpus and
 #       max_map_count had only ever run against whichever developer box a
 #       session happened to be on.
 #
 #   Both promises are kept here. The id contract is asserted as a set AND as
-#   an order, and the three open seams are fed fixtures built in $TMP.
+#   an order, and every seam is fed fixtures built in $TMP.
+#
+#   A FIXTURE IS ONLY WORTH ITS LINE IF THE REAL WORLD CAN PRODUCE IT. The
+#   memory tests below carried 8388608 kB -- 8192 MiB, dead on the floor --
+#   for as long as they existed, and that is the one value an 8 GiB machine
+#   can never report: MemTotal excludes the firmware and kernel reservation,
+#   so a real 8 GiB guest says about 7880. The suite was green and the product
+#   refused the exact machine upstream calls its minimum. The awkward numbers
+#   are the ones to write down.
 #
 #   THE FIXTURES ARE BUILT IN $TMP AND NOT IN tests/fixtures/ ON PURPOSE.
 #   tests/check-references.sh registers "tests/fixtures" as a path this tree
@@ -24,10 +32,15 @@
 #   this suite writes, uses and deletes needs no home in the repository.
 #
 # WHAT THIS BOX CAN AND CANNOT SHOW
-#   NOTHING IN THIS PROJECT HAS EVER BEEN INSTALLED ANYWHERE -- no VM, no
-#   root, no docker, no systemd unit, no T-Pot. Every acting invocation of
-#   install.sh here stops in preflight stage A on the root check and exits 11,
-#   which is itself asserted below rather than assumed.
+#   THIS SUITE RUNS UNPRIVILEGED, and that is the point of it: every acting
+#   invocation of install.sh from here stops in preflight stage A on the root
+#   check and exits 11, which is asserted below rather than assumed. What it
+#   therefore cannot show is anything that needs root, docker, systemd or a
+#   T-Pot -- and none of that is a gap in the product's evidence, because that
+#   half is answered somewhere else. Real installs are made on real guests and
+#   dated in tests/MATRIX-STATUS.md, one row per (upstream ref x platform);
+#   this file answers for the code paths, that file answers for the platforms,
+#   and neither can stand in for the other.
 #
 #   That has one structural consequence for this file: a real run of
 #   install.sh on this box NEVER REACHES STAGE B, because stage A fails on
@@ -38,13 +51,15 @@
 #   anticipates ("a bats test ... can source lib/preflight.sh alone and still
 #   get a real answer instead of a crash").
 #
-# THE SEAMS THIS FILE USES, ALL FOUR OF THEM
+# THE SEAMS THIS FILE USES
 #   PF_OS_RELEASE          the fifteen fixtures in tests/os-release/, with
 #                          their expected.tsv manifest as the second opinion
 #   PF_PROC_MEMINFO        written here
 #   PF_PROC_CPUINFO        written here
 #   PF_PROC_MAX_MAP_COUNT  written here
-#   plus the fifth seam the file describes but does not name: a COMMAND is
+#   PF_APT_ROOT            a sources tree built here, mirror+file: included
+#   PF_DOCKER_DIR          a path here that this suite creates, or does not
+#   plus the seam lib/preflight.sh describes but does not name: a COMMAND is
 #   replaced by putting a fixture earlier on $PATH. curl, ss, uname, nproc
 #   and df are all replaced that way below, and nothing in lib/ needs to know.
 #
@@ -461,11 +476,12 @@ SWEEP
     # started printing on every run on a supported box -- asserting a test
     # campaign that had not happened.
     #
-    # Since 2026-09-05 one pair HAS been installed (debian:13 at ref
-    # fdafa483, in tests/MATRIX-STATUS.md), which makes the distinction
-    # sharper rather than moot: this line reports the TIER, and the tier
-    # contains ubuntu:26.04, which nobody has ever run. A message that let a
-    # reader infer otherwise would be the same defect in a new form.
+    # Both pairs in the supported tier have since been installed and dated in
+    # tests/MATRIX-STATUS.md, which makes the distinction sharper rather than
+    # moot: the tier is DERIVED from the pin, so moving the pin recomputes it
+    # and repopulates it with rows nobody has installed yet. A message that
+    # let a reader infer a test from a tier would be the same defect in a new
+    # form, whatever the dated file happens to say this month.
     pf_load
     export PF_OS_RELEASE="$REPO/tests/os-release/debian-13.os-release"
     pf_stage_a || true
@@ -523,8 +539,14 @@ SWEEP
 @test "host.json records the tier and not only the supported boolean" {
     # D-07 again, at the artefact that outlives the run: `supported` is true
     # only for the supported tier, so a legacy box is `false` -- and false
-    # alone cannot be told from "we have never heard of this release". os_tier
-    # is what carries that, and result.json copies it through.
+    # alone cannot be told from "we have never heard of this release".
+    # `matrix_tier` is what carries that, and result.json copies it through.
+    #
+    # THE KEY NAME IS ASSERTED, NOT INCIDENTAL. This producer wrote `os_tier`
+    # while lib/result.sh read `matrix_tier`, so the tier preflight had
+    # correctly computed was dropped on every run and result.json published a
+    # value nothing had measured. Both sides are spelt matrix_tier now, and a
+    # test that only checked the VALUE would have watched that happen.
     pf_load
     no_network
     export PF_OS_RELEASE="$REPO/tests/os-release/ubuntu-22.04.os-release"
@@ -537,7 +559,8 @@ SWEEP
     [[ -r "$RUNDIR/host.json" ]]
     run python3 -c 'import json, sys
 doc = json.load(open(sys.argv[1]))
-print(doc["os_id"], doc["os_version_id"], doc["os_tier"], doc["supported"])' "$RUNDIR/host.json"
+assert "os_tier" not in doc, "host.json still carries the key nothing reads: os_tier"
+print(doc["os_id"], doc["os_version_id"], doc["matrix_tier"], doc["supported"])' "$RUNDIR/host.json"
     assert_rc 0
     assert_eq 'ubuntu 22.04 legacy False' "$output" 'what host.json says about this box'
 }
@@ -861,10 +884,19 @@ print(doc["os_id"], doc["os_version_id"], doc["os_tier"], doc["supported"])' "$R
 # ===========================================================================
 # STAGE B -- the resource thresholds
 #
-# These are the three checks lib/preflight.sh calls unexercised: PF_PROC_*
-# were never pointed at anything, so the arithmetic, the unit handling and the
+# These are the three checks whose seams stayed shut longest: PF_PROC_* were
+# never pointed at anything, so the arithmetic, the unit handling and the
 # unreadable-file arms had only ever run against one developer machine. The
 # fixtures below are the point of this file.
+#
+# THE VALUE OF A FIXTURE IS WHETHER A REAL BOX CAN PRODUCE IT. Every memory
+# fixture here was once a round number, and 8388608 kB -- exactly 8192 MiB --
+# was doing the work of "a box at the floor". No machine reports that: MemTotal
+# is physical RAM minus what firmware and the kernel reserved, so real guests
+# of this project measured 7880, 8876 and 8864 MiB against assignments of
+# 8192, 9216 and 9216 MB. The round fixture passed, the real 8 GiB box was
+# refused, and the suite had nothing to say about it. Both ends of the
+# tolerance are now pinned below with numbers a box can actually report.
 #
 # Stage B is driven through pf_stage_b with a merged PUBLIC document, rather
 # than by calling the check functions, because that is how the thresholds
@@ -891,9 +923,44 @@ stage_b_mem() {
     # 8 GiB is upstream's own sensor figure and this project's floor; 16 is
     # the hive figure and the recommendation. Between them the honest answer
     # is "this works and upstream does not promise it will".
+    #
+    # 8388608 kB is 8192 MiB EXACTLY, which is the arithmetic case and not a
+    # real box: see the next two tests for what an 8 GiB machine reports.
     stage_b_mem 8388608 '"tpot_ansible_source": "distro"'
     assert_check memory warn
     assert_contains 'below the recommendation' "$(pf_detail memory)" 'the memory record'
+}
+
+@test "a real 8 GiB box reporting 7880 MiB is not refused for missing the 8192 floor" {
+    # THE DEFECT THIS PINS. 8069120 kB is 7880 MiB, measured on a guest given
+    # 8192 MB -- firmware and the kernel reserve the difference before
+    # /proc/meminfo is written, so this is what the machine upstream calls its
+    # Sensor minimum actually reports, and no amount of provisioning makes it
+    # say 8192. Compared against the floor as a bare number it FAILED, and the
+    # operator was told to pass --force-low-resources to install on hardware
+    # that meets the requirement. The comparison now allows for the
+    # reservation; the floor itself is untouched, because 8192 is upstream's
+    # figure and not ours to move.
+    stage_b_mem 8069120 '"tpot_ansible_source": "distro"'
+    assert_check memory warn
+    assert_contains 'below the recommendation' "$(pf_detail memory)" 'the memory record'
+    refute_contains 'below the hard floor' "$(pf_detail memory)" 'the memory record'
+    # The record has to show its working: an operator reading result.json and
+    # finding 7880 recorded against a floor of 8192 is owed both numbers.
+    assert_contains 'min 8192' "$(pf_detail memory)" 'the memory record'
+    assert_contains '7782' "$(pf_detail memory)" 'the memory record'
+}
+
+@test "the tolerance is a few percent and not an open door" {
+    # 7967744 kB is 7781 MiB, one MiB under the effective threshold of 7782
+    # (95% of 8192, rounded down by integer arithmetic). A box this far below
+    # the floor is still refused, which is what stops the tolerance from
+    # becoming a silent second floor: it exists to absorb a firmware
+    # reservation of a few percent, measured at 3.7-3.9% on three guests, and
+    # nothing wider.
+    stage_b_mem 7967744 '"tpot_ansible_source": "distro"'
+    assert_check memory fail
+    assert_contains 'below the hard floor' "$(pf_detail memory)" 'the memory record'
 }
 
 @test "memory below the floor fails and names the flag that would override it" {

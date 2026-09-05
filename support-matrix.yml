@@ -25,8 +25,11 @@
 #
 #     EVIDENCE OWED PER ROW: a real run on a real guest at the pinned ref,
 #     dated in tests/MATRIX-STATUS.md. A row with no dated run there blocks a
-#     release tag. ONE PAIR NOW HAS ONE -- fdafa483 x debian 13, installed
-#     2026-09-05. Every other cell in both tiers still has nothing.
+#     release tag. BOTH SUPPORTED ROWS NOW HAVE ONE -- fdafa483 x debian 13
+#     and fdafa483 x ubuntu 26.04, both installed 2026-09-05, the Ubuntu one
+#     carried through the reboot to exit 0. The legacy tier has nothing and
+#     is not owed anything: it is a record of a different installer, and the
+#     paragraph below says why that evidence cannot be renewed.
 #
 #     IT IS DERIVED, NOT ASSERTED. The list is
 #
@@ -51,13 +54,15 @@
 #
 #     A REF IS NOW PINNED (D-11) and the tier below is DERIVED FROM IT, by
 #     tools/pin-upstream.sh, from that ref's own distribution gate intersected
-#     with what this installer can drive. It is still not a claim that either
-#     row has been TESTED: that evidence is a dated run in
-#     tests/MATRIX-STATUS.md. That file now exists and carries exactly one
-#     row -- fdafa483 x debian 13, 2026-09-05. Supported here still means only
-#     "the pinned upstream will accept this release and we can drive it";
-#     read the status file for what was actually observed, and for the longer
-#     list of what that run did NOT establish.
+#     with what this installer can drive. Being in this list is still not the
+#     claim that a row has been TESTED: that evidence is a dated run in
+#     tests/MATRIX-STATUS.md, and that file now carries one for each of the
+#     two rows -- debian:13 and ubuntu:26.04, both 2026-09-05. Supported here
+#     means only "the pinned upstream will accept this release and we can
+#     drive it"; read the status file for what was actually observed, and for
+#     the longer list of what those runs did NOT establish. THE MOMENT THE PIN
+#     MOVES, this list is recomputed and both rows are unrun again -- derived
+#     by the tool, tested by nobody, until somebody dates a run at the new ref.
 #
 #     tpot_support_matrix_supported_ref carries the ref the list was derived
 #     from. The invariant, asserted by tests/check-matrix-parse.sh: the ref is

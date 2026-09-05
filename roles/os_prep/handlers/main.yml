@@ -30,7 +30,14 @@
 #   and a non-zero exit here is recorded as a warning in result.json, so it
 #   is visible rather than swallowed.
 #
-# Nothing here has ever been run against a real box.
+# THIS HANDLER HAS FIRED ON REAL BOXES. Every install dated in
+# tests/MATRIX-STATUS.md set vm.max_map_count on a box that did not have it,
+# so this ran, and the read-back in tasks/main.yml passed afterwards -- as did
+# the search engine, later, which is the check that really settles it. What
+# has NOT been seen is the case the paragraph above is mostly about: no run
+# has yet met a box carrying an unrelated bad key in /etc/sysctl.d, so the
+# non-zero exit and the warning it produces are specified rather than
+# observed.
 
 - name: Reload the kernel parameters
   # command rather than a module on purpose. ansible.posix.sysctl is the

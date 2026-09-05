@@ -1,8 +1,8 @@
 ---
 # SPDX-License-Identifier: Apache-2.0
-# roles/finalize/defaults/main.yml -- the two INPUT keys this role reads.
+# roles/finalize/defaults/main.yml -- the three INPUT keys this role reads.
 #
-# WHY ONLY TWO, AND WHY THESE
+# WHY ONLY THREE, AND WHY THESE
 #   tests/check-variable-surface.sh check 4 requires every tpot_*/ioc_* key
 #   defaulted in a role to exist in lib/varschema.json AND in
 #   inventories/example/group_vars/all.yml, with a byte-equal default. That
@@ -12,12 +12,13 @@
 #   list -- lives in vars/main.yml, which the gate does not scan and which an
 #   answer file cannot override.
 #
-#   In practice install.sh supplies both of these on every run: it passes
-#   tpot_state_dir as an explicit --set (see step 8 of the entrypoint), and
-#   tpot_locale comes through the merged document with the schema default
-#   applied. They are repeated here so that `ansible-playbook site.yml` run
-#   by hand -- during development, with no merged document -- behaves the way
-#   the documentation says it does rather than dying on an undefined name.
+#   In practice install.sh supplies all three on every run: it passes
+#   tpot_state_dir and tpot_log_dir as explicit --sets (see step 8 of the
+#   entrypoint), and tpot_locale comes through the merged document with the
+#   schema default applied. They are repeated here so that `ansible-playbook
+#   site.yml` run by hand -- during development, with no merged document --
+#   behaves the way the documentation says it does rather than dying on an
+#   undefined name.
 
 # The locale to generate and set, or null to leave the box alone. Null by
 # default because a locale is a policy decision, and because leaving it alone
@@ -30,3 +31,11 @@ tpot_locale: null
 # chmods it 0750; this role creates it with the same mode so that whichever
 # of the two gets there first leaves the same thing behind.
 tpot_state_dir: /var/lib/tpot-automation
+
+# Where this installer's own transcripts are written: one install-<run>.log
+# and one ansible-<run>.log per invocation, plus the run-scoped copy of
+# upstream's log that roles/tpot_install saves. This role reads the value for
+# one reason only -- to substitute it into the log-rotation policy it
+# installs in section 6 of tasks/main.yml, so that a --log-dir somewhere else
+# is the directory that actually gets rotated. Nothing here writes into it.
+tpot_log_dir: /var/log/tpot-automation

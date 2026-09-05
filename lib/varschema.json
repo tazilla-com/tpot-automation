@@ -254,7 +254,7 @@
       "required": false,
       "env": true,
       "config_file": true,
-      "help": "Hard floor for memory in MiB. Below it the run stops."
+      "help": "Hard floor for memory in MiB, and the one floor that is not compared with itself. MemTotal is physical RAM minus what firmware and the kernel reserved before anything could count it -- 3.7 to 3.9 per cent on three of this project's own guests -- so a machine provisioned with exactly this figure reports less than it. The measurement is therefore compared against 95 per cent of this value, 7782 MiB at the default 8192, and below THAT the run stops. The floor itself is not lowered to achieve it: 8192 is upstream's own stated Sensor minimum, and both numbers are named in every record and every refusal. lib/preflight.sh applies the factor before the play and roles/preflight applies it again once the play is running, both with whole-percent integer arithmetic so the two cannot disagree at one value."
     },
     {
       "name": "tpot_warn_memory_mb",
@@ -265,7 +265,7 @@
       "required": false,
       "env": true,
       "config_file": true,
-      "help": "Warning threshold for memory in MiB."
+      "help": "Warning threshold for memory in MiB. Not adjusted by the tolerance the floor carries, because it blocks nothing: below it a run warns and continues."
     },
     {
       "name": "tpot_min_cpus",
@@ -376,7 +376,7 @@
       "required": false,
       "env": true,
       "config_file": true,
-      "help": "How many times verification retries a listener check after a reboot."
+      "help": "How many times the post-reboot half of verification retries a wait, and it bounds TWO of them: each listener check, and the wait for the running container count to reach its floor. They share one pair of knobs on purpose -- a box slow enough to need more patience for one is slow for the same reason in the other. Raising it buys time and moves no threshold: the container floor and every verdict stay where they are."
     },
     {
       "name": "tpot_verify_delay",
@@ -387,7 +387,7 @@
       "required": false,
       "env": true,
       "config_file": true,
-      "help": "Seconds between verification retries."
+      "help": "Seconds between verification retries. With the default 30 retries this gives each wait 300 seconds. A wait also leaves early on a decided answer -- the floor reached, or the T-Pot unit dead so nothing more is coming."
     },
     {
       "name": "tpot_web_env_force",

@@ -40,10 +40,18 @@
 #   password never reaches this role; it is written by roles/tpot_install,
 #   from stdin, into T-Pot's own .env.
 #
-# NOTHING BELOW HAS EVER RUN AGAINST A REAL BOX.
-#   No VM, no root, no T-Pot has ever been installed by this project. Every
-#   sentence here says what a task is specified to do. Where a claim was
-#   actually measured, it says where and when it was measured.
+# THIS ROLE HAS RUN AGAINST REAL BOXES.
+#   Every install dated in tests/MATRIX-STATUS.md came through here: the
+#   packages were installed, vm.max_map_count was set and read back, and the
+#   search engine started afterwards -- which is the only thing that proves
+#   that parameter was really in effect, since a box below the floor is
+#   exactly where the engine refuses to start. That file is the authority on
+#   which (ref x platform) pairs; this comment does not repeat its rows.
+#
+#   What those runs did not exercise: the upgrade modes they did not take, a
+#   distribution outside the supported tier, and every refusal below. Where a
+#   claim in this file was measured rather than reasoned, it still says where
+#   and when it was measured.
 
 # ---------------------------------------------------------------------------
 # The stage marker, first, before anything can fail.

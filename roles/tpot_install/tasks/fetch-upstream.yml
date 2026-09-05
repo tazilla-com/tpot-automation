@@ -27,8 +27,18 @@
 #   it is an honest name for a gap rather than a to-do item. Say so wherever
 #   you say "pinned".
 #
-# NOTHING HERE HAS EVER FETCHED ANYTHING. This box has no network and no
-# upstream installer has ever been downloaded by this project.
+# THIS FETCH HAS BEEN MADE, AND WHAT IT PROVED IS NARROW
+#   Upstream's entrypoint has been downloaded onto a real box from here, its
+#   sha256 matched the pinned checksum, and the payload ref agreed with the
+#   pinned ref -- result.json recorded upstream.verified: true and
+#   ref_consistent: true. tests/MATRIX-STATUS.md dates which (ref x platform)
+#   pairs that is true of and is the authority; this comment does not repeat
+#   its rows, so it stays right as rows are added.
+#
+#   ONE ref has been fetched, the pinned one. Every refusal below -- a missing
+#   pin, a malformed one, a checksum that does not match, a per-ref data file
+#   that is not there -- is still what this file is specified to do rather
+#   than something that has been watched happening.
 
 # ---------------------------------------------------------------------------
 # THE PIN ITSELF.

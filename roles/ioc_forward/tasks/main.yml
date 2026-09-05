@@ -118,21 +118,33 @@
 #   of their own.
 #
 # ===========================================================================
-# NOTHING HERE HAS EVER RUN AGAINST AN INSTALLED T-POT
+# THIS ROLE HAS RUN ON AN INSTALLED T-POT. NO IoC HAS EVER BEEN FORWARDED.
 # ===========================================================================
-#   No virtual machine, no root, no docker, no T-Pot -- not once, in this
-#   project. What HAS been done to this file is narrower and worth stating
-#   exactly: it is linted and gated, and it was executed against an
-#   unprivileged development box to prove that its expressions evaluate --
-#   that the refusal fires for true, "yes", "on" and "1" and stays quiet for
-#   false, "no", "off", "0", "" and undefined; that the rescue path writes
-#   "10 ioc" into the run directory, which is what install.sh reads as exit
-#   10; that the supplied-key detection censors its own task and leaks no
-#   value at -vv; and that under `--tags ioc_forward` every task in
-#   roles/preflight is filtered out while this assert still fires, which is the
-#   measurement the second-gate paragraph above rests on. None of that is an
-#   installed T-Pot. Read every claim below
-#   about upstream, about a box or about a run as specified, not observed.
+#   Both halves are true and they are easy to run together, so they are
+#   written apart.
+#
+#   THE ROLE has run on a real box: it is in site.yml, after finalize, and
+#   every install dated in tests/MATRIX-STATUS.md reached it. Forwarding was
+#   not asked for on any of them -- that is the default -- so the refusal
+#   below stayed quiet and this role did what it does on an ordinary install,
+#   which is nothing.
+#
+#   THE FORWARDING has not happened anywhere, on any box, and cannot have:
+#   this release implements none. There is no client, no pipeline, no
+#   endpoint and no request. That is a statement about the product's scope
+#   rather than about how much has been tested, and it stays true until
+#   forwarding lands.
+#
+#   The refusal FIRING, and everything else about this file's behaviour, was
+#   measured on an unprivileged development box rather than on a honeypot:
+#   that it fires for true, "yes", "on" and "1" and stays quiet for false,
+#   "no", "off", "0", "" and undefined; that the rescue path writes "10 ioc"
+#   into the run directory, which is what install.sh reads as exit 10; that
+#   the supplied-key detection censors its own task and leaks no value at
+#   -vv; and that under `--tags ioc_forward` every task in roles/preflight is
+#   filtered out while this assert still fires, which is the measurement the
+#   second-gate paragraph above rests on. Read every claim below about
+#   upstream, about a box or about a run as specified, not observed.
 # ===========================================================================
 
 # ===========================================================================

@@ -4,7 +4,7 @@
 caller -- cloud-init, Packer, a CI job, a colleague's shell script -- must be
 able to branch on the outcome without parsing English.
 
-Three properties are designed to hold:
+Four properties are designed to hold:
 
 * **`0` means installed AND verified.** It is never returned for a host that
   has not been checked. A T-Pot that has not rebooted cannot be verified, so
@@ -19,6 +19,13 @@ Three properties are designed to hold:
   way to get no file is a state directory that cannot be created at all; the
   trap then warns on stderr instead, which is what an unprivileged run on a
   developer box produces.
+* **A code is never given for a fact the run could not establish.** The three
+  above are about what a number means; this one is about what the installer
+  does when it cannot tell. A run that finishes the play and then finds
+  nothing on the box saying whether a reboot is required does not resolve the
+  gap in its own favour: it falls back to the next artefact, says in
+  `result.json` which artefact answered, and returns `40` when there is no
+  artefact at all. `0` is a claim, and a claim needs evidence. See `40`.
 
 ## What this build can and cannot return
 
@@ -28,60 +35,46 @@ and `ansible-lint`'s production profile, and `tests/check-stage-map.sh` is a
 build gate holding their stage-to-code map against the table at the foot of
 this page.
 
-**One install has been made with them**, on 2026-09-05: a Debian 13 host,
-exit `20`, then rebooted with T-Pot running (`tests/MATRIX-STATUS.md`). Codes
-`0`, `13`, `14`, `15`, `30` and `40` have still never been produced by a real
-run. What has been executed besides that install is the tree's own gate
-suite, `install.sh` itself unprivileged on a development box, and the roles
-against that same box far enough to establish that their expressions evaluate
-and their modules behave as written. Every code from `13` upwards is therefore
-the contract the play is written to, and not a report of observed behaviour.
+**T-Pot has been installed with them, on two platforms**, both on 2026-09-05.
+`tests/MATRIX-STATUS.md` is the dated record and is the authority for anything
+in this section; it is as specific about what each run did *not* establish as
+about what it did.
 
-**What a run does today, measured on 2026-09-04 on that development box:**
-`./install.sh`, `install.sh --preflight-only` and `install.sh --verify-only`
-each return **`11`** at step 3 of the ten steps a run performs, and the
-failing check is **`root`** -- uid 1000, where this installer requires uid 0.
-Preflight runs before the first mutation, so nothing on the box was changed by
-any of them.
+* **Debian 13** -- exit `20`, then rebooted with T-Pot answering on TCP/22.
+  Three runs on that platform: `20` twice, the second with no `--force-*`
+  override of any kind, and one correct refusal at `11` on a host deliberately
+  put into Ubuntu's socket-activated shape.
+* **Ubuntu 26.04** -- exit `20`, rebooted, then **exit `0`** from
+  `--verify-only`, with 25 of 25 checks passing. That is this product's first
+  `0`, and it is what makes the sentence at the top of this page a report
+  rather than a design intention. The same run also produced a `16` on its
+  own: the post-boot unit fired while T-Pot was still starting, found 36 of
+  the expected 39 containers, and declined to call it verified.
 
-That is the same number this document reported before the play was written,
-and the *reason* is what changed -- worth saying, because a caller comparing
-an old transcript with a new one will see one `11` standing for two different
-faults. Preflight stage A checks this tree against a manifest of seventeen
-required files; `site.yml` and `verify.yml` were two of them and were absent,
-so `repo_tree` failed on every run. It passes now, on the same box, with a
-warning that the checkout is group-writable. `root` is what is left.
+So `0`, `11`, `16` and `20` have all been produced by real runs on real
+hosts, and `10` and `12` by runs on a development box -- `12` is what
+`--preflight-only` returns on a clean box that cannot reach upstream's
+distribution gate without acting. **`13`, `14`, `15`, `30` and `40` have still
+never been produced by a real run.** Each of those is the contract the code is
+written to and not a report of observed behaviour; `13`, `14` and `15` name
+stages a healthy install walks straight past, `30` needs a signal at the right
+moment, and `40` is a defect nobody has yet triggered.
 
-So in this build:
-
-* `10` and `11` are reachable and are the real behaviour of the code in this
-  tree -- argument handling and preflight stage A are written, and both
-  numbers were produced by running it;
-* **`11` is what every run this project has made returns**, with `root` named
-  in the preflight report as the check that failed. That is a fact about where
-  the measurement was taken, not a property of the build: on a root shell the
-  check passes and the run continues into preflight stage B, which no run has
-  ever reached;
-* `12` is `--preflight-only`'s code for "nothing failed, something could not
-  be measured". It needs stage A to pass first, so nothing here has produced
-  it;
-* `13` through `16` and `20` are what the play returns, and the play has never
-  run against a host it could install. Each names a stage in the table at the
-  foot of this page; none of them has been observed;
-* `30` is written and would be produced by the exit trap on a signal; nothing
-  here has exercised it;
-* `40` is written. Its playbook-absent arm -- described under `40` below --
-  can no longer fire in this tree, because the files it looks for are present.
-
-**Neither `0` nor `20` has ever been returned by anything.** That is a
-statement about what this project has run, not a guarantee of the build: `0`
-requires a rebooted, verified T-Pot and `20` requires a completed install, and
-no install has been attempted on any machine.
+**What a run does on this project's own development box** -- an unprivileged
+account, no root -- is unchanged and worth knowing, because it is where most
+of this tree's commands are exercised: `./install.sh`,
+`install.sh --preflight-only` and `install.sh --verify-only` each return
+**`11`** at step 3 of the ten steps a run performs, and the failing check is
+**`root`** -- uid 1000, where this installer requires uid 0. Preflight runs
+before the first mutation, so nothing on that box is changed by any of them.
+That is a fact about where the measurement was taken and not a property of the
+build: on a root shell the check passes and the run continues into stage B,
+which the two platforms above went through.
 
 Everything below is written in the present tense because it is the contract
-the codes name. For `10`, `11` and the refusals that produce them, that
-contract has been executed. For everything downstream of a real install, it
-has not.
+the codes name. For `0`, `11`, `16`, `20` and the refusals that produce them,
+that contract has been executed on a real host. For `13`, `14`, `15`, `30` and
+`40`, it has not.
 
 ## The table
 
@@ -161,13 +154,16 @@ every code on this page is.
 The box is not in a state this installer will act on, and **nothing was
 changed**. Preflight runs before the first mutation for exactly this reason.
 
-**`11` is what every run this project has made returns**, and on the
-unprivileged development box those runs were made on, the failing check is
-`root`. `--help`, `--version` and `--example-config` print and exit `0`
-without reaching preflight; everything that would act on the box stops here.
-Read that as an artefact of where the measurement was taken and not as a
-property of the build -- on a root shell that check passes, and no one has run
-this on a root shell.
+**`11` is the most-observed code in this project's history, and for two
+different reasons.** On the unprivileged development box every acting
+invocation returns it with `root` named as the failing check -- `--help`,
+`--version` and `--example-config` print and exit `0` without reaching
+preflight, and everything else stops here. On the two platforms in
+`tests/MATRIX-STATUS.md` it appeared as the answer it was designed for: a
+Debian 13 cloud image whose only apt source could not be reached, and an
+Ubuntu 26.04 host whose TCP/22 was held by `ssh.socket`. Both refusals named
+the failing check and changed nothing; the second one names the remedy, and
+applying it made the install proceed.
 
 Note that the one-line meaning for `11` in the table above does not enumerate
 every condition. The preflight report is what tells you *which* check failed,
@@ -195,10 +191,12 @@ upstream ref refuses buys you a mutated box and an upstream failure later, not
 an install. The supported way to reach an older release is the **legacy tier**:
 pin an older `tpot_upstream_ref`, whose own gate accepted it.
 `support-matrix.yml` is the one place either tier is written down, and neither
-tier is a claim that a particular pair was tested. **No pair has been
-tested.**
-`tests/MATRIX-STATUS.md` is where a dated record would live and that file does
-not exist yet.
+tier is a claim that a particular pair was *tested*: it says what this
+installer can drive, which is a claim about code. **What has actually been
+installed is in `tests/MATRIX-STATUS.md`, and a platform may be called tested
+only if it has a row there.** Two do -- `debian:13` and `ubuntu:26.04`, both
+at the pinned ref, both dated 2026-09-05. Every other pair in either tier is
+untested, which is not the same as broken and not the same as working.
 
 ### 12 -- `EX_INCONCLUSIVE`
 
@@ -245,8 +243,10 @@ compare seven characters against forty and exit 1 on every second run.
 
 **The tier that pin produces is derived, not tested.** It is what the pinned
 ref's own distribution gate accepts, intersected with what this installer can
-drive. Nothing has been installed on any of it -- see `11` above, and
-`support-matrix.yml`, which is the one place either tier is written down.
+drive. Two of its rows have since been installed and are recorded with dates
+and evidence in `tests/MATRIX-STATUS.md`; the rest of the tier is still a
+derivation, and `support-matrix.yml` -- the one place either tier is written
+down -- says what can be driven rather than what has been.
 
 **One variable pins two things.** `tpot_upstream_ref` decides both the URL
 `install.sh` is fetched from and the ref argument upstream is given, and they
@@ -339,17 +339,34 @@ reboot
 install.sh --verify-only             #  -> 0, or 16 naming the failing check
 ```
 
-That sequence has been performed once as far as `20`, on 2026-09-05. Its
-second half has not: the host was verified before the reboot -- `--verify-only`
-correctly refused it with `16`, `listen_admin_ssh` passing and the two container
-listeners failing -- and after the reboot it could no longer be reached from
-where the run was driven. **Exit `0` was first observed on 2026-09-05**, once the platform's
-administrative pinhole was widened to reach port 64295 after an install: Ubuntu 26.04, 25 of 25
-checks, recorded in `tests/MATRIX-STATUS.md`. On this
-project's own development box both invocations stop at `11` on the `root`
-check, at step 3 of ten.
+**That whole sequence has been performed end to end**, on Ubuntu 26.04 on
+2026-09-05: `20`, reboot, then `0` with 25 of 25 checks passing. It is this
+product's first `0` and the row that carries it is in
+`tests/MATRIX-STATUS.md`. The Debian 13 row the day before got as far as `20`
+and no further -- not because verification failed, but because after an
+install the network the run was driven from could no longer reach the
+administrative port; widening that pinhole is what made the Ubuntu row
+possible. On this project's own development box both invocations stop at `11`
+on the `root` check, at step 3 of ten.
+
+Two things that run showed about the middle line, both worth knowing before
+you rely on the sequence. Run before the reboot, `--verify-only` correctly
+refuses with `16` -- `listen_admin_ssh` passes and the two container listeners
+do not. Run too *soon* after the reboot it can also answer `16`, because
+T-Pot's containers are still starting: the post-boot unit hit exactly that,
+found 36 of 39, and declined to call it verified. Neither is a failure of the
+install; both are the design refusing to call an unfinished box good.
 
 `--verify-only` is the documented recovery, and it is the one to use.
+
+**`20` can also arrive as a fallback, and `result.json` says when it did.**
+The reboot decision normally comes from the play's own report. When that
+report is missing or unparseable, step 10 takes the answer from the
+`verify-pending` marker instead and returns `20` rather than `0` -- and
+records in the document's `warnings` that the marker, not the report,
+answered. A `20` with that warning means "the install looks finished and this
+installer could not read its own report"; read `40` for why the alternative
+was not a `0`.
 
 **A caller that never runs it gets a true outcome file anyway**, by way of a
 post-boot systemd oneshot that re-runs verification on the next boot and
@@ -443,8 +460,8 @@ see how far it got.
 
 ### 40 -- `EX_INTERNAL`
 
-A bug in this installer, not in your input or your box. Three things produce
-it, and only the first two can occur in this tree:
+A bug in this installer, not in your input or your box. Four things produce
+it, and only the first three can occur in this tree:
 
 * an unhandled error -- the `ERR` trap fired somewhere no failure class was
   set, or `$RUNDIR/failure-class` was missing or unreadable after the play
@@ -454,6 +471,42 @@ it, and only the first two can occur in this tree:
   `"outcome": "credential_leaked_to_log"`, and the run ends here. That
   outcome is a defect in this project's redaction, and a bug report for it is
   worth more than any other;
+* **a play that succeeded and left nothing saying what it did.** This is the
+  arm to read carefully, because the alternative to it used to be a `0`.
+
+  Step 10 decides between `0` and `20` from one fact -- does this box need a
+  reboot before it can be verified -- and on a successful install the answer
+  is *yes*. It reads that fact from `$RUNDIR/ansible-report.json`, which
+  `roles/report` writes inside the play's `always:` with `failed_when: false`,
+  deliberately: a report that cannot be written must not replace the real
+  diagnosis of whatever went wrong with a complaint about itself. The cost is
+  that the file can be missing, or truncated, or valid JSON with the key
+  absent, and **nothing anywhere says so**.
+
+  So the run answers from the next artefact down, and says which one it used:
+
+  1. **the report**, when it is readable and carries `reboot_required`. The
+     ordinary path, and the only one that can produce `0`;
+  2. **the `verify-pending` marker** under `tpot_state_dir`, when the report
+     is not readable. `roles/finalize` touches that file as its last act and
+     the post-boot unit deletes it after a *successful* verification, so its
+     presence means "installed, not yet verified" and the run returns `20`.
+     It warns on the transcript and records in `result.json`'s `warnings`
+     that the decision came from the marker rather than the report -- the
+     artefact says which source answered, so a `20` read a month later is not
+     ambiguous;
+  3. **neither** -- `40`. Nothing on the box says how far the run got, so
+     there is no answer to give, and `0` is not available: it is a claim, and
+     no artefact supports it. `result.json` carries the reason in `errors`,
+     and its `reboot.required` reads `false` only because the document has no
+     third value. The banner does not claim the box was installed and
+     verified; it prints the part-finished text instead, which tells you to
+     check administrative SSH, TCP/22 and docker before you log out.
+
+  A run that reaches `40` this way has probably changed the box -- the play
+  succeeded -- so treat it as a machine to inspect. `--verify-only` is the
+  cheapest next step, and it will say what is actually there.
+
 * **a play that is not on disk.** Step 9 looks for `site.yml` or `verify.yml`
   before running it, and when the file is absent it logs what is missing, sets
   the outcome to `internal_error` and returns `40` rather than reporting a
@@ -462,16 +515,30 @@ it, and only the first two can occur in this tree:
   first: preflight's seventeen-file manifest is the other statement of the same
   rule, and the thing that must never happen -- a build with no play reporting
   success -- is refused by both. A `40` from this build is therefore one of the
-  two causes above, and worth an issue.
+  three causes above, and worth an issue.
 
-For the first two, please file an issue with the transcript attached. It is
+**The rule the third arm exists to keep: a run that cannot establish whether a
+reboot is required never reports `0`.** `0` is the only code that asserts the
+honeypot works, and an assertion with no evidence behind it is worse than a
+refusal, because a caller stops looking. `tests/bats/install-report.bats`
+holds all three answers -- report, marker, neither -- against fabricated run
+directories, so the fallback stays a property rather than a memory.
+
+For the first three, please file an issue with the transcript attached. It is
 redacted by construction and mode `0600`; read it before you attach it anyway.
 
 ## How a failure inside Ansible becomes one of these codes
 
-**The play writes the code and the shell reads it. Both halves are written,
-and neither has been exercised by a real failure on a real host**, because no
-run has ever reached the play.
+**The play writes the code and the shell reads it, and the mechanism has now
+been exercised by real failures on real hosts** -- two of them on 2026-09-05,
+both landing on `16`. A `--verify-only` run against a host that had not yet
+rebooted failed in stage `verify`, and a `--check` run against a box with no
+T-Pot on it failed in stage `finalize`. Each wrote its stage into
+`$RUNDIR/failure-class`, and `install.sh` read it back and returned the code
+the table below gives for that stage. What is still unexercised is most of the
+*table*: `os_prep`, `user`, `upstream` and `driver` have never failed on a
+host, so the rows mapping them to `13`, `40`, `14` and `15` remain the
+contract rather than a report.
 
 `ansible-playbook` has a coarse exit status of its own, so the play does the
 mapping and the shell reads the answer rather than guessing it. Each role's

@@ -1,18 +1,32 @@
 # SPDX-License-Identifier: Apache-2.0
 # logrotate policy for this installer's own transcripts.
 #
-# Installed to /etc/logrotate.d/tpot-automation by lib/log.sh's
-# log_install_logrotate, which substitutes @TPOT_LOG_DIR@ for the directory
-# actually in use (--log-dir can move it). It is shipped as a file rather than
-# written from a heredoc so that a packager can install it directly and a
-# reader can see the policy without reading shell.
+# INSTALLED BY roles/finalize, section 6 of its tasks/main.yml, to
+# /etc/logrotate.d/tpot-automation, root-owned 0644. That role reads this
+# file, replaces the placeholder in the path below with the log directory
+# actually in use -- tpot_log_dir, which --log-dir can move -- and writes the
+# result. The substitution is a plain string replace of one literal token and
+# nothing else; this file is never interpreted as a template, because a
+# logrotate policy is full of braces.
 #
-# One transcript is written per run, named install-<UTC timestamp>.log, so
-# these files do not grow -- they accumulate. Rotation here is really about
-# putting an upper bound on how many runs' worth of output survives, and the
-# `create 0600 root root` line is the part that matters: a rotated transcript
-# must not become world-readable, because a transcript is exactly the artefact
-# both of this platform's credential incidents were.
+# It is shipped as a file rather than written from a heredoc so that a
+# packager can install it directly and a reader can see the whole policy
+# without reading shell. Nothing else in this tree writes logrotate
+# configuration. If it is missing from the installer tree, the role records a
+# run warning and installs nothing -- it does not fail the install, because a
+# T-Pot that is installed, verified and armed is not a failed install because
+# of a rotation policy.
+#
+# WHAT IS BEING BOUNDED
+#   install.sh writes install-<run id>.log and ansible-<run id>.log on every
+#   invocation, and roles/tpot_install saves upstream-install-<run>.log
+#   beside them. None of those grows once its run has ended -- they
+#   ACCUMULATE, one set per run, on a box nobody logs into again. Rotation
+#   here is really about putting an upper bound on how many runs' worth of
+#   output survives, and the `create 0600 root root` line is the part that
+#   matters most: a rotated transcript must not become world-readable,
+#   because a transcript is exactly the artefact both of this platform's
+#   credential incidents were.
 @TPOT_LOG_DIR@/*.log {
     monthly
     rotate 12

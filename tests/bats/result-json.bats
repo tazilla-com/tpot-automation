@@ -30,13 +30,19 @@
 #   extraction comes back too short to be the program.
 #
 # WHAT IT DOES NOT AND CANNOT COVER
-#   Nothing in this project has ever been installed anywhere: no root, no
-#   docker, no T-Pot, no run has ever reached the play. So every `driver` and
-#   `upstream` fixture below is a transcription of what roles/report is
-#   documented to send, not a capture of one. The masking pass in particular
-#   has never fired in anger -- lib/result.sh says so itself, and says why it
-#   was written before its feeder existed. These tests are the only thing that
-#   has ever exercised it.
+#   This suite runs where the suite runs: unprivileged, no root, no docker, no
+#   T-Pot. So nothing here observes an install. The product HAS installed
+#   T-Pot on real hosts -- tests/MATRIX-STATUS.md dates the rows and names the
+#   exit codes -- but no `ansible-report.json` from one of those runs has been
+#   brought back into the tree as a fixture. Every `driver` and `upstream`
+#   fixture below is therefore a transcription of what roles/report is
+#   documented to send, and it stays a transcription until somebody files a
+#   captured document beside it.
+#
+#   The masking pass is a sharper case: it is not expected to fire on a real
+#   run at all, because our own invocation never puts a credential on a
+#   command line. lib/result.sh says so, and says why it was written before
+#   its feeder existed. These tests are what exercises it.
 #
 #   The last-line-of-defence loop at the foot of the serialiser -- the one
 #   that strips a `value` from an entry already marked secret -- is deliberately
@@ -897,56 +903,156 @@ json_ok() {
 
 
 # ===========================================================================
-# host.matrix_tier: the derivation that must never promote a box.
+# host.matrix_tier: published as preflight measured it, never reconstructed.
 # ===========================================================================
 
-# The matrix has two tiers. SUPPORTED is whatever the PINNED upstream ref's
-# own gate accepts, so it is a property of the pin and cannot be read off
-# support-matrix.yml at all. When preflight did not record a tier, the
-# weakest true statement is LEGACY -- a matrix row matched, and that is all.
-# Deriving `supported` here would quietly promote a box into the tested tier
-# on the strength of a fact that does not say so.
-@test "a matched matrix row with no recorded tier derives legacy, never supported" {
-    res_reset
-    KV=$(kv_default)
-    HOST=$(fixture 'host.json' '{"supported": true, "os_id": "debian"}')
-    serialise
-    assert_rc 0
-    assert_eq 'legacy' "$(jget "$OUT" 'd["host"]["matrix_tier"]')" 'matrix_tier'
-    assert_eq 'true'   "$(jget "$OUT" 'd["host"]["supported"]')" 'supported'
+# THE SEAM THESE TESTS ARE ABOUT
+#   Two files decide what result.json says about the tier, and they are not
+#   the same file. lib/preflight.sh MEASURES this box against the two tiers of
+#   support-matrix.yml (D-07) and records the answer in $RUNDIR/host.json;
+#   lib/result.sh READS that document and publishes it. Everything below is
+#   about the join between them.
+#
+#   The join was wrong, and it was wrong quietly. The consumer looked for a
+#   key under a name the producer was not writing, found nothing, and rebuilt
+#   a tier out of the `supported` boolean instead: true became `legacy`, false
+#   became `unsupported`. The boolean cannot carry that distinction -- which
+#   is the entire reason a separate tier key exists -- so what came out was an
+#   assertion nothing had measured. A genuine LEGACY box was published as
+#   `matrix_tier: "unsupported"`, a release nobody has heard of, while the
+#   preflight records in the SAME document read "LEGACY tier (D-07):
+#   documented, reachable". The one answer that looked right, a truly
+#   unsupported box, was right by arithmetic accident.
+#
+#   Every test in this section except the last hand-writes host.json, which
+#   means every one of them agrees with whatever THIS file believes the
+#   producer's key is called. That is why the last one exists.
+
+# A tier that is present is copied through, and the pairing with `supported`
+# is D-07's: TRUE is the supported tier alone, so a legacy box is `false` and
+# the two fields together are what tell legacy from unsupported.
+@test "the tier host.json carries is published verbatim, tier by tier" {
+    local pair tier supported
+    for pair in supported:true legacy:false unsupported:false; do
+        tier=${pair%%:*}
+        supported=${pair##*:}
+
+        res_reset
+        KV=$(kv_default)
+        HOST=$(fixture 'host.json' \
+            "{\"os_id\": \"debian\", \"supported\": ${supported}, \"matrix_tier\": \"${tier}\"}")
+        serialise
+        assert_rc 0
+        assert_eq "$tier" "$(jget "$OUT" 'd["host"]["matrix_tier"]')" \
+            "the tier published for a ${tier} box"
+        assert_eq "$supported" "$(jget "$OUT" 'd["host"]["supported"]')" \
+            "the supported boolean for a ${tier} box"
+    done
 }
 
-@test "a host nothing measured against the matrix is unknown, not unsupported" {
-    res_reset
-    KV=$(kv_default)
-    HOST=$(fixture 'host.json' '{"os_id": "debian"}')
-    serialise
-    assert_rc 0
-    assert_eq 'unknown' "$(jget "$OUT" 'd["host"]["matrix_tier"]')" 'matrix_tier'
+@test "a host.json with no tier reads unknown, whatever the supported boolean says" {
+    # THE FALLBACK THAT USED TO LIVE HERE, AND WHY IT IS GONE.
+    #   It read `supported: true` as LEGACY, on the stated grounds that the
+    #   supported tier was a property of the pin and could not be read off
+    #   support-matrix.yml at all -- so a matrix row match was the strongest
+    #   thing the boolean could be made to mean. D-11 ended that premise:
+    #   tools/pin-upstream.sh derives the supported rows from the pinned ref's
+    #   own gate and writes them into support-matrix.yml as
+    #   tpot_support_matrix_supported.
+    #
+    #   The conclusion was the worse half anyway. Asserting a tier that
+    #   nothing measured is the defect this whole section is about, and it
+    #   does not become acceptable by being the cautious direction.
+    local body
+    for body in '{"os_id": "debian", "supported": true}' \
+                '{"os_id": "arch", "supported": false}' \
+                '{"os_id": "debian"}'; do
+        res_reset
+        KV=$(kv_default)
+        HOST=$(fixture 'host.json' "$body")
+        serialise
+        assert_rc 0
+        assert_eq 'unknown' "$(jget "$OUT" 'd["host"]["matrix_tier"]')" \
+            "the tier published for ${body}"
+    done
 
-    # Measured and found not to match is a different answer, and it is given.
+    # The boolean itself still reaches the document unchanged. It is what
+    # preflight measured, and dropping it would lose a fact rather than fix
+    # one.
     res_reset
     KV=$(kv_default)
-    HOST=$(fixture 'host.json' '{"supported": false, "os_id": "arch"}')
+    HOST=$(fixture 'host.json' '{"os_id": "debian", "supported": true}')
     serialise
     assert_rc 0
-    assert_eq 'unsupported' "$(jget "$OUT" 'd["host"]["matrix_tier"]')" 'matrix_tier'
+    assert_eq 'true' "$(jget "$OUT" 'd["host"]["supported"]')" 'supported'
 }
 
-@test "a tier preflight recorded is used as recorded, and a nonsense one is unknown" {
-    res_reset
-    KV=$(kv_default)
-    HOST=$(fixture 'host.json' '{"supported": true, "matrix_tier": "supported"}')
-    serialise
-    assert_rc 0
-    assert_eq 'supported' "$(jget "$OUT" 'd["host"]["matrix_tier"]')" 'matrix_tier'
-
+@test "a tier nobody defined is unknown, not passed through as it stands" {
+    # The four tiers are a closed set. A value outside it is a producer this
+    # consumer does not understand, and inventing a fifth tier in the artefact
+    # everybody reads is worse than saying nothing was established.
     res_reset
     KV=$(kv_default)
     HOST=$(fixture 'host.json' '{"supported": true, "matrix_tier": "excellent"}')
     serialise
     assert_rc 0
     assert_eq 'unknown' "$(jget "$OUT" 'd["host"]["matrix_tier"]')" 'matrix_tier'
+}
+
+@test "the tier preflight WRITES is the tier result.json PUBLISHES, all three tiers" {
+    # THE TEST THAT WOULD HAVE CAUGHT IT, AND THE ONE THING IT MUST NOT DO.
+    #   It must not write host.json itself. A hand-written fixture encodes
+    #   this file's belief about the producer's key name, so it agrees with
+    #   that belief whether or not the producer shares it -- which is exactly
+    #   how a key-name disagreement crossed the whole suite unseen.
+    #
+    #   So: point lib/preflight.sh at a real os-release file, let the `os`
+    #   check measure the tier the way a run measures it, call preflight's OWN
+    #   host.json writer, and feed THAT document to the serialiser. Rename the
+    #   key on one side without renaming it on the other and this goes red.
+    #
+    #   The three fixtures are chosen for their tiers, and
+    #   tests/os-release/expected.tsv is the independent statement of what
+    #   each one is: debian:13 is in the supported tier at the pinned ref,
+    #   ubuntu:22.04 is legacy, and kali is in neither.
+    #
+    #   pf_stage_a, not pf_stage_b: `os` is a stage A check and stage A is all
+    #   this needs. It returns non-zero here -- the box is unprivileged, so
+    #   the root check fails -- and that is irrelevant, because every check
+    #   records its answer whatever the verdict. The records accumulate across
+    #   the loop and nothing here reads them; what the writer serialises is
+    #   the OS state, which each pass overwrites.
+    export REPO_DIR="$REPO"
+    lib_source exitcodes.sh matrix.sh preflight.sh
+
+    local pair release tier supported
+    for pair in debian-13:supported:true \
+                ubuntu-22.04:legacy:false \
+                kali-2024.2:unsupported:false; do
+        release=${pair%%:*}
+        tier=${pair#*:}; tier=${tier%%:*}
+        supported=${pair##*:}
+
+        rm -rf -- "$TMP/run"
+        mkdir -p "$TMP/run"
+        export RUNDIR="$TMP/run"
+        export PF_OS_RELEASE="$REPO/tests/os-release/${release}.os-release"
+        pf_stage_a >/dev/null 2>&1 || true
+        _tpot_pf_write_host_json || {
+            printf 'preflight wrote no host.json for %s\n' "$release" >&2
+            return 1
+        }
+
+        res_reset
+        KV=$(kv_default)
+        HOST="$RUNDIR/host.json"
+        serialise
+        assert_rc 0
+        assert_eq "$tier" "$(jget "$OUT" 'd["host"]["matrix_tier"]')" \
+            "the tier result.json publishes for ${release}"
+        assert_eq "$supported" "$(jget "$OUT" 'd["host"]["supported"]')" \
+            "the supported boolean result.json publishes for ${release}"
+    done
 }
 
 

@@ -91,17 +91,6 @@ _TPOT_LOG_PUMP_PID=''
 _TPOT_LOG_MAGIC=''
 _TPOT_LOG_FD3=0
 
-# Where the shipped logrotate policy lives. Resolved at source time, from
-# REPO_DIR when install.sh has set it and from this file's own location
-# otherwise, so the library stays usable standalone (the tests source it
-# directly).
-if [[ -n ${REPO_DIR:-} && -r ${REPO_DIR:-}/lib/tpot-automation.logrotate ]]; then
-    _TPOT_LOG_LOGROTATE_TEMPLATE="$REPO_DIR/lib/tpot-automation.logrotate"
-else
-    _TPOT_LOG_LOGROTATE_TEMPLATE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" \
-        && pwd)/tpot-automation.logrotate"
-fi
-
 # ---------------------------------------------------------------------------
 # _tpot_log_nonce
 #   A per-run tag for the in-band control line. It must be unguessable, so
@@ -590,38 +579,19 @@ log_tripwire_enforce() {
 }
 
 # ---------------------------------------------------------------------------
-# log_logrotate_template
-#   Print the path of the shipped policy file.
-# ---------------------------------------------------------------------------
-log_logrotate_template() {
-    printf '%s\n' "$_TPOT_LOG_LOGROTATE_TEMPLATE"
-    return 0
-}
-
-# ---------------------------------------------------------------------------
-# log_install_logrotate [DEST]
-#   Install the shipped policy, substituting the log directory actually in
-#   use. Mode 0644, because logrotate must read it as its own user.
+# LOG ROTATION IS NOT DONE HERE, AND THAT IS DELIBERATE.
 #
-#   THIS MUTATES THE BOX. It must not be called before step 6 of install.sh's
-#   order of operations -- preflight mutates nothing, and log_init runs at
-#   step 2, long before that promise expires. The substitution is done with
-#   bash parameter expansion for the same reason the redactor is: nothing this
-#   library does hands a value to another process's argument list, even when
-#   the value is only a path.
+# The transcripts this file creates accumulate -- one install-<run id>.log and
+# one ansible-<run id>.log per invocation, plus the copy of upstream's log
+# that roles/tpot_install saves beside them -- so something has to bound them.
+# The policy is lib/tpot-automation.logrotate and roles/finalize installs it,
+# in section 6 of its tasks/main.yml.
+#
+# It used to be installed from here, by a function with no callers, while the
+# shipped policy file asserted in its own header that it WAS installed that
+# way. Two implementations, one of them dead and the other one prose, is worse
+# than one: the honest place for it is the role that already writes this
+# installer's other permanent artefacts -- the tree copy and the post-boot
+# unit -- and that is where it now lives. Nothing in this library mutates
+# /etc.
 # ---------------------------------------------------------------------------
-log_install_logrotate() {
-    local dest=${1:-/etc/logrotate.d/tpot-automation}
-    local tpl=$_TPOT_LOG_LOGROTATE_TEMPLATE
-    local dir=${dest%/*}
-    local content
-
-    [[ -r $tpl ]] || { log_warn 'logrotate policy %s is missing; log rotation not configured' "$tpl"; return 1; }
-    [[ -d $dir  ]] || { log_warn 'logrotate directory %s is absent; log rotation not configured' "$dir"; return 1; }
-
-    content=$(<"$tpl")
-    content=${content//@TPOT_LOG_DIR@/${TPOT_LOG_DIR:-/var/log/tpot-automation}}
-    ( umask 0133; printf '%s\n' "$content" >"$dest" ) || return 1
-    chmod 0644 -- "$dest" || return 1
-    return 0
-}

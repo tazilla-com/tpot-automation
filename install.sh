@@ -46,12 +46,16 @@
 #   ships without them, and why that guard is not redundant with the file
 #   manifest preflight checks at step 3.
 #
-#   THIS FILE HAS INSTALLED T-POT. Debian 13, 2026-09-05, three times: exit
-#   20 twice -- the second with no --force override of any kind -- and once a
-#   correct refusal at 11 on a deliberately socket-activated host. After the
-#   reboot the honeypot answered on tcp/22. tests/MATRIX-STATUS.md is the
-#   dated record and is as specific about what those runs did NOT establish
-#   as about what they did; exit 0 is still among them.
+#   THIS FILE HAS INSTALLED T-POT, ON TWO PLATFORMS, BOTH ON 2026-09-05.
+#   Debian 13 three times: exit 20 twice -- the second with no --force
+#   override of any kind -- and once a correct refusal at 11 on a
+#   deliberately socket-activated host. After the reboot the honeypot
+#   answered on tcp/22. Ubuntu 26.04 then went the whole way: exit 20,
+#   reboot, and exit 0 from --verify-only with 25 of 25 checks passing --
+#   this product's first 0. tests/MATRIX-STATUS.md is the dated record and is
+#   as specific about what those runs did NOT establish as about what they
+#   did; the dashboard login, the other five editions and every --force-*
+#   arm are still on that list.
 #
 #   ON THE DEVELOPMENT BOX it still stops where it always did. Measured
 #   fully unattended -- the password in the environment, no controlling
@@ -752,9 +756,10 @@ _tpot_write_inventory() {
 # #    * _tpot_exec_playbook -- the REAL invocation, and the only place      #
 # #      ansible-playbook is run. It holds no placeholder and needs no       #
 # #      edit to enable: the play file being on disk is what selects it.     #
-# #      It has NEVER BEEN EXECUTED, because no run of install.sh has        #
-# #      reached step 9 -- so "written in full" is still a statement         #
-# #      about the code and not about a passing install.                     #
+# #      It has driven site.yml and verify.yml on real hosts since           #
+# #      2026-09-05 -- Debian 13 and Ubuntu 26.04, both recorded in          #
+# #      tests/MATRIX-STATUS.md -- so this arm is measured, not merely       #
+# #      written.                                                            #
 # #                                                                          #
 # #    * _tpot_playbook_absent -- the refusing arm, and it is not dead       #
 # #      code left behind by the slice landing. It is what a PARTIAL         #
@@ -775,13 +780,13 @@ _tpot_write_inventory() {
 # #  never happen -- a tree with no play reporting success -- is             #
 # #  refused by both, from different information.                            #
 # #                                                                          #
-# #  WHAT A READER OBSERVES TODAY IS NEITHER OF THOSE NUMBERS.               #
-# #  Measured here on 2026-09-04, with the manifest complete and the         #
-# #  run fully unattended -- the password in the environment, no             #
-# #  controlling terminal, stdin from /dev/null -- it exits 11 on the        #
-# #  ROOT check, on an unprivileged box where nothing about the play is      #
-# #  wrong. The 40 above is what this guard RETURNS; no exit code from       #
-# #  step 9 has been observed from this file at all.                         #
+# #  THE 40 ITSELF IS STILL UNOBSERVED, AND SAYING SO IS THE POINT.          #
+# #  Every real run has had the play on disk, so the refusing arm has        #
+# #  never fired anywhere; the codes step 9 has actually produced are 0,     #
+# #  16 and 20. On this project's own unprivileged development box the       #
+# #  run does not reach step 9 at all: fully unattended -- the password      #
+# #  in the environment, no controlling terminal, stdin from /dev/null --    #
+# #  it exits 11 on the ROOT check, where nothing about the play is wrong.   #
 # #                                                                          #
 # #  There is no flag, no variable and no environment value that selects     #
 # #  between the arms: the switch is whether the play file is present on     #
@@ -850,9 +855,10 @@ _tpot_exec_playbook() {
 # tpot_run_playbook PLAYBOOK
 #   The single seam: which arm runs is decided by whether the play file is on
 #   disk, and nothing above or below it needs an edit either way. In this tree
-#   that selects the real invocation. It is still a property of how this is
-#   written rather than a tested one: no run has reached step 9, so neither
-#   arm has ever been called.
+#   that selects the real invocation, and it has selected it on real hosts --
+#   see the banner above step 9. The refusing arm is the untested half: it
+#   needs a checkout with no play in it, which preflight's file manifest
+#   refuses six steps earlier.
 tpot_run_playbook() {
     local playbook=$1
     local path="$REPO_DIR/$playbook"
@@ -943,8 +949,8 @@ _tpot_fill_notice() {
     local code=$1 value
     local -a pairs=(
         # install_type was missing from this list until 2026-09-05, so the
-        # banner rendered "for install type '?'" on every run that ever
-        # printed it -- which, until the first real install, was none.
+        # banner rendered "for install type '?'" on the first real install,
+        # which is where it was noticed.
         install_type:tpot_install_type
         admin_ssh_port:tpot_admin_ssh_port
         dashboard_port:tpot_dashboard_port
@@ -1036,6 +1042,9 @@ _tpot_perform_reboot() {
 _tpot_step_10() {
     local play_rc=$1
     local code stage='' policy required='' armed='false'
+    # Which artefact the reboot decision was taken from: `report`, `marker` or
+    # `none`. See THE REPORT IS NOT LOAD-BEARING ON ITS OWN, below.
+    local reboot_source='report'
 
     if (( play_rc == 0 )); then
         code=$EX_OK
@@ -1057,6 +1066,76 @@ _tpot_step_10() {
     fi
     if [[ -f "${TPOT_STATE_DIR}/verify-pending" ]]; then
         armed='true'
+    fi
+
+    # ----------------------------------------------------------------------
+    # THE REPORT IS NOT LOAD-BEARING ON ITS OWN
+    #   On a successful install roles/tpot_install sets tpot_reboot_required,
+    #   so ansible-report.json is the ONLY thing that separates exit 20
+    #   -- installed, a reboot is required -- from exit 0, which asserts that
+    #   this box has been installed AND verified. That file is written in the
+    #   play's `always:` with failed_when: false, deliberately, so that a
+    #   report that cannot be written does not replace a real diagnosis with
+    #   its own. The cost of that choice is paid here: a missing or
+    #   unparseable report makes _tpot_report_value print nothing, an empty
+    #   `required` is not 'true', and the run used to fall through to exit 0
+    #   with the banner announcing "This box has been installed and verified"
+    #   for a machine that had never rebooted and had never been verified.
+    #   Silence became a success claim, which is the one thing this
+    #   installer's exit contract exists to prevent.
+    #
+    #   So an empty `required` after a SUCCESSFUL play is treated as what it
+    #   is -- "we do not know" -- and answered from the next artefact down:
+    #
+    #     marker present  the verify-pending file roles/finalize touches as
+    #                     its last act. Its existence means the play reached
+    #                     finalize and armed the post-boot verification, which
+    #                     is only ever armed for a box that must reboot before
+    #                     it can be verified. Take reboot_required from it,
+    #                     say so loudly, and record WHICH artefact answered so
+    #                     that result.json explains itself to a reader who was
+    #                     not here.
+    #     both absent     nothing on this box says how far the run got. That
+    #                     is a defect in this installer, not in the box, and
+    #                     EX_INTERNAL is the code that says so. Exit 0 is not
+    #                     available: it is a claim, and no artefact supports
+    #                     it.
+    #
+    #   The fallback is conservative in one direction on purpose. A
+    #   --verify-only run on an already-verified host whose report went
+    #   missing, with a stale marker still on disk, answers 20 rather than 0
+    #   -- "re-run --verify-only after a reboot" wastes a minute, while a
+    #   wrong 0 ends the operator's attention on an unverified honeypot.
+    # ----------------------------------------------------------------------
+    if (( play_rc == 0 )) && [[ -z $required ]]; then
+        if [[ $armed == 'true' ]]; then
+            reboot_source='marker'
+            required='true'
+            log_warn 'the play succeeded but wrote no readable %s/ansible-report.json.' \
+                "${RUNDIR:-<no run directory>}"
+            log_warn 'the reboot decision was taken from the verify-pending marker instead,'
+            log_warn 'which is armed only for a box that has not been verified yet. This run'
+            log_warn 'cannot return 0, and the missing report is worth an issue.'
+            # One line of English, assembled the way lib/matrix.sh assembles
+            # its long literals: adjacent quoted strings joined by a line
+            # continuation are one word, so this stays inside the 120 columns
+            # .editorconfig asks of a shell file without becoming two records.
+            res_add_warning \
+'reboot.required was taken from the verify-pending marker rather than from '\
+'ansible-report.json: the play succeeded and wrote no readable report'
+        else
+            reboot_source='none'
+            code=$EX_INTERNAL
+            log_error 'the play succeeded but left nothing that says whether this box needs a'
+            log_error 'reboot: no readable ansible-report.json, and no verify-pending marker.'
+            log_error 'Exit 0 would assert an install this run cannot demonstrate, so this is'
+            log_error 'reported as an internal error. Please file an issue with the transcript.'
+            res_add_error \
+'the reboot decision has no source: the play succeeded, ansible-report.json '\
+'was absent or unparseable, and no verify-pending marker exists. '\
+'reboot.required in this document reads false only because it has no third '\
+'value; it was not established'
+        fi
     fi
 
     policy=$(_tpot_cfg tpot_reboot_policy)
@@ -1095,7 +1174,18 @@ _tpot_step_10() {
     # The notice's own state: `installed` says the honeypot properties below
     # are now true of this box, and it is claimed only when the play actually
     # completed. --check changes nothing, so it never claims it.
-    if (( play_rc == 0 )) && (( ! OPT_CHECK )) && (( ! OPT_PREFLIGHT_ONLY )); then
+    #
+    # reboot_source `none` withholds the claim as well, and that is the whole
+    # point of the fallback above. The `installed` banner ends with either
+    # "A REBOOT IS REQUIRED" or "This box has been installed and verified",
+    # and with no report and no marker neither sentence is supported. The
+    # other branch of notice_text -- the part-finished one -- is what a run
+    # that cannot describe its own outcome has earned: it tells the operator
+    # to check administrative SSH, TCP/22 and docker before logging out,
+    # every one of which may be true after a play that got as far as
+    # succeeding.
+    if (( play_rc == 0 )) && (( ! OPT_CHECK )) && (( ! OPT_PREFLIGHT_ONLY )) \
+       && [[ $reboot_source != 'none' ]]; then
         notice_set state installed
     fi
 
@@ -1120,7 +1210,15 @@ _tpot_step_10() {
 
     _tpot_print_notice "$code"
 
-    if (( play_rc == 0 )) && (( ! OPT_CHECK )); then
+    # A reboot is an instruction the caller gave, and it is honoured for every
+    # outcome this branch could reach before the fallback above existed --
+    # which is EX_OK and EX_REBOOT, the only two codes a successful play
+    # produced. EX_INTERNAL is deliberately not among them: a run that cannot
+    # say whether the box needs a reboot must not take one, because rebooting
+    # is exactly what ends the operator's chance to look at the machine while
+    # it is still in the state the run left it.
+    if (( play_rc == 0 )) && (( ! OPT_CHECK )) \
+       && { (( code == EX_OK )) || (( code == EX_REBOOT )); }; then
         case $policy in
             always)
                 _tpot_perform_reboot || true
@@ -1322,15 +1420,34 @@ main() {
     _tpot_step_10 "$play_rc"
 }
 
-# The traps are installed BEFORE main, so that a failure inside argument
-# parsing still leaves a result.json -- which is the one artefact a caller
-# reads when the exit code alone is not enough. The three print-and-exit modes
-# clear _TPOT_WANT_RESULT the moment they are recognised, so `install.sh
-# --help` writes nothing anywhere.
-trap '_tpot_on_exit' EXIT
-trap '_tpot_on_signal INT'  INT
-trap '_tpot_on_signal TERM' TERM
-trap '_tpot_on_signal HUP'  HUP
-trap '_tpot_on_err "$LINENO" "$BASH_COMMAND"' ERR
+# EXECUTED, OR SOURCED?
+#   Everything above this line is declarations: functions, the constants at
+#   the top, and the lib/*.sh they need. Nothing in it touches the box. The
+#   four lines below are the entire acting part of this file, and they run
+#   only when this file is the program -- `./install.sh`, `bash install.sh`,
+#   or the systemd unit roles/finalize writes, in all of which $0 and
+#   BASH_SOURCE[0] are the same path.
+#
+#   Sourcing it therefore loads the functions and starts nothing, which is
+#   what tests/bats/install-report.bats needs. That file drives _tpot_step_10
+#   against fabricated run directories to prove the three answers it can give
+#   -- report, marker, neither -- and there is no other way to reach them: the
+#   report is written by the play, and the play needs a root box with T-Pot on
+#   it. The guard is here for that seam and for nothing else; a sourced
+#   install.sh installs no traps and runs no main, so it can neither write
+#   result.json nor exit the shell that sourced it.
+#
+#   The traps are installed BEFORE main, so that a failure inside argument
+#   parsing still leaves a result.json -- which is the one artefact a caller
+#   reads when the exit code alone is not enough. The three print-and-exit
+#   modes clear _TPOT_WANT_RESULT the moment they are recognised, so
+#   `install.sh --help` writes nothing anywhere.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    trap '_tpot_on_exit' EXIT
+    trap '_tpot_on_signal INT'  INT
+    trap '_tpot_on_signal TERM' TERM
+    trap '_tpot_on_signal HUP'  HUP
+    trap '_tpot_on_err "$LINENO" "$BASH_COMMAND"' ERR
 
-main "$@"
+    main "$@"
+fi

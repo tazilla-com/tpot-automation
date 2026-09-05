@@ -51,9 +51,12 @@
 #   true and is not, which is the failure this artefact exists to prevent:
 #
 #     host.matrix_tier      which tier of the two-tier support matrix the box
-#                           was in. Preferred from host.json; derived when
-#                           preflight did not say, never assumed to be the
-#                           good answer.
+#                           was in. Taken from host.json as preflight wrote it
+#                           and held to the four tier names; `unknown` when
+#                           preflight recorded none, because a tier nothing
+#                           measured may not be inferred from the `supported`
+#                           boolean beside it -- that inference published a
+#                           legacy box as unsupported.
 #     upstream.ref_consistent   whether the ENTRYPOINT and the PAYLOAD came
 #                           from the same upstream ref. One variable drives
 #                           both and they may never be set apart; if they ever
@@ -622,33 +625,35 @@ for key in list(public.keys()) + [k for k in sources if k not in public]:
 # `matrix_tier` is the question that boolean can no longer answer on its own.
 #
 # The matrix has two tiers.  SUPPORTED is whatever the PINNED upstream ref's
-# own gate accepts, and it is derived from the pin rather than asserted, so it
-# cannot be read off support-matrix.yml at all.  LEGACY is the older releases
-# that file lists: reachable by pinning an older ref, documented, and never
-# claimed as tested.  Upstream's gate has no override, and forcing past OUR
-# preflight cannot touch it.
+# own gate accepts.  That is a property of the pin rather than of any file we
+# maintain, but it is not unreadable: tools/pin-upstream.sh derives the list
+# from the ref's own gate AT PIN TIME and writes it into support-matrix.yml as
+# `tpot_support_matrix_supported`, which is where the two supported rows come
+# from.  LEGACY is the older releases that file lists separately: reachable by
+# pinning an older ref, documented, and never claimed as tested.  Upstream's
+# gate has no override, and forcing past OUR preflight cannot touch it.
 #
-# So: use what preflight recorded if it recorded anything.  Otherwise derive
-# the weakest true statement -- a matrix row match today means the LEGACY tier,
-# because the supported tier is a property of a pin this run may not even have
-# -- and say `unknown` when nothing measured it.  Preflight owns this fact and
-# should write `matrix_tier` into host.json; the derivation below is a fallback
-# that must not quietly promote a box into the tested tier.
+# So the tier is READ, never derived.  preflight measures this box against the
+# matrix and records the answer in host.json under `matrix_tier`; this
+# publishes that value verbatim -- supported stays supported, legacy stays
+# legacy, unsupported stays unsupported.  Nothing here reconstructs a tier out
+# of the `supported` boolean, and the reason is that the boolean cannot tell
+# the two tiers apart, which is why the second key exists at all.  An earlier
+# version of this block did reconstruct one, and a genuine LEGACY box came out
+# of it published as `unsupported` -- a release nobody has heard of -- while
+# the preflight records in the SAME document named its tier correctly.
+#
+# A host.json carrying no tier reads `unknown`, and that is the whole of the
+# handling.  Nothing measured this box against the matrix; saying so is a real
+# answer, and asserting a tier on the strength of a value that does not carry
+# one is the defect above written a second time.
 host_obj = None
 if isinstance(host, dict):
-    if host.get("matrix_tier") is not None:
-        matrix_tier = as_tier(host.get("matrix_tier"))
-    elif host.get("supported") is None:
-        matrix_tier = "unknown"
-    elif as_bool(host.get("supported")):
-        matrix_tier = "legacy"
-    else:
-        matrix_tier = "unsupported"
     host_obj = {
         "os_id": host.get("os_id"),
         "os_version": host.get("os_version_id", host.get("os_version")),
         "supported": as_bool(host.get("supported")),
-        "matrix_tier": matrix_tier,
+        "matrix_tier": as_tier(host.get("matrix_tier")),
         "forced": as_bool(host.get("forced")),
         "arch": host.get("arch"),
         "memory_mb": as_int(host.get("memory_mb")),
@@ -756,12 +761,15 @@ if report is not None:
 # refuses `-u` and `-p` as extra flags before it builds the vector, which is
 # the first line of defence and not the last: it compares whole elements, so
 # an ATTACHED value walks past it and arrives here.  This pass is what reads
-# it the way getopts would.  It has never fired, and nothing has exercised it
-# either: no run has reached the play at all.  The masking was written before
-# its feeder existed and that ordering was deliberate -- SECURITY.md tells a
-# vulnerability reporter that result.json holds no credential and invites them
-# to attach it, so this has to be right before the first run that could test
-# it, not after.
+# it the way getopts would.  It is not expected to fire and it has not fired
+# on a real run: our own invocation never puts a credential on a command line,
+# so a hit here reports a defect somewhere upstream of it rather than doing
+# routine work.  What exercises it is tests/bats/result-json.bats, which feeds
+# it the argv shapes upstream's own getopts accepts.  The masking was written
+# before its feeder existed and that ordering was deliberate -- SECURITY.md
+# tells a vulnerability reporter that result.json holds no credential and
+# invites them to attach it, so this has to be right before any run that could
+# test it, not after.
 #
 # It reads the list the way upstream's own getopts reads it, which is the
 # defect the first version had: it recognised only a value written as a

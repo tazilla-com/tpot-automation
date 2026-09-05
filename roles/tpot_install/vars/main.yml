@@ -26,10 +26,13 @@
 #   -- tpot_home from the account role, the per-ref data loaded by
 #   tasks/fetch-upstream.yml -- and they will see them.
 #
-# NOTHING BELOW HAS EVER RUN AGAINST A REAL BOX. No T-Pot has ever been
-# installed by this project: no virtual machine, no root, no docker. Read
-# every claim about upstream's behaviour as read from upstream's source at the
-# pinned commit, because that is what it is.
+# THE VALUES BELOW HAVE DRIVEN A REAL INSTALL -- tests/MATRIX-STATUS.md dates
+# which (ref x platform) pairs and is the authority. What that does NOT change
+# is the standing of every claim in this file ABOUT UPSTREAM'S BEHAVIOUR: the
+# line numbers, the type-to-compose-file mapping, what its credential branch
+# does. Those were read from upstream's source at the pinned commit, and
+# reading is still what they are. An install that worked is not evidence that
+# the reason written beside a value is the right reason.
 
 # ---------------------------------------------------------------------------
 # THE INSTALL TYPE UPSTREAM IS TOLD, AND WHY IT IS NOT THE ONE THE USER ASKED
@@ -124,7 +127,43 @@ tpot_install_compose_file: "{{ tpot_install_clone_dir }}/docker-compose.yml"
 # previous one first (install.sh:551), so it has to be collected after each
 # run or the evidence for a failure is gone the moment anybody re-runs.
 tpot_install_upstream_log: "{{ tpot_install_home }}/install_tpot.log"
-tpot_install_log_copy: "{{ tpot_log_dir }}/upstream-install.log"
+
+# Where that log is copied to, and the name is RUN-SCOPED on purpose.
+#
+# THE DEFECT A FIXED NAME HAS. `upstream-install.log` is overwritten by the
+# next attempt, and the next attempt is the first thing anybody does after a
+# failure -- so the retry destroyed the log of the failure it was run to
+# diagnose. That log cannot be reconstructed afterwards either: upstream
+# deletes its own copy at the start of every run (install.sh:551), so once a
+# second run has started, neither copy of the first one exists.
+#
+# WHY NOT SIMPLY WRITE IT INTO THE RUN DIRECTORY. tpot_runtime_dir is a 0700
+# directory on tmpfs and install.sh's exit trap shreds and removes it, so a
+# file written there does not outlive the run that wrote it -- the opposite
+# of what this copy is for. It belongs beside the transcript, in
+# tpot_log_dir, which persists.
+#
+# WHY THE RUN DIRECTORY'S BASENAME RATHER THAN THE RUN ID. install.sh names
+# the transcript install-<run id>.log, but the run id is not passed into the
+# play: the three values it --sets are tpot_log_dir, tpot_state_dir and
+# tpot_runtime_dir (install.sh:562-564). The run directory is created once
+# per invocation as `mktemp -d ... tpot-automation.XXXXXXXX`
+# (install.sh:507), so its basename IS the per-run token the play already
+# holds -- and roles/report already treats that directory as this run's
+# scope, for failure-class and ansible-report.json. The fixed prefix is
+# stripped so the result reads upstream-install-XXXXXXXX.log rather than
+# naming the product twice; a basename that does not carry the prefix is
+# used whole, and is still unique.
+#
+# A play driven by hand, with no install.sh and therefore no
+# tpot_runtime_dir, falls back to `unscoped`. Such a run has no run directory
+# to be scoped to, and a name that says so is better than one that pretends.
+tpot_install_log_run_token: >-
+  {{ (tpot_runtime_dir | default('', true) | ansible.builtin.basename
+      | regex_replace('^tpot-automation\\.', ''))
+     | default('unscoped', true) }}
+tpot_install_log_copy: >-
+  {{ tpot_log_dir }}/upstream-install-{{ tpot_install_log_run_token }}.log
 
 # The password hasher. Absolute, because this role scrubs PATH out of the
 # child environment, and because the package that provides it differs by

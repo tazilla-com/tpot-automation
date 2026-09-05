@@ -27,6 +27,13 @@ jobs:
   ci:
     # Everything a commit gets. A tag that skipped it would be a release
     # nobody checked.
+    #
+    # THE ONE `uses:` IN EITHER WORKFLOW THAT CARRIES NO SHA, and it does not
+    # need one: a `./`-relative reusable workflow is read from THIS repository
+    # at the commit being built, so it is already pinned by the checkout that
+    # triggered the run. A sha here would be a second, separately rotting copy
+    # of the commit the run is already standing on. Every reference to somebody
+    # else's repository is pinned; ci.yml's header says why.
     uses: ./.github/workflows/ci.yml
 
   evidence:
@@ -34,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
 
       - name: The evidence a release claims is present and current
         run: bash tests/release-gate.sh

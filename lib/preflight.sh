@@ -27,14 +27,21 @@
 #   exercised is not a pass, and a report that silently drops it green-lights
 #   exactly what it declined to test. In a full run an inconclusive HARD check
 #   stops the run with EX_PREFLIGHT -- it fails closed. Only --preflight-only
-#   downgrades it, to EX_INCONCLUSIVE (12) -- which is what WOULD let a CI tier
+#   downgrades it, to EX_INCONCLUSIVE (12) -- which is what lets a CI tier
 #   running preflight in containers be honest about a distribution in seconds
-#   instead of installing on it for hours. THAT TIER STILL DOES NOT EXIST, and
-#   .github/workflows landing in 1.0.2 did not create it: those workflows run
-#   the gate suite, the unit suite and the linters on one runner, and none of
-#   them points preflight at a distribution. What such a tier would cover is
-#   the LEGACY tier of D-07 -- documented, and never claimed as tested -- and
-#   the supported tier, whose second row has never been installed either.
+#   instead of installing on it for hours.
+#
+#   NO SUCH PER-DISTRIBUTION TIER IS WIRED UP. .github/workflows runs the gate
+#   suite, the unit suite and the linters on one runner, and it does invoke
+#   `install.sh -y --preflight-only` once -- but on whichever image the runner
+#   happens to be, and to assert that the exit status and result.json agree,
+#   which is a contract about this code and not a survey of distributions.
+#   What such a tier would cover is the LEGACY tier of D-07 -- documented, and
+#   never claimed as tested -- and any supported row a moved pin adds, since
+#   the supported list is DERIVED from the pin and is therefore ahead of the
+#   evidence the moment the pin changes. Both rows supported at the ref pinned
+#   in September 2026 were installed on real guests; tests/MATRIX-STATUS.md is
+#   the dated record, and it is the file to consult rather than this comment.
 #
 #   THE FIFTH EXISTS BECAUSE THE FOURTH WAS BEING AVOIDED. reachability_pypi
 #   recorded `ok` on two paths where pypi.org had never been contacted: the
@@ -59,7 +66,10 @@
 #   not-applicable check from a failed one and from an untested one without a
 #   lookup table. Anything written LATER that switches on the status has to
 #   learn the fifth value: docs/verification.md and the bats suite are the two
-#   named throughout these comments, and neither exists yet.
+#   named throughout these comments. tests/bats/preflight.bats exists and does
+#   assert on statuses, so a sixth status is a change to that file too;
+#   docs/verification.md is still unwritten and is registered as such in
+#   tests/check-references.sh.
 #
 # THE TWO STAGES
 #   Stage A  zero dependency, zero mutation, BEFORE the configuration merge.
@@ -180,6 +190,50 @@ readonly _PF_DEF_WARN_CPUS=4
 readonly _PF_DEF_MIN_DISK_GB=64
 readonly _PF_DEF_WARN_DISK_GB=256
 readonly _PF_DEF_MAX_MAP_COUNT=262144
+
+# ---------------------------------------------------------------------------
+# The memory tolerance -- NOT a fallback default, and not configurable.
+#
+# WHAT IT CORRECTS. The memory floor is a figure about the machine (8192 MiB is
+# upstream's own stated Sensor minimum), but MemTotal is not that figure:
+# firmware and the kernel reserve a slice before /proc/meminfo is ever written,
+# so a box given 8 GiB reports LESS than 8192 MiB and always will. Measured on
+# three guests of this project's own: 8192 MB assigned -> 7880 MiB MemTotal,
+# 9216 -> 8876, 9216 -> 8864. That is a 3.7-3.9% reservation -- consistent
+# enough to allow for, and far too large to ignore. Without this factor the
+# exact machine upstream says is the minimum hard-fails the minimum, and the
+# operator is told to pass --force-low-resources to install on hardware that
+# meets the requirement. The floor VALUE is therefore left alone and the
+# COMPARISON is corrected; anyone who wants a different floor sets
+# tpot_min_memory_mb, which is what that key is for.
+#
+# MEMORY ONLY, AND DELIBERATELY NOT IN _tpot_pf_record_threshold. That helper
+# is shared with cpus, disk_home and disk_docker. A 95% applied there would
+# take the CPU floor of 2 to 1 -- integer arithmetic makes 1.9 into 1 without
+# saying so -- and would quietly move two disk floors that are stated in whole
+# GB and do not suffer this loss. Memory is the one threshold whose unit is
+# measured rather than declared, so it is the one that gets the tolerance.
+#
+# NOT A TUNABLE, on purpose: a schema key would have to be mirrored in
+# inventories/example, in the docs and in two parity gates, for a constant
+# nobody has a reason to set differently.
+#
+# THERE IS A SECOND COPY OF THIS ARITHMETIC. roles/preflight asks the same
+# question again once the play is running, and carries the same factor as a
+# per-item `tolerance`, 0.95 for memory and 1.0 for everything else. It runs at
+# the head of site.yml, BEFORE os_prep -- which site.yml calls the first role
+# that changes anything -- so it is not a re-check of a mutated box. It exists
+# because the play can be driven without this shell at all, and because a
+# machine can be handed a merged document this shell never saw.
+#
+# Both sides take the percentage as a WHOLE NUMBER and divide by 100 with
+# integer arithmetic, so 8192 gives 7782 in both and
+# there is no float rounding for them to differ over. That matters at exactly
+# one value, and that value is the one a box would have to report in order to
+# be accepted by one half of this installer and refused by the other. Change
+# one copy and change the other.
+# ---------------------------------------------------------------------------
+readonly _PF_MEMORY_TOLERANCE_PCT=95
 
 # OUR port set. Configurable through tpot_required_ports, all TCP.
 #
@@ -329,11 +383,19 @@ _PF_PORT_LAYOUT="unknown"
 #                            Debian 13 and Ubuntu 26.04 -- are in the SUPPORTED
 #                            tier at the ref this tree pins, which means
 #                            upstream's gate accepts them and this installer
-#                            can drive them. It does not mean either has been
-#                            installed: nothing has.
-#   PF_PROC_MEMINFO          NOTHING. tests/fixtures/ does not exist.
-#   PF_PROC_CPUINFO          NOTHING. Same.
-#   PF_PROC_MAX_MAP_COUNT    NOTHING. Same.
+#                            can drive them. Both have since been installed on
+#                            real guests and dated in tests/MATRIX-STATUS.md --
+#                            but that is a separate fact, and the tier never
+#                            asserts it: a fixture here is a string in a file.
+#   PF_PROC_MEMINFO          tests/bats/preflight.bats writes a meminfo in $TMP
+#                            per test and points this at it, which is how the
+#                            threshold arithmetic, the kB-to-MiB conversion and
+#                            the no-MemTotal arm are exercised at all.
+#   PF_PROC_CPUINFO          the same, for the processor count that has to be
+#                            counted out of the file when nproc and getconf are
+#                            both missing.
+#   PF_PROC_MAX_MAP_COUNT    the same, for a value that is a single integer and
+#                            for the arms where the file is absent or junk.
 #   PF_APT_ROOT              tests/bats/preflight.bats builds sources trees in
 #                            $TMP and points this at them -- including the
 #                            mirror+file: indirection a Debian cloud image
@@ -343,20 +405,20 @@ _PF_PORT_LAYOUT="unknown"
 #                            the disk_docker record are reachable without
 #                            depending on whether the box has docker installed.
 #
-# So three of the six seams are open at one end. The memory, cpus and
-# max_map_count checks have never been run against anything but whichever box
-# a session happened to be on -- one meminfo, one processor count, one
-# max_map_count, all of them this developer machine's. Their threshold
-# arithmetic, their unit handling and their unreadable-file arms are untested,
-# and the seams are here so that stops being true; writing those fixtures is
-# the cheapest missing test in this file. Until they exist, the honest word
-# for those three checks is "unexercised", not "covered".
+# So all six seams are driven, and the three /proc ones are the reason this
+# list is worth keeping current. Before they were fed fixtures, the memory,
+# cpus and max_map_count checks had only ever run against whichever box a
+# session happened to be on -- one meminfo, one processor count, one
+# max_map_count -- so their threshold arithmetic, their unit handling and their
+# unreadable-file arms were asserted by nothing. A fixture at a value the
+# developer's own box cannot report is what those seams are FOR: the memory
+# tolerance above was found by a real 8 GiB guest reporting 7880 MiB, against a
+# suite whose only 8 GiB fixture was exactly 8192 -- a figure no such guest can
+# produce. When you add an arm here, pick the awkward number.
 #
-# The bats suite named throughout these comments EXISTS as of 2026-09-04 --
-# tests/bats/preflight.bats runs this file's stages against fixtures and
-# compares what they recorded with pf_ids(). What it does NOT do is set these
-# variables: they remain a seam for a caller that needs to substitute a
-# /proc file, and nothing in the suite or the tree does that today.
+# The bats suite named throughout these comments is tests/bats/preflight.bats:
+# it runs this file's stages against fixtures, sets every one of these
+# variables, and compares what the stages recorded with pf_ids().
 #
 # NOTHING SETS THESE IN PRODUCTION and nothing should: install.sh does not
 # read them, they are not input keys, and lib/config.py has never heard of
@@ -1075,12 +1137,13 @@ _tpot_pf_need_matrix() {
 # THE THIRD PATH IS THE ONE TO READ CAREFULLY. The single-tier reader that
 # shipped before D-07 exposes only matrix_supports, which answers "is this row
 # in support-matrix.yml" and cannot answer "in which tier". A match is then
-# reported as LEGACY -- not as supported -- because that is what
-# support-matrix.yml's own header says its rows currently are: the supported
-# tier is derived from the pin, tpot_upstream_ref ships unset, and so nothing
-# is in it yet. Reporting a match as `supported` would claim a test nobody has
-# run, which is the assertion D-07 was written to stop. The `os` record says
-# which of the three paths produced its answer, so this is never invisible.
+# reported as LEGACY -- not as supported -- because legacy is the weaker of the
+# two claims and this path cannot tell which one it is looking at. Guessing
+# `supported` would assert the pinned ref's gate accepts the box and that
+# somebody has driven it there, on the strength of a reader that was told
+# neither, which is the assertion D-07 was written to stop; guessing the other
+# way understates a box that will still install. The `os` record says which of
+# the three paths produced its answer, so this is never invisible.
 # ---------------------------------------------------------------------------
 _tpot_pf_matrix_tier() {
     local id=${1:-} ver=${2:-} out="" rc=0
@@ -1338,11 +1401,13 @@ _tpot_pf_check_os() {
             # so this branch was unreachable and nobody could read the claim.
             # D-11 pinned a ref, the tier became two rows, and the sentence
             # started printing on every run on a supported box -- asserting a
-            # test campaign that had not happened. Since 2026-09-05 one row
-            # DOES exist in tests/MATRIX-STATUS.md -- debian:13 at the pinned
-            # ref -- which sharpens the distinction rather than removing it:
-            # this line reports the TIER, and the tier also contains
-            # ubuntu:26.04, which nobody has ever installed.
+            # test campaign that had not happened. Both of those rows now have
+            # dated runs in tests/MATRIX-STATUS.md, which sharpens the
+            # distinction rather than removing it: the tier is DERIVED from the
+            # pin, so moving the pin recomputes it from a new gate and every
+            # row in it is again a claim about code until somebody installs
+            # there and dates it. A message that reads the tier can never be
+            # the evidence; the dated file is.
             #
             # So the tier means exactly two things, and the message now says
             # only those two: the pinned upstream's own gate accepts this
@@ -1822,6 +1887,13 @@ _tpot_pf_colon_field() {
 #   SAYS SO. A forced run that looked identical to a clean one would make the
 #   artefact a lie the first time somebody read it back to explain why a box
 #   fell over.
+#
+#   MIN IS WHATEVER THE CALLER DECIDED TO COMPARE AGAINST, not necessarily the
+#   configured floor: the memory check passes an effective threshold that
+#   allows for the firmware reservation MemTotal does not include. Keep that
+#   adjustment in the caller. Anything applied here is applied to the CPU floor
+#   and both disk floors as well, where it is wrong and where integer division
+#   would hide it -- 95% of a CPU floor of 2 is 1.
 # ---------------------------------------------------------------------------
 _tpot_pf_record_threshold() {
     local id=${1:-} value=${2:-0} min=${3:-0} warn=${4:-0} detail=${5:-} note=${6:-}
@@ -1846,11 +1918,29 @@ _tpot_pf_record_threshold() {
     return 0
 }
 
+# ---------------------------------------------------------------------------
+# memory -- hard floor 8192 MiB, recommendation 16384, both from upstream's own
+# README (Sensor 8 GB, Hive 16 GB).
+#
+# THE FLOOR IS COMPARED AGAINST AN EFFECTIVE THRESHOLD, not against itself.
+# MemTotal is what the kernel can hand out, which is always less than the RAM
+# the machine was given, so a box built to exactly upstream's minimum reports
+# below it. _PF_MEMORY_TOLERANCE_PCT above carries the measurements and the
+# reasoning; here the only thing to know is that `min` remains the number this
+# project stands behind and `eff` is the number the box is measured against.
+# The detail string names both, because an operator reading result.json and
+# finding 7880 MiB recorded `ok` against a floor of 8192 is owed the arithmetic
+# rather than left to guess whether the check is broken.
+#
+# The recommendation is NOT adjusted. It never blocks anything, and a warning
+# that fires a few hundred MiB early costs nothing and tells no lies.
+# ---------------------------------------------------------------------------
 _tpot_pf_check_memory() {
     local -a lines=()
-    local line kb="" mb min warn
+    local line kb="" mb min warn eff
     min=$(_tpot_pf_int tpot_min_memory_mb "$_PF_DEF_MIN_MEMORY_MB")
     warn=$(_tpot_pf_int tpot_warn_memory_mb "$_PF_DEF_WARN_MEMORY_MB")
+    eff=$(( min * _PF_MEMORY_TOLERANCE_PCT / 100 ))
     if [[ ! -r $PF_PROC_MEMINFO ]]; then
         pf_record memory inconclusive \
             "${PF_PROC_MEMINFO} is unreadable; installed memory could not be measured (min ${min} MiB, recommended ${warn} MiB)"
@@ -1870,8 +1960,8 @@ _tpot_pf_check_memory() {
     fi
     mb=$(( kb / 1024 ))
     _PF_MEMORY_MB=$mb
-    _tpot_pf_record_threshold memory "$mb" "$min" "$warn" \
-        "${mb} MiB (min ${min}, recommended ${warn})"
+    _tpot_pf_record_threshold memory "$mb" "$eff" "$warn" \
+        "${mb} MiB (min ${min}, measured against ${eff} -- ${_PF_MEMORY_TOLERANCE_PCT}% of it, because MemTotal excludes the firmware and kernel reservation; recommended ${warn})"
     return 0
 }
 
@@ -1895,10 +1985,12 @@ _tpot_pf_check_memory() {
 # that can stop a run rests on a number neither document argues about.
 #
 # NOTHING SOURCES 2 ITSELF. It is a deliberately conservative floor and not a
-# measurement: no upstream figure, no benchmark, and no run of this installer
-# stands behind it, because there has not been one. Do not write a sentence
-# here claiming what happens below it. Both thresholds are overridable with
-# --force-low-resources, which the record then says was used.
+# measurement: no upstream figure and no benchmark stands behind it, and the
+# installs that have been made were all on 4-core guests (tests/MATRIX-STATUS.md),
+# so nothing has ever been run at or below this floor to find out what happens
+# there. Do not write a sentence here claiming what happens below it. Both
+# thresholds are overridable with --force-low-resources, which the record then
+# says was used.
 # ---------------------------------------------------------------------------
 _tpot_pf_check_cpus() {
     local n="" min warn line
@@ -2604,7 +2696,7 @@ _tpot_pf_check_upstream_gate() {
     ref=$(_tpot_pf_cfg tpot_upstream_ref "")
     if [[ -z $ref ]]; then
         pf_record upstream_gate inconclusive \
-            "tpot_upstream_ref is not pinned, so upstream's own distribution gate could not be pre-empted. Set it to a tag or a full 40-character commit sha of upstream T-Pot; tools/pin-upstream.sh derives it and writes everything that follows from it. Upstream applies that gate on this box, before it will do anything at all, and it has no override flag"
+            "tpot_upstream_ref is not pinned, so upstream's own distribution gate could not be pre-empted. Set it to a FULL 40-character lowercase commit sha of upstream T-Pot -- lib/varschema.json accepts nothing else, so a tag, a branch or an abbreviated sha is refused before this check runs again. Run tools/pin-upstream.sh, which resolves a tag or a branch to the sha and writes everything derived from it in the same edit. Upstream applies that gate on this box, before it will do anything at all, and it has no override flag"
         return 0
     fi
     if [[ -z $_PF_OS_ID ]]; then
@@ -3186,10 +3278,21 @@ _tpot_pf_check_secret_length() {
 #
 # `supported` is TRUE ONLY FOR THE SUPPORTED TIER (D-07). A legacy row -- one
 # of the older releases reachable by pinning an older upstream ref -- reports
-# `supported: false` with `os_tier: legacy`, because "in our matrix" and
+# `supported: false` with `matrix_tier: legacy`, because "in our matrix" and
 # "tested against the ref this run pins" stopped being the same statement when
-# the matrix gained a second tier. Read os_tier, not the boolean, when the
+# the matrix gained a second tier. Read matrix_tier, not the boolean, when the
 # distinction matters.
+#
+# THE KEY IS `matrix_tier`, and the name is not free. lib/result.sh reads
+# host.json for exactly that key and lib/matrix.sh's own function is called
+# matrix_tier, so a producer emitting anything else writes a field nobody
+# collects -- and result.json then publishes a tier that nothing measured,
+# whichever way its reader chooses to cope with the absence. That is what this
+# file did: it computed the right answer under the name `os_tier`, and the
+# measurement was thrown away on every run. host.json never leaves $RUNDIR and
+# never outlives the run, so there was no reader with the old name to keep
+# working and no compatibility window to observe -- which is why this is a
+# rename and not a second key.
 #
 # `port_layout` says which of the two port layouts the ports check judged this
 # box against: pre_install, post_install, post_install_incomplete, or unknown.
@@ -3219,7 +3322,7 @@ _tpot_pf_write_host_json() {
             printf '%s\t%s\t%s\n' os_major s "$_PF_OS_MAJOR"
             printf '%s\t%s\t%s\n' os_pretty s "$_PF_OS_PRETTY"
             printf '%s\t%s\t%s\n' supported b "$_PF_OS_SUPPORTED"
-            printf '%s\t%s\t%s\n' os_tier s "$_PF_OS_TIER"
+            printf '%s\t%s\t%s\n' matrix_tier s "$_PF_OS_TIER"
             printf '%s\t%s\t%s\n' forced b "$_PF_OS_FORCED"
             printf '%s\t%s\t%s\n' arch s "$_PF_ARCH"
             printf '%s\t%s\t%s\n' hostname s "$hostname"

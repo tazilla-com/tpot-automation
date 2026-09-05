@@ -159,11 +159,24 @@ Preflight tests each of these and refuses the run if one is unreachable, except 
 | CPUs | 2 | 4 | upstream states no figure; the floor is this project's |
 | Free disk | 64 GiB | 256 GiB | recommendation is upstream's hive figure; the floor is lower than upstream asks |
 
-Below a floor the run stops with exit `11`. `--force-low-resources` continues and records
-`forced: true` in `result.json`.
+Below a floor the run stops with exit `11`. `--force-low-resources` continues and adds
+`tpot_force_low_resources` to `invocation.forced` in `result.json` — the list of override flags a
+run was given, and the field to read when asking whether a floor was waived. It does not touch
+`host.forced`, which is a boolean only `--force-unsupported-os` sets and which stays `false` on a
+memory-forced run.
 
-`MemTotal` is physical RAM minus firmware and kernel reservations, so a machine provisioned with
-exactly 8192 MiB reports less and does not meet the memory floor. Provision above it.
+**A machine with 8 GB of RAM meets the memory floor.** `MemTotal` is physical RAM minus what
+firmware and the kernel reserve before `/proc/meminfo` is written, so a box given 8192 MiB reports
+less and always will: this project's own guest provisioned at 8192 MiB reports 7880, and across
+three guests the reservation measured 3.7–3.9%. The floor stays at upstream's figure and the
+comparison allows for the reservation: memory is measured against **95% of the floor, 7782 MiB**,
+and anything below that is still refused. Preflight applies that factor before the host is touched
+and the play applies the same one once it is running, so the two halves cannot disagree about
+which box is acceptable.
+
+**Memory alone is treated that way.** CPUs and free disk are compared with their floors as
+written. Nothing is lost between the processors a machine has and the ones the kernel counts, the
+disk floors are stated in whole GiB, and 95% of a CPU floor of 2 is 1.
 
 The disk floor is deliberately below upstream's stated minimum so that a modest test host can
 complete a run. T-Pot retains 30 days of captured data by default and re-pulls its images at every
@@ -176,7 +189,12 @@ start, so a host near the floor fills up over time; Elasticsearch is where that 
 | Platform | Status |
 |---|---|
 | Ubuntu 26.04, x86_64 | **Tested** — installed and **verified** 2026-09-05: exit `0`, 25/25 checks |
-| Debian 13, x86_64 | **Tested** — installed 2026-09-05; pre-reboot checks 14/14, T-Pot running after reboot |
+| Debian 13, x86_64 | **Tested** — installed 2026-09-05; pre-reboot checks 15/15, T-Pot running after reboot |
+
+Those check counts are what each dated run recorded at the release it was made on. Verification
+declares **27 checks today** — 17 before the reboot and 10 after — because releases since have
+added some; a smaller number in the table is a record of what a run saw, not a check that was
+lost. `tests/MATRIX-STATUS.md` is the dated record.
 
 Support is the intersection of upstream's own distribution gate at the pinned ref with this
 installer's `apt-get` requirement. `tools/pin-upstream.sh` computes it; move the pin and it is
@@ -275,6 +293,11 @@ from the schema defaults and will verify the wrong account, edition and ports.
 
 Exit `0` means installed and verified.
 
+**Run before the reboot, it answers `16` in seconds.** With `tpot.service` down and not one
+container of T-Pot's compose project running, the dashboard and Elasticsearch listeners cannot
+appear, so they are recorded as failed rather than waited out. Administrative SSH is never answered
+that way: it is the host's own `sshd`, and it is up on a box where no container has ever run.
+
 ### Installing over SSH
 
 The install moves `sshd` to 64295 while it runs. If the administrative port is firewalled between
@@ -294,10 +317,13 @@ ssh -S ~/.tpot.sock you@your-host     'cd /path/to/tpot-automation && setsid noh
 `/var/lib/tpot-automation/verify-config.json` (root-owned `0600`), written from the merged
 configuration with every secret removed.
 
-That file is also the manual recovery path:
+The unit runs the installer from a copy of this tree the same role leaves at
+`/usr/local/lib/tpot-automation`, root-owned `0700`. That copy is what the host keeps; `tests/`
+and `tools/` are left out of it, being development scaffolding with no job on a machine whose
+purpose is to be attacked. It is also the manual recovery path, and it is not on `PATH`:
 
 ```sh
-install.sh --verify-only --config /var/lib/tpot-automation/verify-config.json
+/usr/local/lib/tpot-automation/install.sh --verify-only --config /var/lib/tpot-automation/verify-config.json
 ```
 
 ---
@@ -335,7 +361,12 @@ English.
 * **`0` means installed *and* verified**, and nothing weaker. A fresh install that has not
   rebooted returns `20`.
 * **`20` is not a failure.** It is the successful first invocation. After the reboot,
-  `--verify-only` turns it into `0`.
+  `--verify-only` turns it into `0`. It is normally read from the play's own report; when that
+  report is missing or unreadable the decision falls back to the `verify-pending` marker
+  `roles/finalize` leaves behind, and `result.json`'s `warnings` array says that it did.
+* **No code is given for a fact the run could not establish.** A play that succeeds and leaves
+  nothing behind saying whether a reboot is required — no readable report *and* no marker —
+  returns `40`, never `0`. `0` is a claim about a verified box, and a claim needs evidence.
 * **Every failure code says how far the run got.** `11` never touched the host; `14` never ran
   upstream's installer; `16` has T-Pot installed and one assertion unhappy.
 
@@ -366,7 +397,7 @@ CODE  NAME              MEANING
 | `16` | Do not re-install. T-Pot is on the host; read `result.json`, fix the finding, and re-run `--verify-only`. |
 | — | A full re-run on an installed host installs nothing: preflight detects it, expects the post-install port layout, and applies configuration and verification only. |
 | `20` | Not a failure. Reboot, then `--verify-only`. |
-| `30`, `40` | Read the transcript first. `40` is a bug in this installer; attach the transcript to the report. |
+| `30`, `40` | Read the transcript first. A `40` after a play that **succeeded** means the run could not tell whether the box needs a reboot, and the box has probably been changed: run `--verify-only` and read `errors` in `result.json`. Every other `40` is a bug in this installer; attach the transcript to the report. |
 
 `lib/exitcodes.sh` is the source of truth. `docs/exit-codes.md` says what to do about each code.
 
@@ -380,8 +411,21 @@ Written on every path, including a failed or interrupted run.
 |---|---|
 | `/var/log/tpot-automation/install-<run-id>.log` | the transcript, redacted as it is written |
 | `/var/log/tpot-automation/ansible-<run-id>.log` | the playbook's own output. **Not redacted** — do not paste it into a bug report |
+| `/var/log/tpot-automation/upstream-install-<token>.log` | upstream's own Ansible log, copied out of the install account's home. Only from a run that got as far as upstream. **Not redacted** |
 | `/var/lib/tpot-automation/result.json` | the machine-readable outcome |
 | `/var/lib/tpot-automation/verify-config.json` | the configuration the post-boot unit verifies against |
+
+Upstream deletes its own log at the start of every run, so it is copied out after each one and the
+copy is named per run: a retry no longer destroys the evidence for the failure it was run to
+diagnose. `<token>` is not the same string as `<run-id>` — the run id is not passed into the
+playbook, so the copy is named after the run's temporary directory instead.
+
+**Rotation.** `roles/finalize` installs `/etc/logrotate.d/tpot-automation`, root-owned `0644`:
+monthly, twelve generations, compressed, and each rotated file created `0600 root root` so a
+transcript never becomes readable to anyone but root. Nothing else removes any of these files and
+they accumulate one set per run. A box with no `logrotate` on it, or an installer tree missing the
+shipped policy, leaves a warning in `result.json` and no policy — neither fails an install that is
+otherwise complete. A run that fails before `finalize` installs no policy at all.
 
 `--json` prints `result.json` on standard output and sends human output to standard error.
 
@@ -468,6 +512,12 @@ payload upstream clones. What upstream clones names a *mutable* image tag — ev
 `${TPOT_REPO}/<name>:${TPOT_VERSION}` and `TPOT_PULL_POLICY=always`. Two installs from the same
 commit a month apart can run different containers, and the nightly reboot re-pulls them again.
 `result.json` reports this as `upstream.pins_payload: false`, permanently.
+
+**Verification says when the payload has moved.** During an install it compares the number of
+services in the compose file on the box against the count `tools/pin-upstream.sh` recorded for that
+edition at pin time. A disagreement is a **warning** — in the run's output and in `result.json` —
+and never a failure, because the paragraph above is the reason the two can honestly differ. A
+`--verify-only` run loads no pin-time count and records that check as skipped.
 
 **A sha pin makes re-running less safe, not more.** With a sha, upstream's `check_tpot_clone`
 matches an existing checkout and skips the clone — over a tree it never refreshes (`update: no`)

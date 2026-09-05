@@ -4,11 +4,11 @@ Two messages the installer prints point here: the exposure line in its
 preflight report, and the closing notice after an install. This is what they
 point at.
 
-**Neither has ever been printed.** The exposure line is a preflight stage B
-check, and every run this project has made was unprivileged, so stage A fails
-on the `root` check and stage B is never reached; the closing notice belongs to
-the end of a completed install, and no install has ever been completed on any
-machine. Both are written, both name this file, and nobody has seen either.
+**Both have been printed on real hosts**, on the two platforms dated in
+`tests/MATRIX-STATUS.md`: the exposure line is a preflight stage B check, which
+those runs reached, and the closing notice is what an install ends with. On this
+project's own development box neither appears — it is unprivileged, so stage A
+refuses at the `root` check and nothing after it runs.
 
 **Read the short version first, because it is the whole of this project's
 position:** this installer adds no firewall rules, upstream T-Pot's own
@@ -17,7 +17,7 @@ has written down which ports a T-Pot must leave open — so we do not ship a
 default that would guess. The rest of this page is that sentence with its
 evidence, plus a worked example you apply yourself.
 
-## Nothing here has ever been applied to a real T-Pot
+## What here was read, what was observed, and what was not
 
 Every claim below about **upstream** is read from upstream's own source and
 documentation and recorded in `notes/upstream-facts.md` — a project record kept
@@ -30,9 +30,12 @@ running the tree's own gates and `install.sh --preflight-only` on a developer
 box.
 
 The port layout on this page was observed on an installed honeypot once, on
-2026-09-05 (`tests/MATRIX-STATUS.md`). **The example ruleset at the end was not**:
-no filtering of any kind has been applied by this project to a host running
-T-Pot. Treat it as a starting point you verify, not as a tested recipe.
+2026-09-05 (`tests/MATRIX-STATUS.md`): administrative SSH answered on tcp/64295,
+the dashboard on tcp/64297, Elasticsearch on tcp/64298 bound to 127.0.0.1, and
+tcp/22 answered as a honeypot rather than as the host's `sshd`. **The example
+ruleset at the end was not observed**: no filtering of any kind has been applied
+by this project to a host running T-Pot. Treat it as a starting point you verify,
+not as a tested recipe.
 
 ## What this installer configures: nothing
 
@@ -227,9 +230,12 @@ reboots the host every night.
    governs it. The dashboard and Elasticsearch are served by containers, and
    whether those are host-networked or published through Docker's NAT decides
    whether an `input` hook ever sees that traffic at all — published container
-   ports are DNATed and traverse `forward`, not `input`. **This project has not
-   established which of the two T-Pot uses at any given ref**, so verify from
-   outside rather than assuming the `drop` line above did anything for 64297.
+   ports are DNATed and traverse `forward`, not `input`. On the one host where
+   this was looked at (Ubuntu 26.04, 2026-09-05) both ports had a host-level
+   listening socket, which is what Docker's userland proxy provides; that is one
+   box at one ref, and it does not by itself say where a packet arriving from
+   another machine is filtered. **Verify from outside** rather than assuming the
+   `drop` line above did anything for 64297.
    If it did not, the rule you need belongs in the `forward` hook or in
    Docker's own chain, and getting that wrong breaks container networking in
    ways that are much louder than a missed honeypot port.
@@ -276,6 +282,6 @@ replaced by it and the change is recorded in `CHANGELOG.md`.
 
 * `docs/exit-codes.md` — what `install.sh` returns and what to do about each
   code.
-* `README.md` — the *Firewall, and what upstream changes* section, which is the
-  short form of this page, and the installer's closing notice, which is the
+* `README.md` — the *Firewall* section, which is the short form of this page,
+  and the closing notice reproduced in *What it does to the host*, which is the
   text you actually see at the end of a run.

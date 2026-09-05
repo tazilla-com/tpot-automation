@@ -4,9 +4,14 @@
 
 | Platform | Status | Basis |
 |---|---|---|
-| Debian 13 (`trixie`), x86_64 | **Tested** | installed 2026-09-05; pre-reboot checks 14/14, T-Pot running after reboot. See `tests/MATRIX-STATUS.md` |
+| Debian 13 (`trixie`), x86_64 | **Tested** | installed 2026-09-05; pre-reboot checks 15/15, T-Pot running after reboot. See `tests/MATRIX-STATUS.md` |
 | Ubuntu 26.04, x86_64 | **Tested** | installed and **verified** 2026-09-05: exit `0`, 25/25 checks. See `tests/MATRIX-STATUS.md` |
 | Everything else | **Unsupported** | see the gate table below |
+
+**The check counts in that table are what each run recorded, at the release it was made on.**
+Verification declares **27 checks today** — 17 before the reboot and 10 after — and releases since
+those runs have added some. A smaller number above is therefore a dated observation, not a check
+that has gone missing; renumbering it would falsify the record it came from.
 
 Compatibility is the intersection of two constraints:
 
@@ -43,7 +48,8 @@ this ref — its gate requires major 13 while `download.docker.com/linux/raspbia
 
 ## What "expected to work" means
 
-The tested row is Debian 13 on x86_64, installed from a Proxmox cloud image.
+The tested rows are Debian 13 and Ubuntu 26.04, both on x86_64, both Proxmox guests — Debian from
+a stock cloud image, Ubuntu from a golden template built for the purpose.
 
 **Any Debian 13 system is expected to work**, however it was provisioned — netinst, cloud image,
 vendor image, or a container host — provided it meets the requirements in `README.md`. Nothing in

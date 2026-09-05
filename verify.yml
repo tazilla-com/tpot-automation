@@ -27,8 +27,18 @@
 #   Change anything. This play is assertions and a report. If a check needs
 #   the box to be different in order to pass, that is a finding, not a repair.
 #
-# NOTHING HERE HAS EVER RUN AGAINST AN INSTALLED BOX. No T-Pot has ever been
-# installed by this project. Read the assertions as specified, not observed.
+# THIS PLAY HAS RUN AGAINST AN INSTALLED BOX, IN BOTH OF ITS ROLES
+#   Before a reboot it refused, correctly: exit 16, with the administrative
+#   SSH check passing and the two container listeners failing. After a reboot
+#   it reached 0, with 25 of 25 checks passing. Both of the invocation paths
+#   above have been taken -- the systemd unit fired on its own and returned 16
+#   because it caught T-Pot mid-start, which is this design refusing rather
+#   than failing, and a run made once the containers had settled returned 0.
+#
+#   tests/MATRIX-STATUS.md dates all of that and is the authority. What has
+#   not been observed is a check failing for any reason other than a box that
+#   was not ready yet, so read each check's diagnosis text below as specified
+#   rather than seen.
 
 - name: Verify an installed T-Pot
   hosts: tpot

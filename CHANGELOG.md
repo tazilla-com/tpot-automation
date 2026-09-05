@@ -5,6 +5,89 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-09-05
+
+### Changed
+
+**An 8 GB machine now meets the 8 GB floor.** `tpot_min_memory_mb` stays **8192** — it is
+upstream's own stated Sensor minimum, not a number of ours — but memory alone is now compared
+against **95% of it, 7782 MiB**. `MemTotal` is physical RAM minus the firmware and kernel
+reservation on every Linux, always, so a machine advertised as 8 GB reports less and could never
+have met a floor expressed in provisioned RAM. Measured on three of this project's guests:
+8192 -> 7880, 9216 -> 8876, 9216 -> 8864 — a 3.7-3.9% reservation.
+
+The damage this removes is not the inconvenience. It is that the operator of a correctly-sized box
+was pushed onto `--force-low-resources`, **which also silences the CPU and disk floors** — so a
+wrong number cost two checks that were not wrong.
+
+The tolerance is memory-only and is deliberately not applied in the shared threshold helper: 95% of
+a 2-core floor is 1.9. Both halves of the installer carry the factor as a whole percent and divide
+by 100 with integer arithmetic, so `lib/preflight.sh` and `roles/preflight` cannot disagree at the
+boundary value — which is the one value where disagreement would mean a box accepted before the
+first mutation and refused after it.
+
+**`--verify-only` answers in seconds instead of 620 s when it can.** If `tpot.service` is inactive
+and no container of the compose project is running, the dashboard and Elasticsearch listeners
+cannot appear, and that is a decidable fact rather than something to wait ten minutes for. The
+refusal is positively recorded, never a skipped task. **Administrative SSH is never short-circuited
+and must never be**: tcp/64295 is the host's own sshd, which is up and answering on a box where not
+one container has ever run.
+
+**The container count is now waited for, with the floor unmoved.** The post-boot unit fires
+unattended and could lose a race with container startup — it found 36 of 39 up on 2026-09-05 and
+recorded 16. `After=tpot.service` cannot help: upstream's unit is `Type=simple` running a
+`docker compose up` that never returns, so systemd calls it active before a single container
+exists. The wait therefore belongs in the play, and it reuses `tpot_verify_retries` and
+`tpot_verify_delay` rather than introducing a knob. **Only the moment the verdict is taken
+changed; the number it is taken against did not.**
+
+### Fixed
+
+**A run that cannot establish whether a reboot is required no longer reports success.** On a normal
+install `ansible-report.json` is the only thing separating exit 20 from exit 0, and its write is
+`failed_when: false` — silent by construction. A missing report therefore produced **exit 0 and a
+banner reading "installed and verified"** for a box that never rebooted and was never verified.
+`install.sh` now falls back to the verify-pending marker it already had in hand, records which
+artefact answered, and exits 40 rather than 0 when neither can answer.
+
+**The tier `result.json` publishes is the tier preflight measured.** Preflight wrote `os_tier`
+into `host.json`; `result.json` read `matrix_tier`. A key name was never agreed, so the correct
+answer was computed and then discarded — a supported box was published as `legacy`, and a genuine
+legacy box as `unsupported`, a release nobody has heard of. The producer now emits `matrix_tier`,
+a missing tier reads `unknown` instead of being reconstructed from a boolean, and a new test
+crosses the producer-to-consumer seam that 312 green tests never touched.
+
+**Log rotation is installed.** `lib/tpot-automation.logrotate` asserted in a shipped file that it
+was installed by a function with no callers anywhere in the repo. `roles/finalize` now installs it;
+the dead function is gone.
+
+**A retry no longer destroys the first failure's evidence.** The upstream install log copy is
+run-scoped.
+
+**GitHub Actions are pinned to commit SHAs**, in a project whose central argument is that a mutable
+ref is not a pin. The comments claiming this could not be done — because the build box supposedly
+had no network — were false and are gone.
+
+`tests/` and `tools/` are no longer copied into the permanent, honeypot-resident tree.
+
+### Documentation
+
+Roughly thirty shipped files asserted the pre-2026-09-05 world in comments an operator reads —
+*"No T-Pot has ever been installed by this project"*, *"This box has no network"*. 1.0.7 believed
+this class was closed; it had fixed a list rather than a pattern, and the sweep missed more than it
+caught. Each is now written so it stays true after the next run rather than expiring on it.
+
+Two counts were wrong in the other direction: the Debian row recorded 14/14 pre-reboot checks
+against a dated record of 15, and the declared count had drifted unremarked since 1.0.1. Dated
+observations are left as they were recorded — renumbering a record falsifies it — and the current
+declared count is stated separately.
+
+`--force-low-resources` was documented as recording `forced: true`. `result.json` has two different
+`forced` fields: `invocation.forced` is a list of flag names and does receive it; `host.forced` is
+a boolean answering only whether an unsupported OS was forced. Anyone auditing whether a floor was
+forced would have read the wrong one — including `tests/MATRIX-STATUS.md`, which cited it as
+evidence.
+
 ## [1.0.7] - 2026-09-05
 
 ### Changed

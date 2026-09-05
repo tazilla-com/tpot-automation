@@ -21,7 +21,17 @@
 #   which is the difference between "verification failed" and "verification
 #   failed at env_web_user because .env has no WEB_USER line".
 #
-# NOTHING IN THIS FILE HAS EVER RUN AGAINST AN INSTALLED BOX.
+# WHAT HAS BEEN OBSERVED, AND WHAT THAT DOES AND DOES NOT COVER
+#   Every check declared in this file at the time ran against a real installed
+#   host and passed: ubuntu:26.04, 2026-09-05, dated in tests/MATRIX-STATUS.md.
+#   The probes work, the parsing works, and the records reach result.json.
+#
+#   What that run did not exercise is every BRANCH. It was one edition (h),
+#   telemetry off, on one release -- so the `fail` arm of each check, the
+#   telemetry-on arm, and every edition whose compose file differs are still
+#   only reasoned about. When you write about this file, say which of the two
+#   you are relying on: a `pass` branch here is measured, a `fail` branch is
+#   specified.
 
 # ===========================================================================
 # The T-Pot account
@@ -875,6 +885,135 @@
       container floor {{ tpot_verify_container_floor | int }}, from
       {{ tpot_verify_container_floor_source }}
     quiet: true
+
+# ---------------------------------------------------------------------------
+# The pin-time count, compared against the box. A RECORD, NEVER A VERDICT.
+#
+# WHAT THE TWO NUMBERS ARE
+#   tools/pin-upstream.sh reads upstream's compose files at the pinned ref and
+#   writes, into roles/tpot_install/vars/upstream-<ref>.yml, how many service
+#   blocks each edition declares: `services` before the telemetry removal and
+#   `min_containers` after it. This role, separately and later, counts the
+#   service blocks in the compose file that is actually ON THE BOX. Both are
+#   the number of keys in the top-level `services:` mapping of one edition's
+#   compose file, and they are MEANT TO BE EQUAL -- 39 and 39 on the standard
+#   edition, measured 2026-09-05.
+#
+# WHICH OF THE PIN'S TWO MAPS APPLIES IS DECIDED BY THE TELEMETRY SETTING, and
+# that is the one legitimate difference between them. With telemetry off this
+# installer removes the ewsposter block, so the installed file matches
+# `min_containers`. With it on nothing is removed, so the box carries one MORE
+# service and matches `services`. Comparing against the wrong map would produce
+# an off-by-one disagreement on every telemetry-on install.
+#
+# WHY IT IS A WARNING AND NOT AN ASSERTION -- THE POINT OF THE WHOLE CHECK
+#   A disagreement does not mean the install is broken. It means one of two
+#   interesting things happened: upstream changed an edition under a ref that
+#   is supposed to be immutable, or something rewrote docker-compose.yml after
+#   the install. Both are worth a human's attention and neither is a reason to
+#   refuse a box whose containers are all running. The floor this role verifies
+#   against is still the count taken from the installed file -- the better
+#   source, because it measures the machine in front of us -- and this check
+#   changes nothing about it.
+#
+# `warn` IS A NEW WORD IN THIS ROLE AND IT IS DELIBERATE. Until now this file
+# emitted pass, fail, skipped and inconclusive. `warn` already exists in
+# preflight's vocabulary (lib/preflight.sh) with exactly this meaning, so it is
+# a word the product already has rather than one invented here. Nothing fails
+# on it: tasks/main.yml's end-of-role gate looks only at post-reboot records
+# that came back `skipped`, and there is no assertion below this record.
+#
+# TWO ABSENCES ARE `skipped`, AND THEY ARE NOT THE SAME ABSENCE
+#   1. tpot_install_upstream is UNDEFINED. verify.yml runs this role alone, so
+#      on `install.sh --verify-only` -- and in the post-boot oneshot, which is
+#      the unattended path -- roles/tpot_install never ran and never loaded a
+#      data file. That is the NORMAL state of a verify run, not a defect, so it
+#      may not read as a disagreement.
+#   2. The data file loaded was the FALLBACK,
+#      roles/tpot_install/vars/upstream-default.yml, which carries
+#      `min_containers: {}` and no `services` key at all. Indexing the missing
+#      one raises rather than returning nothing, which is why every access
+#      below goes through `.get(..., default)` and never through `[...]`.
+#      A run that got here on the fallback has a bigger problem than this
+#      check -- roles/tpot_install refuses to install without a sha256 -- but
+#      this file must not be the thing that reports it, and must not die.
+#
+#   Both are `skipped` with a reason that says which. A skipped record here is
+#   not gated by anything: unlike the post-reboot half, a pre-reboot check that
+#   could not look is not a reason to refuse the run.
+# ---------------------------------------------------------------------------
+- name: Decide which of the pin's two counts this box should equal
+  ansible.builtin.set_fact:
+    # `!= 'off'` and not `== 'on'`, matching the telemetry check above: the
+    # value is an enum whose only opt-out is the literal string "off", and
+    # anything else leaves upstream's block in place.
+    tpot_verify_pin_map_name: >-
+      {{ (tpot_upstream_telemetry != 'off') | ternary('services', 'min_containers') }}
+    # Asked separately from the count below, because "the pin was never loaded"
+    # and "the pin was loaded and has no number for this edition" are different
+    # facts with different fixes, and one sentinel cannot carry both.
+    tpot_verify_pin_loaded: "{{ tpot_install_upstream is defined }}"
+
+- name: Take the pin's count for this install type, if it recorded one
+  ansible.builtin.set_fact:
+    # Two `.get`s and no `[...]` anywhere, deliberately: the outer one survives
+    # the fallback data file having no `services` key, the inner one survives a
+    # map that is present but empty, and the `| default({}, true)` between them
+    # survives tpot_install_upstream being undefined altogether. 0 is the
+    # sentinel for "no number", and it cannot collide with a real one -- a
+    # compose file with no services could not have produced a pin at all, and
+    # this role has already refused such a file above.
+    tpot_verify_pin_expected: >-
+      {{ ((tpot_install_upstream | default({}, true)).get(tpot_verify_pin_map_name, {})
+          | default({}, true)).get(tpot_install_type, 0) | int }}
+
+- name: Record whether the installed service count agrees with the pin
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'compose_count_matches_pin', 'phase': 'pre-reboot',
+         'status': (not (tpot_verify_pin_loaded | bool)) | ternary('skipped',
+                   ((tpot_verify_pin_expected | int) < 1) | ternary('skipped',
+                   ((tpot_verify_compose_services | length) == 0) | ternary('skipped',
+                   ((tpot_verify_compose_services | length) == (tpot_verify_pin_expected | int))
+                   | ternary('pass', 'warn')))),
+         'reason': (not (tpot_verify_pin_loaded | bool))
+                   | ternary('roles/tpot_install did not run in this play, so no pin-time '
+                             ~ 'count was loaded to compare against. This is the ordinary '
+                             ~ 'state of a --verify-only run and of the post-boot unit.',
+                   ((tpot_verify_pin_expected | int) < 1)
+                   | ternary('the loaded upstream data file records no '
+                             ~ tpot_verify_pin_map_name ~ ' count for install type '
+                             ~ tpot_install_type ~ '; the fallback '
+                             ~ 'roles/tpot_install/vars/upstream-default.yml carries none '
+                             ~ 'by design, and tools/pin-upstream.sh writes the real one',
+                   ((tpot_verify_compose_services | length) == 0)
+                   | ternary(tpot_verify_compose_file ~ ' yielded no service count, so there '
+                             ~ 'is nothing on this box to compare the pin against',
+                             (tpot_verify_compose_services | length | string)
+                             ~ ' service(s) installed, pin records '
+                             ~ (tpot_verify_pin_expected | int | string) ~ ' ('
+                             ~ tpot_verify_pin_map_name ~ '[' ~ tpot_install_type
+                             ~ '], telemetry ' ~ tpot_upstream_telemetry ~ ')')))}] }}
+
+- name: Warn when the installed service count and the pin disagree
+  # The record above carries the same fact in typed form; this is what puts it
+  # in front of a human. Never an assertion: see the block above for why a
+  # disagreement is "look at this" and not "this install is broken".
+  ansible.builtin.set_fact:
+    tpot_run_warnings: >-
+      {{ tpot_run_warnings + [tpot_verify_compose_file ~ ' declares '
+         ~ (tpot_verify_compose_services | length | string) ~ ' service(s) but the pinned '
+         ~ 'upstream ref recorded ' ~ (tpot_verify_pin_expected | int | string)
+         ~ ' for install type ' ~ tpot_install_type ~ ' (' ~ tpot_verify_pin_map_name
+         ~ ', telemetry ' ~ tpot_upstream_telemetry ~ '). Verification still uses the '
+         ~ 'installed count as its floor. Two things produce this: upstream changed the '
+         ~ 'edition under a ref that is supposed to be immutable, or something rewrote '
+         ~ 'the compose file after the install.'] }}
+  when:
+    - tpot_verify_pin_loaded | bool
+    - (tpot_verify_pin_expected | int) >= 1
+    - (tpot_verify_compose_services | length) > 0
+    - (tpot_verify_compose_services | length) != (tpot_verify_pin_expected | int)
 
 # ===========================================================================
 # docker, the unit, and the one kernel setting Elasticsearch needs

@@ -43,8 +43,14 @@
 #   variable: tests/check-stage-map.sh finds them by matching the literal, and
 #   a stage it cannot see is one that silently reports 40.
 #
-# NOTHING BELOW HAS EVER RUN. No virtual machine, no root, no docker, no
-# T-Pot, ever. Every assertion here is what this role is specified to do.
+# THIS ROLE HAS RUN, AND THE FOUR FACTS ABOVE HELD ON A REAL BOX
+#   Upstream was driven to completion from here and T-Pot came up afterwards;
+#   tests/MATRIX-STATUS.md dates which (ref x platform) pairs and is the
+#   authority rather than this comment. What was exercised is the DEFAULT
+#   path: the pinned ref, one edition, the default account policy, a clean
+#   box, no --force-* override. The branches that configuration did not take
+#   -- the other editions, a re-run over an existing checkout, and every
+#   failure path below -- are still what this role is specified to do.
 
 # ---------------------------------------------------------------------------
 # The stage marker comes first, before anything can fail, so that a failure in

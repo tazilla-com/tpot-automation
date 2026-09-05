@@ -53,8 +53,21 @@ tpot_admin_ssh_port: 64295
 tpot_dashboard_port: 64297
 tpot_elasticsearch_port: 64298
 
-# How long the post-reboot listener checks wait. The containers come up over
-# minutes, not seconds; see the note on the total in tasks/post-reboot.yml.
+# How long the post-reboot half waits for a thing that is still coming. The
+# containers come up over minutes, not seconds; see the note on the total in
+# tasks/post-reboot.yml.
+#
+# THESE TWO NOW BOUND TWO WAITS, NOT ONE, and deliberately share one pair of
+# numbers. The listener checks wait for a socket to appear, and the container
+# count waits for the containers to come up -- and a box slow enough to need
+# more patience for one is slow for the same reason in the other. A second
+# pair of knobs would be a second thing to get wrong and a second thing to
+# document.
+#
+# NEITHER OF THEM MOVES A THRESHOLD. Raising them buys more time for a healthy
+# box to finish starting; the container floor and every verdict stay exactly
+# where they were. That separation is the point: patience is configurable, the
+# standard is not.
 tpot_verify_retries: 30
 tpot_verify_delay: 10
 

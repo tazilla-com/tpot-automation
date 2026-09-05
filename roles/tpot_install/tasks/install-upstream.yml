@@ -31,8 +31,16 @@
 #   somebody re-runs to see what happened -- which is the first thing anybody
 #   does. Copying it out is not tidiness.
 #
-# NOTHING HERE HAS EVER RUN. Upstream's installer has never been executed by
-# this project, on any machine.
+# UPSTREAM HAS BEEN DRIVEN FROM HERE, AND IT TAKES MINUTES RATHER THAN
+# SECONDS
+#   On the runs dated in tests/MATRIX-STATUS.md upstream's own installer ran
+#   for between three and four minutes and returned 0, and T-Pot came up
+#   after the reboot. That is the SUCCESS path, and it is the only one of
+#   this file's paths that has been taken. The ninety-minute timeout, a
+#   non-zero return, and above all the log collection in `always:` on a
+#   failing run are still specified rather than observed -- which is worth
+#   knowing about the last one in particular, because it is the only evidence
+#   a failed install leaves behind.
 
 # ---------------------------------------------------------------------------
 # THE PRECONDITION UPSTREAM ITSELF ENFORCES, CHECKED FIRST SO THAT THE

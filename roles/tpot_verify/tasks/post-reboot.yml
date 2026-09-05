@@ -24,7 +24,17 @@
 #   already selected -- which is a different question ("bound where?") and one
 #   a filter cannot answer for us.
 #
-# NOTHING IN THIS FILE HAS EVER RUN AGAINST AN INSTALLED BOX.
+# WHAT HAS BEEN OBSERVED, AND WHAT THAT DOES AND DOES NOT COVER
+#   Every check in this file ran against a real installed host and passed:
+#   ubuntu:26.04, standard edition, 2026-09-05, dated in
+#   tests/MATRIX-STATUS.md. The listener waits, the ss filters, the container
+#   count and the unit check all did what they say.
+#
+#   Two things that run did NOT cover, and both are why this file changed
+#   afterwards. It never took a `fail` branch on a healthy box, and it was
+#   watched by a human -- so the two timing defects below were found by the
+#   clock and by the post-boot unit, not by the checks themselves. Read the
+#   block above the probe pair for what was measured.
 
 # ===========================================================================
 # The administrative listeners
@@ -89,6 +99,165 @@
                       if 'listen_elasticsearch' not in tpot_verify_listener_ids_expected
                       else []) }}
 
+# ===========================================================================
+# The two readings everything below is timed against
+# ===========================================================================
+#
+# WHY THIS PAIR COMES BEFORE ANY WAIT. Two measurements, taken from real runs
+# on 2026-09-05, and they are the opposite of each other:
+#
+#   1. `install.sh --verify-only` against a box that had NOT rebooted took
+#      620 s to say so. Two listener waits, 30 attempts of 10 s each, for two
+#      listeners that were never going to appear: the unit was stopped and not
+#      one container was running. Nothing was learned in those ten minutes
+#      that was not already true in the first second.
+#   2. The post-boot oneshot the finalize role arms fires unattended, and it
+#      lost the race the other way: it counted 36 of 39 containers up and
+#      recorded exit 16, because it looked once, too early.
+#
+#   `After=tpot.service` is already in that unit and CANNOT fix (2). Upstream's
+#   tpot.service is Type=simple running a `docker compose up` that never
+#   returns, so systemd calls it active before a single container exists, and
+#   ordering after it buys nothing. There is no readiness protocol to wait on,
+#   which is why the waiting belongs here, inside the play, where the thing
+#   being waited for can actually be counted.
+#
+# ONE PAIR OF READINGS SETTLES BOTH, and that is why they are taken together:
+# the unit's state says whether anything is still coming, and the container
+# count -- polled, not sampled -- says whether it has arrived. The fast path
+# below and the container verdict at the foot of this file read the same
+# count. There is exactly one `docker ps` for it.
+#
+# THE FLOOR IS UNTOUCHED BY ALL OF THIS. What changed is the moment the
+# verdict is taken, never the number it is taken against:
+# tpot_verify_container_floor is still decided in pre-reboot.yml out of the
+# installed compose file, and the comparison below is still `>=` against it.
+
+# WHY THIS IS A SECOND PROBE AND NOT A REUSE OF tpot_verify_unit_active. The
+# tpot_service_active record at the foot of this file asks systemd the same
+# question, and it must keep asking it THERE. The two readings are minutes
+# apart on a slow box, and a unit that was active when this file started and
+# has since died is a finding -- one this file would stop being able to make if
+# the closing record were served from a reading taken before the wait. A
+# `systemctl is-active` costs nothing; a record that describes the wrong moment
+# costs a wrong diagnosis.
+- name: Ask systemd whether the T-Pot unit is running, before waiting on what it starts
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - "{{ tpot_verify_service_unit }}"
+  register: tpot_verify_unit_early
+  # This task reads the WORD systemd prints, not the exit status: `is-active`
+  # exits non-zero for every state except `active`, so a dead unit is the
+  # answer here rather than an error.
+  changed_when: false
+  failed_when: false
+
+- name: Count the running containers of the T-Pot compose project, waiting for them
+  ansible.builtin.command:
+    argv:
+      - docker
+      - ps
+      - --filter
+      - "label=com.docker.compose.project={{ tpot_verify_compose_project }}"
+      - --format
+      - "{% raw %}{{.Names}}{% endraw %}"
+  register: tpot_verify_running
+  # The label is the only reliable selector: container names are upstream's
+  # and change between editions. It is DERIVED from the directory holding the
+  # compose file -- there is no COMPOSE_PROJECT_NAME in upstream's .env, no
+  # `name:` key in any compose file and no project flag on any invocation --
+  # so renaming the checkout silently empties this list on a healthy box.
+  changed_when: false
+  failed_when: false
+  # THREE WAYS OUT, AND THE ORDER THEY ARE WRITTEN IN IS THE ORDER THEY MATTER.
+  #
+  #   rc != 0        docker did not answer. Retrying is pointless and slow:
+  #                  tpot.service requires the daemon, so a daemon that is not
+  #                  answering while the unit is up is a broken box, not a
+  #                  starting one. Leaving at once preserves exactly what this
+  #                  check did before the wait existed -- record `skipped`,
+  #                  and let the gate in tasks/main.yml refuse the run.
+  #   floor reached  the answer this poll exists to wait for.
+  #   unit dead      nothing is coming. `docker compose up` is what starts
+  #                  these containers and the unit is what runs it, so with
+  #                  the unit inactive or failed the count cannot rise, and
+  #                  waiting five minutes to confirm it teaches nobody
+  #                  anything. This is also the reading the fast path below
+  #                  acts on.
+  #
+  # The floor is referenced without a `| default(...)`, deliberately, like
+  # every other use of it in this file: reaching here without pre-reboot.yml
+  # having run should stop the run, not silently compare against zero.
+  until: >-
+    (tpot_verify_running.rc | default(1)) != 0
+    or (tpot_verify_running.stdout_lines | default([]) | select('search', '.') | list | length)
+       >= (tpot_verify_container_floor | int)
+    or (tpot_verify_unit_early.stdout | default('') | trim) in tpot_verify_unit_dead_states
+  # The same two knobs the listener wait uses, on purpose: a box slow enough to
+  # need a longer listener wait is slow for the same reason its containers are
+  # slow, and a second pair of numbers would be a second thing to get wrong.
+  retries: "{{ tpot_verify_retries | int }}"
+  delay: "{{ tpot_verify_delay | int }}"
+
+- name: Count the containers docker reported as running
+  ansible.builtin.set_fact:
+    # THE FLOOR IS NOT DECIDED HERE. tpot_verify_container_floor and
+    # tpot_verify_container_floor_source are set by tasks/pre-reboot.yml, out
+    # of the installed compose file, and asserted there to be at least 1 --
+    # read the long note beside that assertion for why a floor of zero is not
+    # a floor. Only the measurement belongs on this side of the reboot.
+    tpot_verify_running_n: >-
+      {{ tpot_verify_running.stdout_lines | default([]) | select('search', '.') | list | length }}
+
+# ---------------------------------------------------------------------------
+# THE FAST PATH. Positive evidence only, and never for administrative SSH.
+#
+# WHAT IT CLAIMS. If the unit is inactive or failed, AND docker answered, AND
+# it reports zero containers in this compose project, then the nginx dashboard
+# and Elasticsearch cannot be listening -- they ARE containers of that project.
+# That is a decidable fact about the box, available in two commands, and it is
+# the same fact the box would still be reporting ten minutes later.
+#
+# WHY listen_admin_ssh IS NOT IN IT, and this is the part to not "improve".
+# tcp/64295 is the HOST's own sshd, moved there by upstream's install and
+# started by the host's own unit. It is up and answering on a box where not
+# one container has ever run -- observed exactly so on 2026-09-05, where
+# listen_admin_ssh passed while the other two timed out. Short-circuiting all
+# three would record a false failure for the one service that was working, and
+# for the one an operator needs in order to go and look. The set comes from
+# tpot_verify_container_borne_listener_ids in vars/main.yml, which carries the
+# same warning beside it.
+#
+# EVERY TERM IS POSITIVE. A dead unit is a state systemd named, not the absence
+# of a state we recognise; docker answering is rc 0, not an empty reading; zero
+# containers is a count, not a missing register. If any of the three cannot be
+# established the fast path does not fire and the ordinary wait happens, which
+# is the direction that costs time rather than truth.
+#
+# AND IT RECORDS, IT DOES NOT SKIP. The two listeners are given a `fail` with a
+# reason naming this evidence, by the record task below, and their ports are
+# added to tpot_verify_listen_missing so the assertion still fires on them. A
+# `when:` that merely skipped the wait would leave two checks asserting
+# nothing, which is a worse outcome than the ten minutes it saves.
+# ---------------------------------------------------------------------------
+- name: Decide whether the container-borne listeners can still appear
+  ansible.builtin.set_fact:
+    tpot_verify_fastpath: >-
+      {{ ((tpot_verify_unit_early.stdout | default('') | trim) in tpot_verify_unit_dead_states)
+         and (tpot_verify_running.rc | default(1)) == 0
+         and (tpot_verify_running_n | int) == 0 }}
+
+- name: Note which listeners the fast path answers without waiting
+  ansible.builtin.set_fact:
+    # Sorted so the reason strings and the assertion message are stable between
+    # runs: `intersect` is a set operation and does not promise an order.
+    tpot_verify_fastpath_ids: >-
+      {{ (tpot_verify_fastpath | bool)
+         | ternary(tpot_verify_listener_ids_expected
+                   | intersect(tpot_verify_container_borne_listener_ids) | sort, []) }}
+
 - name: Wait for each administrative listener to come up
   ansible.builtin.command:
     argv:
@@ -113,41 +282,97 @@
   # everything else waits on its health check. Worst case is
   # tpot_verify_retries x tpot_verify_delay PER PORT -- 30 x 10s x 3 = 15
   # minutes on a box where nothing ever starts. That is the price of naming
-  # which listener is missing instead of only that one was.
+  # which listener is missing instead of only that one was, and the fast path
+  # above is what stops it being paid on a box that has not rebooted, where
+  # the answer was already known before the first attempt.
   until: (tpot_verify_listen.stdout | default('') | trim | length) > 0
   retries: "{{ tpot_verify_retries | int }}"
   delay: "{{ tpot_verify_delay | int }}"
-  when: item.id in tpot_verify_listener_ids_expected
+  when:
+    - item.id in tpot_verify_listener_ids_expected
+    # Not a way of passing this check -- the opposite. An id here has already
+    # been proved unable to appear, and the record task below writes it a
+    # `fail` naming that evidence while the assertion picks its port up out of
+    # tpot_verify_listen_missing. Skipping the wait is all this does.
+    - item.id not in tpot_verify_fastpath_ids
 
 - name: Record each administrative listener
+  # THREE OUTCOMES, AND THE MIDDLE ONE IS THE FAST PATH'S. The order below is
+  # the order they are decided in:
+  #
+  #   skipped  this edition ships no such listener. A final answer, not a hole.
+  #   fail     the fast path proved it cannot appear -- recorded HERE, with the
+  #            evidence in the reason, because the wait was skipped and a
+  #            skipped task states nothing. This is the whole reason the fast
+  #            path is not a bare `when:` on the wait above.
+  #   pass or  the wait ran, and ss either saw a socket or did not.
+  #   fail
   ansible.builtin.set_fact:
     tpot_verify_results: >-
       {{ tpot_verify_results + [{'id': item.item.id, 'phase': 'post-reboot',
          'status': (item.item.id not in tpot_verify_listener_ids_expected) | ternary('skipped',
+                   (item.item.id in tpot_verify_fastpath_ids) | ternary('fail',
                    ((item.stdout | default('') | trim | length) > 0)
-                   | ternary('pass', 'fail')),
+                   | ternary('pass', 'fail'))),
          'reason': (item.item.id not in tpot_verify_listener_ids_expected)
                    | ternary('install type ' ~ tpot_install_type ~ ' has no '
                              ~ item.item.what,
+                   (item.item.id in tpot_verify_fastpath_ids)
+                   | ternary('nothing can be listening on tcp/' ~ item.item.port ~ ': '
+                             ~ item.item.what ~ ' runs in a container of the '
+                             ~ tpot_verify_compose_project ~ ' compose project, '
+                             ~ tpot_verify_service_unit ~ ' is "'
+                             ~ (tpot_verify_unit_early.stdout | default('') | trim)
+                             ~ '", and docker reports 0 running containers of that project. '
+                             ~ 'Waiting '
+                             ~ (((tpot_verify_retries | int) * (tpot_verify_delay | int)) | string)
+                             ~ 's would not have changed that. The usual cause is a box that '
+                             ~ 'has not been rebooted since the install.',
                              ((item.stdout | default('') | trim | length) > 0)
                              | ternary('listening on tcp/' ~ item.item.port,
                                        'nothing listens on tcp/' ~ item.item.port
                                        ~ ' after ' ~ (tpot_verify_retries | int | string)
-                                       ~ ' attempts'))}] }}
+                                       ~ ' attempts ('
+                                       ~ (((tpot_verify_retries | int)
+                                           * (tpot_verify_delay | int)) | string)
+                                       ~ 's). Read containers_running and containers_stable '
+                                       ~ 'before concluding the install failed: if they pass, '
+                                       ~ 'the likely cause is docker running without its '
+                                       ~ 'userland proxy, where a published port is a netfilter '
+                                       ~ 'DNAT rule with no host socket for ss to find. This '
+                                       ~ 'check has no fallback for that case -- '
+                                       ~ 'honeypot_ssh_published does, and this does not')))}] }}
   loop: "{{ tpot_verify_listen.results }}"
   loop_control:
     label: "{{ item.item.id }}"
 
 - name: Note which expected listeners never came up
   ansible.builtin.set_fact:
-    # Only the items that actually ran have a `stdout` at all: the ones this
-    # edition does not ship were skipped by the `when` above and carry none.
-    # So "ran, and produced no line" is the whole definition of missing here.
+    # TWO SOURCES, AND THE SECOND IS WHY THIS IS NOT A ONE-LINER ANY MORE.
+    #
+    #   ran, and produced no line   the ordinary timeout. Only items that
+    #                               actually ran have a `stdout` at all -- the
+    #                               ones this edition does not ship, and the
+    #                               ones the fast path answered, were skipped
+    #                               by the `when` above and carry none.
+    #   answered by the fast path   proved unable to appear, recorded `fail`
+    #                               above, and carrying no `stdout` for the
+    #                               same reason a not-shipped listener carries
+    #                               none. Without this half they would be
+    #                               absent from the missing list, the
+    #                               assertion below would pass over two
+    #                               records that say `fail`, and the play
+    #                               would return 0 for a box it had just
+    #                               declared broken. That is the exact vacuous
+    #                               pass the fast path was written not to be.
     tpot_verify_listen_missing: >-
-      {{ tpot_verify_listen.results
-         | selectattr('stdout', 'defined')
-         | rejectattr('stdout', 'search', '.')
-         | map(attribute='item.port') | list }}
+      {{ (tpot_verify_listen.results
+          | selectattr('stdout', 'defined')
+          | rejectattr('stdout', 'search', '.')
+          | map(attribute='item.port') | list)
+         + (tpot_verify_listeners
+            | selectattr('id', 'in', tpot_verify_fastpath_ids)
+            | map(attribute='port') | list) }}
 
 - name: Assert every administrative listener this edition should have is up
   ansible.builtin.assert:
@@ -158,7 +383,12 @@
       tcp/{{ tpot_verify_listen_missing | join(', tcp/') }}.
       Upstream's own installer exits 0 whether or not its image pull worked,
       so a listener that is absent here is the first honest evidence that the
-      install did not finish.
+      install did not finish. Read each listener's own record before reaching
+      for a log. A record saying nothing CAN be listening is the fast path: the
+      T-Pot unit is down and no container of the
+      {{ tpot_verify_compose_project }} project is running, so that answer was
+      given at once rather than after the wait, and on a freshly installed host
+      it usually means the box has not been rebooted yet.
     success_msg: every administrative listener this edition should have is up
     quiet: true
 
@@ -417,24 +647,17 @@
 # ===========================================================================
 # The containers
 # ===========================================================================
-
-- name: Count the running containers of the T-Pot compose project
-  ansible.builtin.command:
-    argv:
-      - docker
-      - ps
-      - --filter
-      - "label=com.docker.compose.project={{ tpot_verify_compose_project }}"
-      - --format
-      - "{% raw %}{{.Names}}{% endraw %}"
-  register: tpot_verify_running
-  # The label is the only reliable selector: container names are upstream's
-  # and change between editions. It is DERIVED from the directory holding the
-  # compose file -- there is no COMPOSE_PROJECT_NAME in upstream's .env, no
-  # `name:` key in any compose file and no project flag on any invocation --
-  # so renaming the checkout silently empties this list on a healthy box.
-  changed_when: false
-  failed_when: false
+#
+# THE COUNT WAS ALREADY TAKEN, at the head of this file, and it was taken with
+# a bounded wait rather than as a single sample -- read the block there. It is
+# not repeated here for two reasons that both matter: the fast path had to
+# consult the same reading the verdict is taken from, or the two could disagree
+# about the same box; and a second `docker ps` would be a second moment, so a
+# container that died between them would make the count and the stability list
+# describe different machines.
+#
+# Only the VERDICT lives here. The floor it is taken against is unchanged and
+# is still pre-reboot.yml's.
 
 - name: List the containers that are restarting or have exited
   ansible.builtin.command:
@@ -455,22 +678,11 @@
   register: tpot_verify_unstable
   changed_when: false
   failed_when: false
-
-- name: Count the containers docker reported as running
-  ansible.builtin.set_fact:
-    # THE FLOOR IS NOT DECIDED HERE. tpot_verify_container_floor and
-    # tpot_verify_container_floor_source are set by tasks/pre-reboot.yml, out
-    # of the installed compose file, and asserted there to be at least 1 --
-    # read the long note beside that assertion for why a floor of zero is not
-    # a floor. Only the measurement belongs on this side of the reboot.
-    #
-    # They are referenced below without a `| default(...)`, deliberately. If
-    # this file is ever reached without pre-reboot.yml having run, an
-    # undefined variable stops the run, and a stopped run is the safe
-    # direction: a default here would be the silent zero that let this check
-    # pass a box nobody had counted.
-    tpot_verify_running_n: >-
-      {{ tpot_verify_running.stdout_lines | default([]) | select('search', '.') | list | length }}
+  # Sampled once, and deliberately not polled. A container that is restarting
+  # or has exited is a finding at whatever moment you look, and waiting for it
+  # to stop being one is waiting for a crash loop to settle -- which is what
+  # this check exists to notice. The bounded wait at the head of this file is
+  # for containers that have not STARTED yet; this is a different question.
 
 # THE `skipped` BRANCH BELOW IS STILL `skipped`, AND STILL CARRIES A REASON.
 # That is the contract lib/result.sh reads and it does not change: a check
@@ -498,7 +710,10 @@
                              ~ ', so the running containers could not be counted',
                              (tpot_verify_running_n | int | string) ~ ' running, at least '
                              ~ (tpot_verify_container_floor | int | string) ~ ' expected, from '
-                             ~ tpot_verify_container_floor_source)}] }}
+                             ~ tpot_verify_container_floor_source ~ '; counted after waiting up '
+                             ~ 'to '
+                             ~ (((tpot_verify_retries | int) * (tpot_verify_delay | int)) | string)
+                             ~ 's for them to come up')}] }}
 
 - name: Assert enough containers are running
   ansible.builtin.assert:
@@ -517,6 +732,11 @@
       sets errexit nor checks its own image pull, and ends on an echo, so it
       exits 0 after failing to bring anything up -- this count is the check
       that stands in for the exit status it does not give.
+      This is not a box that was looked at too early: the count was polled for
+      up to
+      {{ (tpot_verify_retries | int) * (tpot_verify_delay | int) }}s and the
+      floor was never reached. Raising tpot_verify_retries buys more patience;
+      it does not move the floor, and nothing here should.
     success_msg: >-
       {{ tpot_verify_running_n }} container(s) running, floor
       {{ tpot_verify_container_floor }}

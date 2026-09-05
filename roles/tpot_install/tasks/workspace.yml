@@ -31,7 +31,13 @@
 #   a modified old one. tpot_force_reinstall is the switch, and it really is
 #   `rm -rf`.
 #
-# NOTHING HERE HAS EVER RUN. No checkout has ever existed to examine.
+# THE FIRST-INSTALL PATH IS THE ONLY ONE THAT HAS BEEN TAKEN. Every run dated
+# in tests/MATRIX-STATUS.md was made on a clean box, so each of them found no
+# checkout and took the branch that says so. The interesting case above -- an
+# existing checkout, the warning it raises, and tpot_force_reinstall's
+# `rm -rf` -- has not been exercised on a real box, and the paragraph about
+# upstream's `update: no` is read from upstream's source at the pinned commit
+# rather than watched happening.
 
 - name: Look for an existing T-Pot checkout
   ansible.builtin.stat:

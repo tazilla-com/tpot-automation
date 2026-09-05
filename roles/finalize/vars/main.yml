@@ -101,15 +101,81 @@ tpot_finalize_locale_env_name: LANG
 #                        generated inventory into the tree that generates the
 #                        next one is how a stale artefact starts looking
 #                        authoritative.
+#   ./tests              the build gates and the unit suite. They run in a
+#                        checkout, on a developer's machine or in CI, before
+#                        a release exists; none of them is invoked by
+#                        install.sh, by either play, or by anything the
+#                        post-boot unit runs. Verified by grep over
+#                        install.sh, lib/, roles/, site.yml and verify.yml:
+#                        every occurrence of `tests/` in runtime code is
+#                        inside a comment or a message string, and preflight
+#                        stage A's 17-file manifest names nothing under it.
+#   ./tools              same argument. pin-upstream.sh and
+#                        example-config.sh are authoring tools that rewrite
+#                        files in a checkout; the messages that recommend
+#                        running pin-upstream.sh are telling somebody to do
+#                        that in the repository, not on the honeypot.
+#
+# WHY THOSE TWO ARE EXCLUDED RATHER THAN LEFT ALONE. The destination is a
+# permanent, root-owned directory on a machine whose entire purpose is to be
+# attacked. Everything in it is code that root either executes or could be
+# tricked into executing, so the tree is worth keeping to what the box
+# actually needs. Development scaffolding on a honeypot is not a
+# vulnerability by itself and this is not a claim that it is one -- it is
+# surface, and unused surface on that particular box is worth removing for
+# free.
+#
+# ONE KNOWN CONSEQUENCE, STATED SO IT IS NOT DISCOVERED. Two preflight
+# messages name tests/MATRIX-STATUS.md as the place the tested-platform
+# evidence lives, and a post-boot run reads them from a tree that no longer
+# carries that file. The pointer is still correct -- the matrix record is
+# documentation and lives in the repository and in docs/compatibility.md,
+# not on the installed host -- but a reader who follows it on the box will
+# not find it there.
 #
 # Everything else goes, and that is deliberate rather than lazy: preflight
 # stage A checks the tree it is about to execute against a 17-file manifest
 # and refuses a partial one, and inventories/example is not documentation at
 # run time -- lib/args.sh parses it for the known-key and secret-key lists on
-# every invocation. A "minimal" copy is a copy that cannot run.
+# every invocation. A "minimal" copy is a copy that cannot run, which is why
+# this list is four entries and not a whitelist.
 tpot_finalize_exclusions:
   - ./.git
   - ./inventories/local
+  - ./tests
+  - ./tools
+
+# THE LOG-ROTATION POLICY, AND WHERE EACH HALF OF IT LIVES.
+#
+# The policy itself is a shipped file, lib/tpot-automation.logrotate, with
+# exactly one placeholder in it -- @TPOT_LOG_DIR@ -- because --log-dir can
+# move the directory being rotated. Section 6 of tasks/main.yml says why it
+# is a file rather than a template and why this role is the one that installs
+# it.
+#
+# THE SOURCE IS THE RUNNING TREE, NOT THE PERMANENT COPY. tpot_finalize_source
+# is resolved in section 2 and is the tree this play is being read from, which
+# is present by definition. The permanent copy is not: the copy is skipped
+# outright when the run is already executing from that directory. Role vars
+# are templated when they are first READ rather than when the file is loaded,
+# so naming a fact a task sets is sound here as long as nothing reads this
+# before section 2 has run -- and nothing does.
+tpot_finalize_logrotate_source: "{{ tpot_finalize_source }}/lib/tpot-automation.logrotate"
+
+# The directory logrotate reads its per-package policies from, and the file
+# this role writes into it. The directory is checked separately from the file
+# because its ABSENCE means logrotate is not installed on this box, which is
+# a different fact from a broken installer tree and deserves a different
+# sentence in result.json.
+tpot_finalize_logrotate_dir: /etc/logrotate.d
+tpot_finalize_logrotate_dest: /etc/logrotate.d/tpot-automation
+
+# The placeholder substituted for the log directory actually in use. Written
+# here and not inline so that the policy file and the code that fills it in
+# cannot drift apart silently: change the token in one place and the
+# substitution stops happening, with no error and a policy that rotates a
+# directory literally named @TPOT_LOG_DIR@.
+tpot_finalize_logrotate_placeholder: "@TPOT_LOG_DIR@"
 
 # The floor below which the credential tripwire does not search. It is
 # lib/log.sh's _TPOT_TRIPWIRE_MIN_LEN, restated here because the two scans

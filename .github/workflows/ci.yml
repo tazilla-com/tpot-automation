@@ -6,28 +6,39 @@
 # job of this workflow is to make a pull request from a stranger hit them
 # without anybody remembering to ask.
 #
-# THE ACTIONS BELOW ARE NOT PINNED TO A COMMIT, AND THAT IS A GAP, NOT A VIEW.
-# This project's central argument is that a mutable ref is not a pin -- it says
-# so about upstream T-Pot at length -- and `actions/checkout@v5` is a mutable
-# tag by exactly that argument. The reason it is not a sha here is narrow and
-# worth stating rather than hiding: the box these workflows were written on
-# cannot reach GitHub's API to resolve one, and a sha nobody verified would be
-# worse than a tag everybody can see is a tag. Recorded in tasks/open/004.
+# EVERY ACTION BELOW IS PINNED TO A 40-CHARACTER COMMIT SHA, with its release
+# tag kept beside it as a comment. This project's central argument is that a
+# mutable ref is not a pin -- it says so about upstream T-Pot at length, and
+# pins upstream to a commit for exactly that reason -- and `actions/checkout@v5`
+# is a mutable ref by the same argument. A tag is a pointer its owner may move,
+# so a workflow written against one runs whatever that pointer names on the day
+# it runs, which is not what anybody reviewed. The sha is the pin; the tag in
+# the comment is for the human, so a reader can see which release it was and go
+# and read that release's notes.
 #
-# THE MAJORS ARE THE POST-NODE-20 ONES, which is the same gap seen from the
-# other side. GitHub deprecated the Node 20 runtime on its runners; checkout@v4
-# and setup-python@v5 are Node 20 actions and v5 and v6 are their Node 24
-# successors. Those two version numbers could NOT be verified from here -- the
-# API is unreachable from the box this was written on -- so if a run fails with
-# "Unable to resolve action", that is the cause and the fix is these two lines.
-# It fails loudly and at once rather than silently, which is the only reason
-# changing them unverified was acceptable at all.
+# TO MOVE ONE, resolve the new sha rather than editing the comment:
 #
-# NOTHING HERE INSTALLS T-POT. Every suite below is unprivileged and offline:
-# no root, no docker, no network at lint time, and no target host. Whether
-# this installer works on a given platform is a runtime property recorded in
-# tests/MATRIX-STATUS.md by a dated run on real hardware, and no runner can
-# stand in for that.
+#     git ls-remote https://github.com/actions/checkout refs/tags/v5
+#
+# and mind the annotated-tag trap: for an annotated tag the plain ref names the
+# TAG OBJECT and `refs/tags/v5^{}` names the commit, so the obvious reading of
+# that output is the wrong 40 characters. Both tags pinned below were
+# lightweight when they were resolved, which is why their plain refs are the
+# commits here; do not assume it of the next one. A sha that is not a commit in
+# that repository fails at checkout with "Unable to resolve action", loudly and
+# before any suite runs -- which is a good failure, but a needless one.
+#
+# THE MAJORS ARE THE POST-NODE-20 ONES. GitHub deprecated the Node 20 runtime
+# on its runners; checkout@v4 and setup-python@v5 are Node 20 actions, and v5
+# and v6 are their Node 24 successors.
+#
+# NOTHING HERE INSTALLS T-POT. Every suite below is unprivileged: no root, no
+# docker, no target host. The steps DO use the network -- they fetch PyYAML,
+# bats, the linters and the collections the play declares -- but only to
+# install their own tools; the checks themselves fetch nothing, which is what
+# `ansible-lint --offline` is asserting. Whether this installer works on a
+# given platform is a runtime property recorded in tests/MATRIX-STATUS.md by a
+# dated run on real hardware, and no runner can stand in for that.
 ---
 name: ci
 
@@ -58,9 +69,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.13"
 
@@ -97,7 +108,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
 
       - name: Install bats
         # THE COMMAND THIS TREE ALREADY DOCUMENTS, and the reason it is that
@@ -124,9 +135,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.13"
 
@@ -167,7 +178,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
 
       - name: The modes that change nothing all exit 0
         run: |

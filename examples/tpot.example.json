@@ -397,7 +397,18 @@
   "#help tpot_min_memory_mb": [
     "Hard floor and warning threshold for memory, in MiB. Below the floor the",
     "run stops; between the two it warns and continues. 8192 is upstream's own",
-    "stated minimum for a sensor; 16384 is what upstream recommends for a hive."
+    "stated minimum for a sensor; 16384 is what upstream recommends for a hive.",
+    "THE FLOOR IS COMPARED WITH A 5% ALLOWANCE AND THE FLOOR ITSELF DOES NOT",
+    "MOVE. MemTotal is physical RAM minus what firmware and the kernel reserved",
+    "before anything could count it, so a machine provisioned with exactly 8192",
+    "MiB reports less than that and would be refused for meeting the documented",
+    "minimum exactly. The measurement is compared against 95% of the floor --",
+    "7782 MiB at the default -- and both numbers appear in the record and in",
+    "the refusal, so nobody has to recompute the second one. Memory is the only",
+    "floor that carries this. Nothing is reserved off the top of a core count",
+    "or a free-space figure, so the CPU and disk floors are compared with",
+    "themselves, and the recommendation above is not adjusted either because it",
+    "blocks nothing."
   ],
   "# tpot_min_memory_mb": 8192,
   "# tpot_warn_memory_mb": 16384,
@@ -484,8 +495,17 @@
   ],
   "# tpot_min_containers": null,
   "#help tpot_verify_retries": [
-    "How long verification waits for listeners after a reboot. They come up",
-    "over minutes, not seconds: 30 attempts, 10 seconds apart."
+    "How long the post-reboot half of verification waits for something that is",
+    "still coming. Containers come up over minutes, not seconds: 30 attempts,",
+    "10 seconds apart, so 300 seconds per wait. THESE TWO BOUND TWO WAITS, NOT",
+    "ONE -- each listener check, and the wait for the running container count",
+    "to reach its floor -- and they share one pair of numbers because a box",
+    "slow enough to need more patience for one is slow for the same reason in",
+    "the other. Neither of them moves a threshold: raising them buys a healthy",
+    "box more time to finish starting, while the container floor and every",
+    "verdict stay exactly where they were. A wait also stops early on a decided",
+    "answer rather than spending its whole budget -- the floor reached, or the",
+    "T-Pot unit dead, in which case nothing more is coming."
   ],
   "# tpot_verify_retries": 30,
   "# tpot_verify_delay": 10,

@@ -29,8 +29,17 @@
 #   its own credentialed path. So its ABSENCE is not a thing to fix -- it
 #   means the clone never happened, which means the install did not finish.
 #
-# NOTHING HERE HAS EVER RUN. No compose file has been edited and no credential
-# has been written, on any machine, by this project.
+# ALL THREE HAVE BEEN DONE ON A REAL BOX, FOR ONE EDITION
+#   On the runs dated in tests/MATRIX-STATUS.md the edition's compose file was
+#   copied over docker-compose.yml, the telemetry service was removed from it
+#   -- no ewsposter service in the live compose afterwards -- and the
+#   dashboard record was written into T-Pot's own environment file, with no
+#   credential in any argv, which result.json records. The dashboard's
+#   listener answered after the reboot.
+#
+#   ONE edition, and the default account policy. The other five editions take
+#   these same three steps against different source files and have not been
+#   run; neither has the `set` password policy. Read those as specified.
 
 # ---------------------------------------------------------------------------
 # The preconditions. All of them before the first write.

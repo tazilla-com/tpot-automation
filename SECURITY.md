@@ -2,49 +2,73 @@
 
 ## Supported versions
 
-This project is pre-1.0 and has not had a public release. Only the most recent
-tag is supported; there are no backports to earlier tags.
+This project's first public release was `1.0.0`, on 2026-09-05, and the patch
+releases since are on that same line. Only the most recent tag is supported;
+there are no backports to earlier tags.
 
 | Version | Supported |
 |---|---|
-| 0.1.x | yes, as the current development line |
+| 1.0.x | yes, at the most recent tag only |
 | anything earlier | no |
 
 ## The state of this build, before anything below is read
 
-**This tree has installed T-Pot once, and this document does not overstate
-what that established.** On 2026-09-05 it installed and started T-Pot on a
-Debian 13 host: exit `20`, all fourteen pre-reboot verification checks passing,
-and the honeypot answering on TCP/22 after the reboot. `tests/MATRIX-STATUS.md`
-is the dated record and lists what that run did *not* establish.
+**This tree has installed T-Pot twice, and this document does not overstate
+what that established.** Both runs were made on 2026-09-05, at the pinned
+upstream ref and in one edition (`h`). `tests/MATRIX-STATUS.md` is the dated
+record of both, and it carries the longer list of what neither of them
+established.
 
-**Two platforms, one edition.** Debian 13 and Ubuntu 26.04 have each been installed at the
-pinned ref, and the Ubuntu run was carried through the reboot to **exit `0`** with all twenty-five
-verification checks passing. What remains unexercised is every other edition, the `set` account
-password policy, and every `--force-*` override. What has been executed besides that single install,
-all of it unprivileged on a development box: the tree's own gate
-suite, `install.sh` itself in every mode it offers, and the roles far enough to
-establish that their expressions evaluate and their modules behave as written.
-Measured on 2026-09-04, `./install.sh`, `--preflight-only` and `--verify-only`
-each stop inside preflight with exit `11` on the `root` check, before anything
-on a machine could change.
+* **Debian 13** -- exit `20`, then rebooted, with T-Pot running and the
+  honeypot answering on TCP/22 afterwards. The post-boot verification unit
+  fired on that host and wrote its record; the record could not be read from
+  the network the run was driven from, so that half is attested by the guest's
+  own interfaces rather than by the file.
+* **Ubuntu 26.04** -- exit `20`, rebooted, and then **exit `0`** from a second
+  invocation with every verification check passing, post-boot record included.
+  That is the run that read a post-boot record back, so nothing below rests on
+  a unit whose output nobody has ever seen.
 
-So this document has two kinds of statement in it, and the difference is no
-longer "written" versus "unwritten" -- it is what has been *exercised*:
+**Check counts written in this document and in `tests/MATRIX-STATUS.md` are
+the counts as they stood on the day.** `roles/tpot_verify` declares 27 checks
+today -- 17 before the reboot, 10 after -- and declared fewer on both run
+dates. A count that was true on a date is left as it was written rather than
+renumbered, because renumbering it would turn a record of a run into a claim
+about a run nobody made.
+
+**What remains unexercised** is every edition but `h`, the `set` account
+password policy, `--force-unsupported-os` and `--force-reinstall`.
+`--force-low-resources` is not on that list: an earlier Debian run the same
+morning used it, because the memory floor was then compared against itself and
+a machine provisioned with exactly the documented minimum reports less than it.
+That comparison now carries a tolerance, so the same box installs without the
+flag -- but the flag's own path was walked, and it is recorded as walked.
+
+What has been executed besides those two installs, all of it unprivileged on a
+development box: the tree's own gate suite, its unit suite, and `install.sh`
+itself in every mode it offers. Measured on 2026-09-04, `./install.sh`,
+`--preflight-only` and `--verify-only` each stop inside preflight with exit
+`11` on the `root` check, before anything on a machine could change.
+
+So this document has three kinds of statement in it, and the difference is
+what has been *exercised*:
 
 * **rules the code enforces and this project has run** -- the argument parser,
   the secret channel, the transcript redactor, `result.json`, and the gates
   that fail the build when one of them is broken. These can be checked by
   reading the tree, and running it produces them;
-* **rules the code enforces and one install has exercised** -- the account,
-  upstream's own files, the compose edit and the credential write were all
-  performed on 2026-09-05 and verified on that host; the post-boot unit fired
-  but its record has never been read back. These are written as
-  descriptions of what the code does, because that is what they are, and every
-  one of them is unverified against a running host.
+* **rules two real installs have exercised** -- the account, upstream's own
+  files, the compose edit and the credential write were all performed on real
+  hosts on 2026-09-05, and on the Ubuntu host the post-boot record was read
+  back afterwards;
+* **rules that are written and have never fired.** A refusal fires only on a
+  box in the state it refuses, and a box somebody installs a honeypot on is an
+  ordinary one, so most refusals below have not been watched refusing
+  anything. Read those as descriptions of what the code is specified to do.
 
-A reader auditing this project should treat the second kind as code review
-rather than as evidence. `CHANGELOG.md` lists what is built and what is not.
+A reader auditing this project should treat the third kind as code review
+rather than as evidence, and `tests/MATRIX-STATUS.md` as the authority for
+which is which. `CHANGELOG.md` lists what is built and what is not.
 
 ## Reporting a vulnerability
 
@@ -102,8 +126,9 @@ handling rules are structural, not advisory:
   that `-i` is in it, that `-b` is not, that it is exactly four elements long,
   and -- the one that survives somebody rewriting the other four -- that no
   element of it equals the password. The comparison runs under `no_log`; the
-  assertion speaks only about a boolean. *That half is written and reviewed;
-  no run has ever reached it.*
+  assertion speaks only about a boolean. *Both installs on 2026-09-05 reached
+  it: the dashboard credential is hashed on every install, so the vector was
+  asserted on each of those hosts immediately before `htpasswd` ran.*
 * **Nothing this run creates survives it.** The run directory is shredded and
   removed by an exit trap that fires on success, failure and interruption
   alike. No `.bak` file is written, because no file in the tree is ever edited
@@ -112,7 +137,10 @@ handling rules are structural, not advisory:
   the log passes through an in-process redactor first. After the run, the
   finished transcript is searched for each supplied secret; a hit truncates
   the log, records `"outcome": "credential_leaked_to_log"` and exits 40. The
-  transcript is mode 0600 in a 0750 directory. *Enforced today.*
+  transcript is mode 0600 in a 0750 directory, and on a box where logrotate is
+  installed `roles/finalize` writes `/etc/logrotate.d/tpot-automation` with
+  `create 0600 root root`, so a rotated transcript does not become a
+  world-readable one. *Enforced today.*
 * **`result.json` cannot contain a credential.** It is built from a document
   from which every secret-typed key has already been removed, rather than by
   filtering a document that contains them. *Enforced today.*
@@ -154,10 +182,10 @@ handling rules are structural, not advisory:
 
 ## How the dashboard password stays off upstream's command line
 
-**This is implemented in `roles/tpot_install` and has been run against a real
-host once**, on 2026-09-05: `result.json` from that run records the argv upstream
-received, and it carries no credential flag. What follows is what the code does,
-and why. The
+**This is implemented in `roles/tpot_install` and has been run against real
+hosts twice**, on 2026-09-05: `result.json` from the Debian run records the argv
+upstream received -- `-s -t s -b <ref> -r <repo>` -- and it carries no credential
+flag. What follows is what the code does, and why. The
 invocation rule it depends on is also enforced by a build gate that fails the
 tree on any line -- code or documentation -- claiming this project hands
 upstream a credential.
@@ -266,6 +294,37 @@ line** -- because on this project's own path that can never happen, so seeing
 it means something drove upstream a different way. *That masking and warning
 are enforced today, in `lib/result.sh`.*
 
+## Supply chain: what is pinned, and what is not
+
+Three different things could be substituted under this installer, and they are
+not all defended the same way. The differences are stated here because a
+reader looking for a supply-chain answer will look in this file, and because
+two of the three are pinned by a value somebody has to keep current.
+
+* **Upstream's entrypoint is pinned twice over.** `tpot_upstream_ref` is a
+  full 40-character commit sha -- never a tag, never a branch -- and
+  `tpot_upstream_checksum` is the sha256 of the `install.sh` fetched at that
+  ref, checked before it is run. A tag would be worse than it looks: upstream
+  resolves its own detached checkout to a commit sha and compares it with what
+  it was asked for, so a tag mismatches itself. `tools/pin-upstream.sh`
+  produces both together.
+* **The payload is pinned by the same value**, because the ref is also passed
+  to upstream as `-b`. The two may never be set apart: with no `-b`, upstream
+  silently resolves its own default branch, and the entrypoint you verified
+  then clones something you did not.
+* **The container images are not pinned at all**, and cannot be from here.
+  They carry mutable tags from upstream's `.env` and T-Pot re-pulls them every
+  time it starts, which on an installed box is every night. `result.json`
+  reports this as `upstream.pins_payload: false`, and it is repeated below
+  because it is the property most likely to be assumed away.
+* **Every GitHub Actions step is pinned to a full commit sha**, in both
+  `.github/workflows/ci.yml` and `.github/workflows/release.yml`, with the
+  release tag beside it as a comment. A tag on an action is a mutable pointer
+  in somebody else's repository, and CI here runs the tree's own gates over
+  the tree's own code. The one `uses:` without a sha is the reusable-workflow
+  call from `release.yml` to `ci.yml`, which resolves inside this repository
+  at the same commit and so has nothing to pin to.
+
 ## Known limitation: passwordless sudo for the install account
 
 Upstream's unattended mode **requires** passwordless `sudo` for the account
@@ -298,9 +357,13 @@ there and waits for a human who is not present.
 ## What the installed box becomes
 
 **A finished T-Pot host is deliberately attackable.** These properties are
-what a completed install produces; no install has been completed by this code,
-so read them as what upstream's own playbook does and what this tool's own
-code reports about it -- neither observed on a running host.
+what a completed install produces, and this code has now completed two such
+installs -- both on 2026-09-05, dated in `tests/MATRIX-STATUS.md`. That file is also where
+to read which of the properties below were *observed* on the running host: the
+port move and the honeypot answering on TCP/22 were, on both platforms, and
+the container inventory was on Ubuntu. The rest remain what upstream's own
+playbook is written to do and what this tool's own code reports about it,
+rather than something anybody watched happen.
 
 Most of them are named in the closing notice `install.sh` prints before it
 exits -- the port move, the honeypot on 22, the absence of firewall rules,
@@ -323,10 +386,10 @@ and nowhere else.
   loaded on a host running T-Pot.
   The closing notice and the preflight report both name which administrative
   ports will be world-reachable -- the part that matters before you walk away
-  -- and neither has ever been printed. The exposure line is a preflight stage
-  B check, every run this project has made was unprivileged, so stage A fails
-  on the `root` check and stage B is never reached; the notice belongs to the
-  end of an install that has never completed.
+  -- and both were printed for the first time on 2026-09-05, by runs that
+  reached preflight stage B as root and then finished. Neither is reachable on
+  a development box: every run made there is unprivileged, stage A fails on
+  the `root` check, and stage B is never entered.
 * **That is not the same as the host's filtering being untouched.** Upstream's
   playbook sets the firewalld public zone target to `ACCEPT` and puts SELinux
   into monitor (permissive) mode on Red Hat family distributions. On those, a

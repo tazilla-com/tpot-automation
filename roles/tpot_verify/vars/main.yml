@@ -100,6 +100,38 @@ tpot_verify_elasticsearch_types:
   - m
   - t
 
+# ---------------------------------------------------------------------------
+# Which administrative listeners are served by a CONTAINER, and which is not.
+#
+# This list exists for one purpose: the fast path in tasks/post-reboot.yml,
+# which refuses to wait ten minutes for a listener that provably cannot appear.
+# The dashboard is nginx and Elasticsearch is elasticsearch -- both are
+# containers of the compose project, so with the unit down and no container
+# running, neither can ever bind. That is a decidable fact, not a timeout.
+#
+# listen_admin_ssh IS DELIBERATELY ABSENT AND MUST STAY ABSENT. tcp/64295 is
+# the HOST's own sshd, moved there by upstream's install and started by the
+# host's own unit -- it is up and answering on a box where not one container
+# has ever run. Adding it here would record a `fail` for administrative SSH on
+# exactly the box where administrative SSH is the only thing still working,
+# which is both untrue and the worst possible moment to say it. Observed
+# 2026-09-05: on an installed, un-rebooted host listen_admin_ssh passed while
+# the other two timed out.
+# ---------------------------------------------------------------------------
+tpot_verify_container_borne_listener_ids:
+  - listen_dashboard
+  - listen_elasticsearch
+
+# The systemd states that mean the T-Pot unit is not running and is not on its
+# way to running, so nothing it starts can appear later. `systemctl is-active`
+# also answers `active`, `activating`, `reloading`, `deactivating` and
+# `unknown`; only the two below are treated as evidence, because the fast path
+# must act on a POSITIVE reading and never on the absence of a recognised one.
+# An answer this list does not know leaves the ordinary wait in place.
+tpot_verify_unit_dead_states:
+  - inactive
+  - failed
+
 # Where sshd might be. Probed in order; the first that exists is used. The
 # binary is not on root's PATH on every distribution, and `sshd -T` is worth
 # more than a config-file parse (see tasks/pre-reboot.yml), so it is worth
@@ -182,6 +214,11 @@ tpot_verify_pre_reboot_ids:
   - compose_file_present
   - compose_telemetry_absent
   - container_floor
+  # compose_count_matches_pin compares the file on the box against the count
+  # tools/pin-upstream.sh measured for this edition at pin time. It is the one
+  # id in this role that can record `warn`, and it can never record `fail`;
+  # see the long block above it in tasks/pre-reboot.yml for why.
+  - compose_count_matches_pin
   - docker_daemon
   - tpot_service_enabled
   - max_map_count
