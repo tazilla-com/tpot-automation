@@ -1186,3 +1186,144 @@ LISTEN 0 4096 127.0.0.53%lo:53 0.0.0.0:* users:(("systemd-resolve",pid=3,fd=17))
     assert_contains $'ports\tinconclusive' "$out" 'the ports record with no ss'
     assert_contains 'iproute2' "$out" 'the ports record with no ss'
 }
+
+# ===========================================================================
+# reachability_apt and the mirror-list indirection.
+#
+# These exist because of a measured failure, not a hypothetical one. On
+# 2026-09-05 the first real install of this project ran `--check` against a
+# stock Debian 13 cloud image and exited 11 with EVERY row reading OK, WARN or
+# INCONCLUSIVE and no FAIL anywhere. The cause was reachability_apt: that image
+# configures no apt URL at all, only
+#
+#     URIs: mirror+file:///etc/apt/mirrors/debian.list
+#
+# which the old _tpot_pf_apt_mirror skipped as "local". reachability_apt is a
+# HARD check, and pf_verdict turns a hard inconclusive into EX_PREFLIGHT in a
+# full run -- so the installer refused to start on the only distribution this
+# release claims to support, and said nothing that would lead anyone to the
+# reason. The fixtures below are that image's real layout, byte for byte.
+# ===========================================================================
+
+# Build a sources tree under $TMP and point the PF_APT_ROOT seam at it.
+_apt_tree() {
+    mkdir -p "$TMP/root/etc/apt/sources.list.d" "$TMP/root/etc/apt/mirrors"
+    export PF_APT_ROOT="$TMP/root"
+}
+
+@test "a Debian cloud image's mirror+file: source is followed to the mirror it names" {
+    _apt_tree
+    printf '# see sources.list.d\n' > "$TMP/root/etc/apt/sources.list"
+    cat > "$TMP/root/etc/apt/sources.list.d/debian.sources" <<'EOF'
+Types: deb deb-src
+URIs: mirror+file:///etc/apt/mirrors/debian.list
+Suites: trixie trixie-updates trixie-backports
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF
+    printf 'https://deb.debian.org/debian\n' > "$TMP/root/etc/apt/mirrors/debian.list"
+    pf_load
+    assert_eq 'https://deb.debian.org/debian' "$(_tpot_pf_apt_mirror)" 'the mirror the indirection resolves to'
+    assert_eq 'deb.debian.org' "$(_tpot_pf_url_host "$(_tpot_pf_apt_mirror)")" 'the host that will be tested'
+}
+
+@test "that image does not produce the hard inconclusive that refused to install on it" {
+    # The regression, stated as the property that was violated rather than as
+    # the message that was printed.
+    _apt_tree
+    cat > "$TMP/root/etc/apt/sources.list.d/debian.sources" <<'EOF'
+Types: deb
+URIs: mirror+file:///etc/apt/mirrors/debian.list
+Suites: trixie
+Components: main
+EOF
+    printf 'https://deb.debian.org/debian\n' > "$TMP/root/etc/apt/mirrors/debian.list"
+    pf_load
+    run _tpot_pf_apt_mirror
+    assert_rc 0
+    assert_ne 'local-only' "$output" 'the resolution of a cloud-image sources tree'
+}
+
+@test "a URL stated outright in the sources beats one that has to be read out of a list" {
+    _apt_tree
+    printf 'deb http://ftp.uk.debian.org/debian trixie main\n' > "$TMP/root/etc/apt/sources.list"
+    cat > "$TMP/root/etc/apt/sources.list.d/debian.sources" <<'EOF'
+Types: deb
+URIs: mirror+file:///etc/apt/mirrors/debian.list
+Suites: trixie
+Components: main
+EOF
+    printf 'https://deb.debian.org/debian\n' > "$TMP/root/etc/apt/mirrors/debian.list"
+    pf_load
+    assert_eq 'http://ftp.uk.debian.org/debian' "$(_tpot_pf_apt_mirror)" 'the source preferred'
+}
+
+@test "a REMOTE mirror list is tested at the host serving the list, without following it" {
+    # mirror+http:// is a different animal from mirror+file://: the list is
+    # itself fetched over the network, so that host is a real dependency and
+    # is the right thing to reach for.
+    _apt_tree
+    printf 'deb mirror+https://mirrors.example.net/list trixie main\n' > "$TMP/root/etc/apt/sources.list"
+    pf_load
+    assert_eq 'https://mirrors.example.net/list' "$(_tpot_pf_apt_mirror)" 'the remote mirror list'
+}
+
+@test "the pre-2.0 mirror:// spelling resolves over http" {
+    _apt_tree
+    printf 'deb mirror://mirrors.example.net/list trixie main\n' > "$TMP/root/etc/apt/sources.list"
+    pf_load
+    assert_eq 'http://mirrors.example.net/list' "$(_tpot_pf_apt_mirror)" 'the legacy spelling'
+}
+
+@test "a mirror list that names no URL falls back to local-only rather than claiming a mirror" {
+    _apt_tree
+    cat > "$TMP/root/etc/apt/sources.list.d/debian.sources" <<'EOF'
+Types: deb
+URIs: mirror+file:///etc/apt/mirrors/debian.list
+Suites: trixie
+Components: main
+EOF
+    printf '# every mirror commented out\n' > "$TMP/root/etc/apt/mirrors/debian.list"
+    pf_load
+    assert_eq 'local-only' "$(_tpot_pf_apt_mirror)" 'a mirror list with nothing in it'
+}
+
+@test "a mirror list that does not exist is not fatal" {
+    _apt_tree
+    cat > "$TMP/root/etc/apt/sources.list.d/debian.sources" <<'EOF'
+Types: deb
+URIs: mirror+file:///etc/apt/mirrors/absent.list
+Suites: trixie
+Components: main
+EOF
+    pf_load
+    run _tpot_pf_apt_mirror
+    assert_rc 0
+    assert_eq 'local-only' "$output" 'a mirror+file: pointing at nothing'
+}
+
+@test "an apt configuration that is only file: sources is not-applicable, and costs the run nothing" {
+    # The reachability_pypi precedent. A local repository is not a measurement
+    # we failed to take; it is a dependency this box does not have. Recording
+    # `inconclusive` for it would abort a working offline install, because
+    # reachability_apt is HARD.
+    _apt_tree
+    printf 'deb file:///srv/mirror trixie main\n' > "$TMP/root/etc/apt/sources.list"
+    pf_load
+    assert_eq 'local-only' "$(_tpot_pf_apt_mirror)" 'a purely local apt setup'
+    _tpot_pf_check_reachability_apt
+    assert_eq 'not-applicable' "$(pf_status reachability_apt)" 'the status recorded for a local repository'
+    assert_eq "$EX_OK" "$(pf_verdict 0)" 'the verdict of a full run against a local repository'
+}
+
+@test "no readable apt sources at all is still inconclusive, because that is a box we could not measure" {
+    # The one arm that must NOT become not-applicable: an apt with no sources
+    # is not "no dependency", it is a box nobody can explain.
+    _apt_tree
+    pf_load
+    run _tpot_pf_apt_mirror
+    assert_rc 1
+    _tpot_pf_check_reachability_apt
+    assert_eq 'inconclusive' "$(pf_status reachability_apt)" 'the status recorded for an unreadable apt'
+    assert_eq "$EX_PREFLIGHT" "$(pf_verdict 0)" 'a full run must not install from a box it could not measure'
+}

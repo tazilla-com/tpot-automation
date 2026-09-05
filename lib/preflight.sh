@@ -303,14 +303,16 @@ _PF_INSTALLED_EVIDENCE=""
 # pre_install, post_install, post_install_incomplete, or unknown.
 _PF_PORT_LAYOUT="unknown"
 
-# THE FOUR TEST SEAMS, and the reason there are exactly four.
+# THE FIVE TEST SEAMS, and the reason there are exactly five.
 #
 # Everything preflight measures comes from either a COMMAND or a FILE. A
 # command is replaced in a test by putting a fixture earlier on $PATH -- that
 # is how `ss`, `nproc`, `df`, `curl`, `getent` and `systemctl` would be
 # exercised, and it needs nothing from this file. A file cannot be replaced
-# that way, so the four files preflight reads directly are named by variables
-# that default to the real thing.
+# that way, so the files preflight reads directly are named by variables that
+# default to the real thing. Four of them name one file each. The fifth,
+# PF_APT_ROOT, names a prefix, because reachability_apt follows a path out of
+# the sources files and a per-file seam could not cover where it lands.
 #
 # WHAT ACTUALLY EXISTS TO POINT THEM AT, TODAY:
 #
@@ -328,8 +330,12 @@ _PF_PORT_LAYOUT="unknown"
 #   PF_PROC_MEMINFO          NOTHING. tests/fixtures/ does not exist.
 #   PF_PROC_CPUINFO          NOTHING. Same.
 #   PF_PROC_MAX_MAP_COUNT    NOTHING. Same.
+#   PF_APT_ROOT              tests/bats/preflight.bats builds sources trees in
+#                            $TMP and points this at them -- including the
+#                            mirror+file: indirection a Debian cloud image
+#                            uses, which is what made this seam necessary.
 #
-# So three of the four seams are open at one end. The memory, cpus and
+# So three of the five seams are open at one end. The memory, cpus and
 # max_map_count checks have never been run against anything but whichever box
 # a session happened to be on -- one meminfo, one processor count, one
 # max_map_count, all of them this developer machine's. Their threshold
@@ -351,6 +357,15 @@ _PF_PORT_LAYOUT="unknown"
 : "${PF_PROC_MEMINFO:=/proc/meminfo}"
 : "${PF_PROC_CPUINFO:=/proc/cpuinfo}"
 : "${PF_PROC_MAX_MAP_COUNT:=/proc/sys/vm/max_map_count}"
+
+# The fifth seam, and the only one that is a PREFIX rather than a file.
+#
+# reachability_apt does not read one path: it reads the sources files and then
+# follows a path it finds INSIDE them, which on a Debian cloud image lands on
+# /etc/apt/mirrors/debian.list. A per-file variable cannot cover where that
+# lands, so this one is a root to prepend -- empty in production, a $TMP tree
+# in a test, and the indirection is then covered end to end by construction.
+: "${PF_APT_ROOT:=}"
 
 # ===========================================================================
 # THE RECORD
@@ -2690,16 +2705,40 @@ _tpot_pf_check_reachability_upstream() {
     return 0
 }
 
-# Print the first http or https apt source configured on this box. file: and
-# mirror+file: sources are local and are deliberately skipped -- they are not
-# a network dependency and testing them would be meaningless.
+# Print the first apt source on this box that names a network host, following
+# the mirror-list indirection Debian's own cloud images use.
+#
+# WHY THE INDIRECTION HAS TO BE FOLLOWED, AND WHAT SKIPPING IT COST
+#   A stock Debian 13 cloud image configures no apt URL at all. Its
+#   /etc/apt/sources.list.d/debian.sources says
+#
+#       URIs: mirror+file:///etc/apt/mirrors/debian.list
+#
+#   and THAT file holds the real mirror, one URL per line. This function used
+#   to skip anything not literally http(s), so on that image it found nothing,
+#   and reachability_apt -- a HARD check -- recorded `inconclusive`. pf_verdict
+#   turns a hard inconclusive into EX_PREFLIGHT in a full run. The installer
+#   therefore refused to start, with exit 11 and no FAIL row to explain it, on
+#   the one distribution this release claims to support. Measured on the first
+#   real install, 2026-09-05, and it is the reason that install exists.
+#
+#   Following the list is not a workaround for our own check. It is a strictly
+#   BETTER measurement: the host it ends up testing, deb.debian.org, is the
+#   host apt will really contact.
+#
+# WHAT IT PRINTS -- three outcomes, because there are three situations
+#   a URL             something names a network host; test it
+#   `local-only`      sources exist and every one is genuinely local
+#                     (file:, cdrom:, copy:) and no mirror list named a host
+#   nothing, exit 1   there are no readable source files at all
 _tpot_pf_apt_mirror() {
-    local -a files=() lines=()
-    local f line t i tok
-    if [[ -r /etc/apt/sources.list ]]; then
-        files+=(/etc/apt/sources.list)
+    local -a files=() lines=() mirror_lists=()
+    local f line t i tok path saw_local=0
+
+    if [[ -r ${PF_APT_ROOT}/etc/apt/sources.list ]]; then
+        files+=("${PF_APT_ROOT}/etc/apt/sources.list")
     fi
-    for f in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+    for f in "${PF_APT_ROOT}"/etc/apt/sources.list.d/*.list "${PF_APT_ROOT}"/etc/apt/sources.list.d/*.sources; do
         if [[ -r $f ]]; then
             files+=("$f")
         fi
@@ -2707,6 +2746,7 @@ _tpot_pf_apt_mirror() {
     if (( ${#files[@]} == 0 )); then
         return 1
     fi
+
     for f in "${files[@]}"; do
         mapfile -t lines < "$f"
         for line in "${lines[@]}"; do
@@ -2716,16 +2756,67 @@ _tpot_pf_apt_mirror() {
             fi
             i=1
             while tok=$(_tpot_pf_field "$i" "$t"); do
+                i=$(( i + 1 ))
+                case $tok in
+                    http://*|https://*)
+                        printf '%s\n' "$tok"
+                        return 0
+                        ;;
+                    mirror+http://*|mirror+https://*)
+                        # A REMOTE mirror list. The host serving the list is
+                        # itself the network dependency, so it is the right
+                        # thing to test and needs no further indirection.
+                        printf '%s\n' "${tok#mirror+}"
+                        return 0
+                        ;;
+                    mirror://*)
+                        # The pre-2.0 spelling; apt fetches it over http.
+                        printf 'http://%s\n' "${tok#mirror://}"
+                        return 0
+                        ;;
+                    mirror+file:/*)
+                        # Deferred rather than followed here: a later source may
+                        # name a URL outright, and a URL stated in the sources
+                        # beats one read out of a list.
+                        saw_local=1
+                        mirror_lists+=("${tok#mirror+file:}")
+                        ;;
+                    file:/*|cdrom:*|copy:/*)
+                        saw_local=1
+                        ;;
+                esac
+            done
+        done
+    done
+
+    # Nothing named a host directly. Follow the mirror lists, in the order the
+    # sources named them, and take the first URL any of them yields.
+    for path in "${mirror_lists[@]}"; do
+        # `mirror+file:///x` leaves `///x` here: drop the empty authority.
+        path=${path#//}
+        [[ $path == /* ]] || path=/$path
+        path=${PF_APT_ROOT}${path}
+        [[ -f $path && -r $path ]] || continue
+        mapfile -t lines < "$path"
+        for line in "${lines[@]}"; do
+            t=${line%%#*}
+            i=1
+            while tok=$(_tpot_pf_field "$i" "$t"); do
+                i=$(( i + 1 ))
                 case $tok in
                     http://*|https://*)
                         printf '%s\n' "$tok"
                         return 0
                         ;;
                 esac
-                i=$(( i + 1 ))
             done
         done
     done
+
+    if (( saw_local )); then
+        printf 'local-only\n'
+        return 0
+    fi
     return 1
 }
 
@@ -2733,7 +2824,17 @@ _tpot_pf_check_reachability_apt() {
     local uri scheme host
     if ! uri=$(_tpot_pf_apt_mirror); then
         pf_record reachability_apt inconclusive \
-            "no http or https apt source is configured in /etc/apt/sources.list or /etc/apt/sources.list.d, so the package mirror could not be tested; file: and mirror+file: sources are local and were skipped"
+            "no apt source could be read from /etc/apt/sources.list or /etc/apt/sources.list.d, so the package mirror could not be tested"
+        return 0
+    fi
+    if [[ $uri == local-only ]]; then
+        # The reachability_pypi precedent, for the same reason spelled out
+        # above that check: this is not a measurement we failed to take, it is
+        # a dependency this box does not have. `inconclusive` would abort a
+        # perfectly good install against a local repository, because
+        # reachability_apt is HARD.
+        pf_record reachability_apt not-applicable \
+            "every configured apt source is local (file:, cdrom: or copy:) and no mirror list named a network host, so this run has no package mirror to reach"
         return 0
     fi
     scheme=$(_tpot_pf_url_scheme "$uri") || scheme="http"
