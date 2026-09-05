@@ -5,6 +5,59 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-09-05
+
+### Added
+
+**Continuous integration**, which this tree has specified since its first commit
+and never had. `.github/workflows/ci.yml` runs the gate suite, `--self-test`,
+the unit suite, `yamllint`, `ansible-lint --profile production`, a syntax check
+of both plays, and the entrypoint's change-nothing modes, on every push to
+`main` and every pull request.
+
+Nothing in it knows anything the tree does not: every suite is one a
+contributor already runs by hand. What CI adds is that a stranger's pull request
+hits them without anybody remembering to ask. **No job installs T-Pot** — all of
+it is unprivileged and offline, and whether this installer works on a platform
+remains a runtime property recorded in `tests/MATRIX-STATUS.md` by a dated run on
+real hardware.
+
+**A release gate**, `tests/release-gate.sh`, run by `.github/workflows/release.yml`
+on a tag and runnable by hand at any time. It refuses a release whose evidence is
+missing or stale: every pinned ref the tree carries must have a dated section in
+`tests/MATRIX-STATUS.md`, that date must not predate the ref's own `derived_at`,
+`VERSION` must be a semantic version with a matching changelog heading, and the
+tag must match `VERSION`.
+
+It is deliberately **not** one of `tests/check-*.sh`. Those are discovered and run
+on every commit, and this rule must not be: `tools/pin-upstream.sh` writes a
+per-ref data file the moment a ref is pinned, and nobody has installed at that ref
+yet. A rule demanding a dated run immediately would fail every commit in exactly
+the window where the work is happening.
+
+### Fixed
+
+**`result.json` recorded `"preflight": []` for every stage A refusal.** Preflight
+records are flushed to `$RUNDIR/preflight.tsv`, and `$RUNDIR` is created at step 4
+— *after* stage A, which is step 3. So `pf_flush` had nowhere to write, returned 0
+having written nothing, and the machine-readable artefact was silent about the
+refusals a caller most wants to branch on: not root, unsupported OS, wrong
+architecture, no `systemd`, `/run` not tmpfs, a bad answer file, a broken tree.
+Every one of those is stage A.
+
+The records are in memory in the same shell, so `lib/result.sh` now takes them
+from there when there is no run directory, writing them beside the destination as
+a `$$`-scoped dotfile removed with the kv file it mirrors. Measured before: exit
+`11`, zero records. After: exit `11`, nine records, including the two that failed.
+
+### Changed
+
+`lib/preflight.sh`'s note about a container-per-distribution CI tier said "no such
+tier exists in this tree: there is no `.github/workflows`". Half of that is no
+longer true and the other half still is, so it now says which: the workflows exist
+and **the distribution tier does not**, because none of the jobs points preflight
+at a distribution.
+
 ## [1.0.1] - 2026-09-05
 
 ### Fixed
@@ -83,6 +136,7 @@ the two files entitled to.
 documented; enabling it is refused in preflight with exit `11` rather than
 silently ignored. The CI workflows are also absent, and the tree's own gates
 and unit suite are run by hand (`tests/run-gates.sh`, `tests/run-bats.sh`).
+*(Shipped in 1.0.2.)*
 
 ### Added
 
@@ -234,11 +288,12 @@ and unit suite are run by hand (`tests/run-gates.sh`, `tests/run-bats.sh`).
 
 Listed because a changelog that omitted them would read as though they shipped.
 
-- **The CI workflows**, including the release gate that refuses a tag while
-  `tests/MATRIX-STATUS.md` has a missing or stale row. (Two things have left this
-  list: the check that keeps `lib/exitcodes.sh`, `docs/exit-codes.md`, `README.md`
-  and `--help` from drifting apart shipped as `tests/check-exit-table.sh`, and the
-  `bats` suite shipped -- it now runs 304 tests over the libraries.)
+- ~~**The CI workflows**~~ **shipped in 1.0.2**, with the release gate as
+  `tests/release-gate.sh`. Three things have now left this list: the check that
+  keeps `lib/exitcodes.sh`, `docs/exit-codes.md`, `README.md` and `--help` from
+  drifting apart shipped as `tests/check-exit-table.sh`; the `bats` suite
+  shipped; and the workflows shipped. What remains below is the four referenced
+  documents.
 - **Four referenced documents.** Every one is cited by a file that does ship,
   and none is written: `docs/answer-file.md` and `docs/variables.md`, both
   cited by `lib/config.py`; `docs/verification.md`, cited by

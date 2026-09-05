@@ -34,13 +34,18 @@
 #   ships without them, and why that guard is not redundant with the file
 #   manifest preflight checks at step 3.
 #
-#   WHAT HAS NOT CHANGED IS THAT NO RUN OF THIS FILE HAS EVER INSTALLED
-#   ANYTHING, here or anywhere. Step 1 is `am I root`, and the machine this
-#   was written on is not. Measured 2026-09-04, fully unattended -- the
-#   password in the environment, no controlling terminal, stdin from
-#   /dev/null -- the run stops in preflight stage A and exits 11 on the ROOT
-#   check, having changed nothing. So "the play is written" is a statement
-#   about the tree, and not about an install that finished.
+#   THIS FILE HAS INSTALLED T-POT. Debian 13, 2026-09-05, three times: exit
+#   20 twice -- the second with no --force override of any kind -- and once a
+#   correct refusal at 11 on a deliberately socket-activated host. After the
+#   reboot the honeypot answered on tcp/22. tests/MATRIX-STATUS.md is the
+#   dated record and is as specific about what those runs did NOT establish
+#   as about what they did; exit 0 is still among them.
+#
+#   ON THE DEVELOPMENT BOX it still stops where it always did. Measured
+#   fully unattended -- the password in the environment, no controlling
+#   terminal, stdin from /dev/null -- the run stops in preflight stage A and
+#   exits 11 on the ROOT check, having changed nothing, because that machine
+#   is not root.
 #
 #   Steps 1 to 5 leave the machine byte-identical to how they found it. That
 #   is a property, not an aspiration: preflight writes only inside $RUNDIR,

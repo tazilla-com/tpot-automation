@@ -179,7 +179,6 @@ gate_begin 'references' 'every path named here exists, or is declared absent her
 # ---------------------------------------------------------------------------
 readonly -a KNOWN_ABSENT=(
     "tests/fixtures"$'\t'"the /proc fixtures a preflight test would substitute for the real ones; the unit suite exists and builds its fixtures in its own scratch instead, so nothing needs this path yet"
-    ".github"$'\t'"the CI workflows, including the release gate that refuses a tag while the matrix status is missing or stale"
     "docs/answer-file.md"$'\t'"the answer-file reference, cited by lib/config.py"
     "docs/variables.md"$'\t'"the variable reference, cited by lib/config.py"
     "docs/verification.md"$'\t'"what verification asserts, cited by lib/preflight.sh"

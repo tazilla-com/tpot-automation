@@ -975,3 +975,58 @@ json_ok() {
     assert_eq 'he said "no" \ and left a tab, then a newline' \
         "$(jget "$TPOT_RESULT_JSON" 'd["warnings"][0]')" 'warning'
 }
+
+@test "a stage A refusal reaches result.json instead of leaving preflight empty" {
+    # THE GAP THIS CLOSES, MEASURED 2026-09-05.
+    #   preflight records live in $RUNDIR/preflight.tsv, and $RUNDIR is created
+    #   at step 4 -- AFTER stage A, which is step 3. So on any stage A refusal
+    #   pf_flush had nowhere to write, returned 0 having written nothing, and
+    #   this artefact recorded `"preflight": []`.
+    #
+    #   That is not an edge case. Stage A is root, apt, python3, os, arch,
+    #   systemd, runtime_dir, answer_file and repo_tree -- every "your box is
+    #   wrong" refusal, and precisely the set a CI system or a provisioning
+    #   tool would branch on. The terminal named the failing check; the
+    #   machine-readable artefact whose whole purpose is a true outcome did
+    #   not.
+    #
+    #   This box is unprivileged, so the root check fails and the run stops in
+    #   stage A -- which makes it the exact condition the defect needed.
+    #
+    #   --preflight-only rather than a full run: a full run is refused at
+    #   argument parsing for the missing tpot_web_password and exits 10 before
+    #   preflight is reached at all, which would test the wrong thing.
+    run_install --non-interactive --preflight-only
+    assert_rc 11
+    local doc="$TMP/state/result.json"
+    [[ -f $doc ]] || { printf 'no result.json at %s\n' "$doc" >&2; return 1; }
+
+    local n
+    n=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1])).get("preflight",[])))' "$doc")
+    [[ $n -gt 0 ]] || {
+        printf 'result.json carries %s preflight records for a stage A refusal\n' "$n" >&2
+        return 1
+    }
+
+    # The refusal itself must be in there, not merely some records.
+    local failed
+    failed=$(python3 -c '
+import json,sys
+d=json.load(open(sys.argv[1]))
+print(",".join(r["id"] for r in d.get("preflight",[]) if r.get("status")=="fail"))' "$doc")
+    assert_contains 'root' "$failed" 'the failing checks recorded in result.json'
+}
+
+@test "the fallback leaves no dotfile behind in the state directory" {
+    # It is written beside the destination as a $$-scoped dotfile, mirroring
+    # the kv file, and removed on the same path. A run that littered the state
+    # directory would be a worse defect than the one this fixed.
+    run_install --non-interactive --preflight-only
+    assert_rc 11
+    local leftovers
+    leftovers=$(find "$TMP/state" -maxdepth 1 -name '.result-preflight.*' -o -maxdepth 1 -name '.result-kv.*' | tr '\n' ' ')
+    [[ -z ${leftovers// /} ]] || {
+        printf 'the state directory still holds: %s\n' "$leftovers" >&2
+        return 1
+    }
+}

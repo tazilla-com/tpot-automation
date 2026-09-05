@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# A tag runs everything a commit runs, and then one thing more: the evidence
+# check. tests/release-gate.sh is deliberately NOT one of tests/check-*.sh --
+# run-gates.sh discovers those and runs them on every commit, and this rule
+# must not, because tools/pin-upstream.sh writes a new per-ref data file the
+# moment a ref is pinned and nobody has installed at that ref yet. Failing
+# every commit in that window would punish exactly the work being done.
+#
+# So it is a release gate. It runs here, and it runs by hand -- the file
+# carries its own reasoning and can be executed at any time.
+---
+name: release
+
+"on":
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+
+jobs:
+  ci:
+    # Everything a commit gets. A tag that skipped it would be a release
+    # nobody checked.
+    uses: ./.github/workflows/ci.yml
+
+  evidence:
+    name: release evidence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The evidence a release claims is present and current
+        run: bash tests/release-gate.sh
+
+      - name: The tag and VERSION agree
+        # A tag of v1.0.1 on a tree whose VERSION says something else produces
+        # a release whose artefacts disagree with their own name. Checked here
+        # rather than in the gate because only a tagged run knows the tag.
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(head -n 1 VERSION | tr -d '[:space:]')"
+          if [ "$tag" != "$version" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match VERSION ${version}" >&2
+            exit 1
+          fi
+          echo "tag ${GITHUB_REF_NAME} matches VERSION ${version}"

@@ -1,0 +1,155 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Everything in this file is a suite that already runs by hand. CI does not
+# know anything the tree does not: `tests/run-gates.sh`, `tests/run-bats.sh`,
+# `yamllint` and `ansible-lint` are what a contributor runs locally, and the
+# job of this workflow is to make a pull request from a stranger hit them
+# without anybody remembering to ask.
+#
+# NOTHING HERE INSTALLS T-POT. Every suite below is unprivileged and offline:
+# no root, no docker, no network at lint time, and no target host. Whether
+# this installer works on a given platform is a runtime property recorded in
+# tests/MATRIX-STATUS.md by a dated run on real hardware, and no runner can
+# stand in for that.
+---
+name: ci
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+# A pull request that is force-pushed twice should not queue three full runs.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # tests/check-locale.sh fails the build on plain C anywhere in the tree, and
+  # for a reason that applies here too: ansible-core refuses to start under a
+  # non-UTF-8 locale, and upstream's installer runs a nested ansible-playbook.
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+
+jobs:
+  gates:
+    name: build gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run every gate
+        run: bash tests/run-gates.sh
+
+      - name: Prove every gate can fail
+        # A gate suite that passes proves nothing on its own -- a gate with a
+        # broken matcher passes too. --self-test points each gate at a tree
+        # that violates it and requires it to fail. This step is the one that
+        # makes the step above mean something.
+        run: bash tests/run-gates.sh --self-test
+
+  unit:
+    name: unit suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats
+        run: npm install -g bats
+
+      - name: Run the unit suite
+        # run-bats.sh exits 3 when bats is absent rather than exiting 0 with
+        # nothing run. Installing it above is what keeps that from being the
+        # outcome here; a non-zero exit fails the job either way, which is the
+        # point of it exiting 3.
+        run: bash tests/run-bats.sh
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install the linters
+        run: python -m pip install --disable-pip-version-check yamllint ansible-lint
+
+      - name: Install the collections the play declares
+        # ansible.cfg points collections_path at /usr/local/share/tpot-automation,
+        # which is where the PRODUCT installs them on a honeypot at run time.
+        # A linter must not need that path to exist, so the collection goes to
+        # ./collections -- which .gitignore ignores and .ansible-lint already
+        # excludes -- and ANSIBLE_COLLECTIONS_PATH points at it for the steps
+        # that need it.
+        run: ansible-galaxy collection install -r requirements.yml -p ./collections
+
+      - name: yamllint
+        run: yamllint .
+
+      - name: ansible-lint
+        # --offline because .ansible-lint sets offline: true and a rule that
+        # silently degrades when a fetch fails is worse than one switched off
+        # deliberately. The production profile is stricter than the `moderate`
+        # the config requires, and the tree passes it; requiring it here keeps
+        # that true.
+        env:
+          ANSIBLE_COLLECTIONS_PATH: ./collections
+        run: ansible-lint --offline --profile production
+
+      - name: Syntax-check both plays
+        env:
+          ANSIBLE_COLLECTIONS_PATH: ./collections
+        run: >-
+          ansible-playbook -i inventories/example/hosts.yml
+          --syntax-check site.yml verify.yml
+
+  entrypoint:
+    name: entrypoint contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The modes that change nothing all exit 0
+        run: |
+          set -euo pipefail
+          bash install.sh --version
+          bash install.sh --help            >/dev/null
+          bash install.sh --example-config  >/dev/null
+
+      - name: A refusal still writes a true result.json
+        # THE CONTRACT THIS PROTECTS. The exit status is the product, and
+        # result.json is the machine-readable half of it. A refusal that
+        # writes nothing, or writes an exit_code disagreeing with the process
+        # exit, is the failure this asserts against -- and it is not
+        # hypothetical: until 2026-09-05 every stage A refusal recorded
+        # "preflight": [], because pf_flush had nowhere to write before the
+        # run directory existed.
+        #
+        # This asserts the CONTRACT, not the environment: it does not care
+        # which code comes back, only that the artefact agrees with it and
+        # that the checks which ran are in there. A runner that happened to be
+        # root would still satisfy it.
+        run: |
+          set -uo pipefail
+          tmp=$(mktemp -d)
+          bash install.sh -y --preflight-only \
+              --state-dir "$tmp/state" --log-dir "$tmp/log" \
+              </dev/null >/dev/null 2>&1
+          rc=$?
+          echo "install.sh --preflight-only exited $rc"
+          python3 - "$tmp/state/result.json" "$rc" <<'PY'
+          import json, sys
+          doc, rc = sys.argv[1], int(sys.argv[2])
+          d = json.load(open(doc))
+          assert d["exit_code"] == rc, f'result.json says {d["exit_code"]}, the process exited {rc}'
+          assert d["preflight"], "result.json carries no preflight records for a run that ran preflight"
+          ids = [r["id"] for r in d["preflight"]]
+          print(f'exit_code {d["exit_code"]} agrees; {len(ids)} preflight records: {", ".join(ids)}')
+          PY

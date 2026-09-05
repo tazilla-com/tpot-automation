@@ -241,6 +241,34 @@ res_write() {
     fi
     tmp_out="$state_dir/.result.json.tmp"
 
+    # THE PREFLIGHT RECORDS, AND THE GAP THIS CLOSES.
+    #   They live in $RUNDIR/preflight.tsv when there is a run directory.
+    #   Before there is one -- a usage error, or a failed preflight STAGE A --
+    #   pf_flush has nowhere to write and returns 0 having written nothing, so
+    #   this artefact recorded `"preflight": []` for exactly the refusals a
+    #   caller most wants to branch on: not root, unsupported OS, wrong
+    #   architecture, no systemd, /run not tmpfs, a bad answer file. Every one
+    #   of those is stage A. Measured 2026-09-05 with a writable --state-dir:
+    #   exit 11, zero records, while the terminal output named the failing
+    #   check. A caller that trusted the artefact learned nothing.
+    #
+    #   The records are in memory in THIS shell -- install.sh sources both
+    #   libraries -- so they are taken from there rather than from a file that
+    #   was never written, and land beside the destination as a $$-scoped
+    #   dotfile removed with the kv file. Same lifetime, same umask, and
+    #   nothing that can go stale between runs.
+    #
+    #   `declare -F` rather than assuming: lib/result.sh is sourced on its own
+    #   by tests, and a hard call to pf_records would make this function
+    #   depend on a library it does not source.
+    local preflight_src=''
+    if [[ -n $rundir && -d $rundir ]]; then
+        preflight_src="$rundir/preflight.tsv"
+    elif declare -F pf_records >/dev/null 2>&1; then
+        preflight_src="$state_dir/.result-preflight.$$.tsv"
+        ( umask 0177; pf_records >"$preflight_src" ) 2>/dev/null || preflight_src=''
+    fi
+
     ( umask 0177; : >"$kv" ) 2>/dev/null || {
         _tpot_res_warn 'cannot write %s; result.json was not written' "$kv"
         return 1
@@ -281,13 +309,15 @@ res_write() {
         pyargs+=(
             "$rundir/public.json"
             "$rundir/sources.json"
-            "$rundir/preflight.tsv"
+            "$preflight_src"
             "$rundir/host.json"
             "$rundir/deps.json"
             "$rundir/ansible-report.json"
         )
     else
-        pyargs+=('' '' '' '' '' '')
+        # preflight is the ONE fact that can be known before there is a run
+        # directory, because stage A produced it. The rest genuinely are not.
+        pyargs+=('' '' "$preflight_src" '' '' '')
     fi
     pyargs+=("$tmp_out")
 
@@ -876,6 +906,8 @@ TPOT_RESULT_PY
 
     if [[ -z $rundir || ! -d $rundir ]]; then
         rm -f -- "$kv" 2>/dev/null || true
+        [[ $preflight_src == "$state_dir/.result-preflight.$$.tsv" ]] &&
+            rm -f -- "$preflight_src" 2>/dev/null || true
     fi
 
     if (( rc != 0 )); then

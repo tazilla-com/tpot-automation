@@ -29,11 +29,12 @@
 #   stops the run with EX_PREFLIGHT -- it fails closed. Only --preflight-only
 #   downgrades it, to EX_INCONCLUSIVE (12) -- which is what WOULD let a CI tier
 #   running preflight in containers be honest about a distribution in seconds
-#   instead of installing on it for hours. NO SUCH TIER EXISTS IN THIS TREE:
-#   there is no .github/workflows and no container definition, and the nine
-#   distributions such a tier would cover are the LEGACY tier of D-07 --
-#   documented, and never claimed as tested. The supported tier is empty until
-#   a ref is pinned.
+#   instead of installing on it for hours. THAT TIER STILL DOES NOT EXIST, and
+#   .github/workflows landing in 1.0.2 did not create it: those workflows run
+#   the gate suite, the unit suite and the linters on one runner, and none of
+#   them points preflight at a distribution. What such a tier would cover is
+#   the LEGACY tier of D-07 -- documented, and never claimed as tested -- and
+#   the supported tier, whose second row has never been installed either.
 #
 #   THE FIFTH EXISTS BECAUSE THE FOURTH WAS BEING AVOIDED. reachability_pypi
 #   recorded `ok` on two paths where pypi.org had never been contacted: the

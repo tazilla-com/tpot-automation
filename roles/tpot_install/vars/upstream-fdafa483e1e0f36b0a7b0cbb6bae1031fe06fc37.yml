@@ -90,9 +90,29 @@ tpot_install_upstream:
   # disagreement between it and the count taken on the box would be a real
   # signal -- upstream changed the edition under a ref that is supposed to be
   # immutable, or something rewrote docker-compose.yml after the install.
-  # NOTHING COMPUTES THAT COMPARISON TODAY. Saying so is the point: a number
-  # recorded and never checked is exactly the kind of thing a reader assumes
-  # is load-bearing.
+  # NOTHING COMPUTES THAT COMPARISON TODAY, and 1.0.2 looked at doing it and
+  # deliberately did not. Saying so is the point: a number recorded and never
+  # checked is exactly the kind of thing a reader assumes is load-bearing.
+  #
+  # WHY IT WAS NOT BUILT. The two quantities are not yet proven to measure the
+  # same thing. This map is upstream's service count for the edition at pin
+  # time, minus the telemetry service. roles/tpot_verify counts service blocks
+  # in the compose file installed on the box. Those SHOULD agree and they were
+  # not shown to: on the 2026-09-05 install, min_containers[h] is 39 while a
+  # naive count of the installed compose file gave 41 runtime services out of
+  # 60 keys. That difference may be entirely in how the two count -- build-only
+  # `_local` entries, `tpotinit`, the telemetry service -- and until somebody
+  # establishes which, a check comparing them would fire on a healthy install.
+  #
+  # This tree treats a check that fails a good install over a number nobody can
+  # act on as roughly as bad as a check that passes for something it did not
+  # establish. So the comparison waits for the equivalence to be established on
+  # a box, and the open item says so rather than this file implying otherwise.
+  #
+  # WHAT IS ESTABLISHED, and is cheap to re-check by eye: min_containers[k]
+  # equals services[k] minus one for every edition here, which is the telemetry
+  # service D-09 removes. A generator bug that broke that would be visible in
+  # the diff this file is meant to be read as.
   min_containers:
     "h": 39
     "s": 32
