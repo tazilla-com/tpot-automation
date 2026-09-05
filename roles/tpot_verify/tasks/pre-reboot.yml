@@ -341,6 +341,122 @@
     success_msg: "sshd binds {{ tpot_admin_ssh_port }} and nothing else"
     quiet: true
 
+# ---------------------------------------------------------------------------
+# WHAT sshd -T CANNOT TELL YOU, AND WHY IT MATTERS ON UBUNTU
+#
+#   Everything above reads sshd's own resolved CONFIGURATION. That is the
+#   right authority for "what did upstream's edit actually do to the config",
+#   and it is the wrong one for "what is this host listening on", because the
+#   two come apart entirely under systemd socket activation:
+#
+#     * ssh.socket owns the listening socket and carries its own
+#       ListenStream=. sshd is started per connection with that socket handed
+#       to it.
+#     * sshd_config's Port is then IGNORED. Not overridden -- not consulted.
+#     * `sshd -T` still prints `port 64295`, because the configuration really
+#       does say so.
+#
+#   So on a socket-activated host, upstream appends `Port 64295`, restarts
+#   sshd, changes nothing about the listener, and all three checks above pass.
+#   The operator is told administrative ssh has moved to 64295, and 64295 is
+#   not listening. Worse, tcp/22 is still held by ssh, so after the reboot the
+#   honeypot cannot bind it and T-Pot comes up incomplete -- with this
+#   installer having reported the port move as verified.
+#
+#   DEBIAN 13 SHIPS ssh.socket DISABLED, so the defect is invisible there and
+#   was invisible in the one install this project had made when it was found.
+#   UBUNTU ENABLES IT BY DEFAULT, and ubuntu is the other half of the
+#   supported tier. The check below is what makes the difference observable
+#   rather than something a first Ubuntu install would discover the hard way.
+#
+#   The remedy is NOT to replace sshd -T. Both questions are worth asking and
+#   the answers are different facts: the configuration check catches the Match
+#   block trap, and this one catches the listener that never moved. A
+#   disagreement between them is itself the finding, and the reason says so.
+# ---------------------------------------------------------------------------
+
+- name: Read the listening TCP sockets
+  ansible.builtin.command:
+    argv:
+      - ss
+      - -H
+      - -t
+      - -l
+      - -n
+      - -p
+  register: tpot_verify_ss
+  changed_when: false
+  failed_when: false
+
+- name: Ask whether ssh is socket-activated on this host
+  # The cause, not the symptom. Without it the failure below says only that a
+  # port is not bound, and the operator goes looking in sshd_config -- which
+  # is the one file that cannot explain it.
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - ssh.socket
+  register: tpot_verify_ssh_socket
+  changed_when: false
+  failed_when: false
+
+- name: Reduce the socket table to the ports ssh is actually listening on
+  # Two passes rather than one regex: take the fourth field, which is
+  # Local Address:Port and may be 0.0.0.0:22, [::]:22 or 127.0.0.53%lo:53,
+  # then take what follows its last colon. Lines are kept when the process
+  # column names sshd OR systemd -- systemd is what holds the socket when
+  # ssh.socket is the listener, and missing that is the whole defect.
+  ansible.builtin.set_fact:
+    tpot_verify_ssh_listening: >-
+      {{ tpot_verify_ss.stdout_lines | default([])
+         | select('search', '"(sshd|systemd)"')
+         | map('regex_replace', '^(?:\S+\s+){3}(\S+)\s.*$', '\1')
+         | map('regex_replace', '^.*:', '')
+         | select('match', '^[0-9]+$') | map('int') | unique | sort }}
+
+- name: Record whether the administrative SSH port is actually bound
+  ansible.builtin.set_fact:
+    tpot_verify_results: >-
+      {{ tpot_verify_results + [{'id': 'sshd_listening', 'phase': 'pre-reboot',
+         'status': ((tpot_verify_ss.rc | default(1)) != 0) | ternary('skipped',
+                   ((tpot_admin_ssh_port | int) in tpot_verify_ssh_listening)
+                   | ternary('pass', 'fail')),
+         'reason': ((tpot_verify_ss.rc | default(1)) != 0)
+                   | ternary('ss did not answer, so the bound listeners could not be read',
+                             'ssh is listening on '
+                             ~ (tpot_verify_ssh_listening | join(', ') | default('nothing', true))
+                             ~ ((tpot_verify_ssh_socket.stdout | default('') | trim) == 'active')
+                               | ternary(' (ssh.socket is ACTIVE: systemd owns the'
+                                         ~ ' listener and sshd_config Port is ignored)', ''))}] }}
+
+- name: Assert the administrative SSH port is actually bound
+  ansible.builtin.assert:
+    that:
+      - (tpot_verify_ss.rc | default(1)) != 0
+        or (tpot_admin_ssh_port | int) in tpot_verify_ssh_listening
+    fail_msg: >-
+      sshd's configuration says it binds
+      {{ tpot_verify_sshd_bound | join(', ') | default('nothing', true) }}, but the
+      host is listening on
+      {{ tpot_verify_ssh_listening | join(', ') | default('nothing', true) }}.
+      {{ 'ssh.socket is ACTIVE, which is the cause: systemd owns the listening
+      socket, its own ListenStream decides the port, and sshd_config Port is
+      ignored entirely. Upstream edits sshd_config and therefore did not move
+      this listener. Move it in ssh.socket -- `systemctl edit ssh.socket` with
+      ListenStream= cleared and reset -- or disable ssh.socket and enable
+      ssh.service, then re-run --verify-only.'
+      if (tpot_verify_ssh_socket.stdout | default("") | trim) == "active"
+      else "ssh.socket is not active, so the cause is elsewhere: check that
+      sshd restarted after upstream edited its configuration." }}
+      Nobody can log in to a host whose administrative port is not listening,
+      and after the reboot tcp/{{ tpot_verify_honeypot_ssh_port }} belongs to a
+      honeypot.
+    success_msg: >-
+      the host is listening on {{ tpot_admin_ssh_port }}, which agrees with
+      sshd's configuration
+    quiet: true
+
 # ===========================================================================
 # T-Pot's .env
 # ===========================================================================

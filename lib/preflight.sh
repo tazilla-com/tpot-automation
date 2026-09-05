@@ -2234,7 +2234,7 @@ _tpot_pf_uniq_words() {
 
 _tpot_pf_check_ports() {
     local ports_csv rest tok rc=0 line addr lport key entry proto port dup
-    local detail="" worst="ok" state names p all_ssh admin unit
+    local detail="" worst="ok" state names p all_ssh all_ssh_or_systemd admin unit
     local ours_empty=0 need_udp=0 udp_ok=1 ss_out=""
     local sshd_on_admin=0 alien_on_22=0 layout_note=""
     local -a ours=() entries=() up_entries=() lines=() procs=()
@@ -2386,10 +2386,12 @@ _tpot_pf_check_ports() {
             names=$(_tpot_pf_uniq_words "${holders[$entry]}")
             mapfile -t procs < <(_tpot_pf_split_ws "${holders[$entry]}")
             all_ssh=1
+            all_ssh_or_systemd=1
             for p in "${procs[@]}"; do
                 case $p in
                     sshd|sshd-session) ;;
-                    *)                 all_ssh=0 ;;
+                    systemd)           all_ssh=0 ;;
+                    *)                 all_ssh=0; all_ssh_or_systemd=0 ;;
                 esac
             done
             if (( _PF_INSTALLED )); then
@@ -2411,8 +2413,42 @@ _tpot_pf_check_ports() {
             elif [[ $entry == "tcp/22" ]]; then
                 if (( all_ssh )); then
                     state="22 ${names} (allowed; upstream moves administrative ssh to ${admin} and puts a honeypot here)"
-                elif [[ $names == "systemd" ]] && unit=$(_tpot_pf_ssh_socket_unit); then
-                    state="22 held by systemd for ${unit}, which is the host ssh under socket activation (allowed; upstream moves administrative ssh to ${admin})"
+                elif (( all_ssh_or_systemd )) && unit=$(_tpot_pf_ssh_socket_unit); then
+                    # SOCKET ACTIVATION, AND IT IS A REFUSAL RATHER THAN A NOTE.
+                    #
+                    # This arm used to require $names to be EXACTLY "systemd"
+                    # and to record the host as allowed. Both halves were
+                    # wrong, and the first hid the second:
+                    #
+                    #   * The exact match is unreachable in practice. `ss`
+                    #     lists EVERY process holding the socket, so an open
+                    #     ssh session -- which is how anyone runs an installer
+                    #     on a remote box -- adds a per-connection sshd and
+                    #     $names becomes "sshd/systemd". The one condition
+                    #     under which this arm fired was a host nobody was
+                    #     logged in to. Measured 2026-09-05.
+                    #
+                    #   * Allowing it was worse. Under socket activation
+                    #     systemd owns the listening socket and sshd_config's
+                    #     Port is IGNORED -- so upstream's port move, which
+                    #     appends `Port 64295` to sshd_config, changes nothing
+                    #     about the listener. `sshd -T` reports 64295 and the
+                    #     kernel reports 22, forever. The install completes,
+                    #     administrative ssh never moves, the honeypot cannot
+                    #     bind 22 after the reboot, and the closing notice
+                    #     tells the operator to reconnect on a port that is
+                    #     not listening.
+                    #
+                    # Debian ships ssh.socket disabled, so none of this is
+                    # visible there. UBUNTU ENABLES IT BY DEFAULT, and ubuntu
+                    # is the other half of the supported tier -- so this is
+                    # the check that decides whether that half works.
+                    #
+                    # Refusing in stage B costs nothing: EX_PREFLIGHT means
+                    # the box was not touched. The alternative is discovering
+                    # it at verification, with T-Pot installed.
+                    state="22 held by ${names} for ${unit} -- ssh is SOCKET-ACTIVATED on this host, so systemd owns the listener and sshd_config's Port is ignored. Upstream's port move edits sshd_config and would not move it. Disable ${unit} and enable the ssh service (systemctl disable --now ${unit}; systemctl enable --now ssh.service), then re-run"
+                    worst=$(_tpot_pf_worse "$worst" fail)
                 else
                     state="22 held by ${names}, which is not the host ssh"
                     worst=$(_tpot_pf_worse "$worst" fail)

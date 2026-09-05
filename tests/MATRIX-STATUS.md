@@ -14,10 +14,10 @@ this installer *can* drive, which is a claim about code; this file says what it 
 |---|---|
 | Date | 2026-09-05 |
 | Result | **Pass** — exit `20` `EX_REBOOT`, then rebooted and T-Pot started |
-| Run id | `20260905T084900Z` |
-| Installer | tpot-automation, at the tree released as 1.0.0 |
+| Run id | `20260905T104928Z` |
+| Installer | tpot-automation 1.0.1 |
 | Edition | `h` (hive), the default. `TPOT_TYPE=HIVE` in T-Pot's `.env` afterwards |
-| Duration | 278 s, of which 210 s was upstream's own installer |
+| Duration | 268 s, of which 217 s was upstream's own installer |
 | Host | Proxmox VM: 4 cores, 9216 MB assigned (8876 MiB `MemTotal`), 80 GB disk, no swap |
 | OS | Debian GNU/Linux 13 (trixie), `6.12.107+deb13-cloud-amd64`, x86_64, stock cloud image |
 | Upstream | entrypoint sha256 `0e0b893b…da50` verified; payload ref consistent |
@@ -32,7 +32,7 @@ this installer *can* drive, which is a claim about code; this file says what it 
 | Edition applied after the sensor install | upstream installed the sensor compose; `TPOT_TYPE=HIVE` afterwards |
 | Telemetry disabled | no `ewsposter` service in the live compose file |
 | Administrative SSH moved | `sshd -T` reports port 64295; TCP/22 free until the reboot |
-| Pre-reboot verification | 14 of 14 checks passed |
+| Pre-reboot verification | 15 of 15 checks passed |
 | `--verify-only` refuses an unrebooted host | exit `16` `EX_VERIFY`; `listen_admin_ssh` passed, the two container listeners failed |
 | Post-reboot: T-Pot running | see below |
 

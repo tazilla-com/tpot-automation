@@ -5,6 +5,55 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-09-05
+
+### Fixed
+
+**Socket-activated ssh made the installer produce a broken host, silently.** This is the whole of
+1.0.1, and it decides whether `ubuntu:26.04` — the other half of the supported tier — works at all.
+
+Under systemd socket activation, `ssh.socket` owns the listening socket and `sshd_config`'s `Port`
+is **ignored**, not overridden. Upstream T-Pot's port move appends `Port 64295` to `sshd_config`,
+so on such a host it changes nothing about the listener:
+
+```
+sshd -T   ->  port 64295, listenaddress 0.0.0.0:64295, [::]:64295   (exit 0)
+ss -tlnp  ->  LISTEN *:22  users:(("sshd",pid=976),("systemd",pid=1))
+```
+
+Debian ships `ssh.socket` disabled, so none of this was visible on the one platform this project
+had installed. **Ubuntu enables it by default.**
+
+Three separate faults, all fixed:
+
+* **`lib/preflight.sh` had an arm for socket activation and it was unreachable.** It required the
+  port-22 holder list to be exactly `systemd`, but `ss` names every process holding the socket — so
+  an open ssh session, which is how anyone runs an installer on a remote host, adds a
+  per-connection `sshd` and the list becomes `sshd/systemd`. The arm fired only on a host nobody
+  was logged in to.
+* **It recorded such a host as ALLOWED**, which was the worse half. The install would complete,
+  administrative ssh would never move, the honeypot could not bind 22 after the reboot, and the
+  closing notice would tell the operator to reconnect on a port that is not listening. It now
+  **fails in preflight** — `EX_PREFLIGHT`, nothing on the host changed — naming socket activation
+  as the cause and giving the commands that fix it.
+* **`roles/tpot_verify` read only sshd's configuration.** Its three sshd checks all derive from
+  `sshd -T`; the variable was even named `tpot_verify_sshd_bound`, "the ports sshd will bind". A
+  new pre-reboot check, `sshd_listening`, reads the kernel's socket table instead and fails when
+  the two disagree, naming `ssh.socket` when it is the reason. Both questions are worth asking:
+  the configuration check catches upstream's Match-block trap, this one catches the listener that
+  never moved.
+
+Reproduced on a real guest by putting Debian into Ubuntu's shape, and the fix verified both ways:
+a socket-activated host is refused at preflight with the remedy, and an ordinary host installs to
+exit `20` with `sshd_listening` passing and 15 of 15 pre-reboot checks green. Four unit tests
+cover it, including the no-regression case.
+
+### Known
+
+`ubuntu:26.04` is still unrun. The platform this project develops on has one guest template and no
+way to make another, so the fix above is proven against a reproduction rather than against Ubuntu.
+See `docs/compatibility.md`.
+
 ## [1.0.0] - 2026-09-05
 
 First public release. Apache License 2.0.

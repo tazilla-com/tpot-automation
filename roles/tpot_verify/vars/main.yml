@@ -167,6 +167,10 @@ tpot_verify_pre_reboot_ids:
   - sshd_config_valid
   - sshd_admin_port
   - sshd_extra_listeners
+  # sshd_listening reads the KERNEL's socket table where the three above read
+  # sshd's configuration. On a socket-activated host the two disagree and only
+  # this one is right; see the block above it in tasks/pre-reboot.yml.
+  - sshd_listening
   - env_file_present
   - env_web_user
   - env_ls_web_user_untouched

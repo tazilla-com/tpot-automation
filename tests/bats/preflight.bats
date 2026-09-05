@@ -1332,3 +1332,103 @@ EOF
     assert_eq 'inconclusive' "$(pf_status reachability_apt)" 'the status recorded for an unreadable apt'
     assert_eq "$EX_PREFLIGHT" "$(pf_verdict 0)" 'a full run must not install from a box it could not measure'
 }
+
+# ===========================================================================
+# Socket activation, and the port-22 holder.
+#
+# THE DEFECT THESE COVER, MEASURED ON 2026-09-05.
+#   Under systemd socket activation, ssh.socket owns the listening socket and
+#   sshd_config's `Port` is IGNORED -- not overridden, not consulted. Upstream
+#   T-Pot's port move appends `Port 64295` to sshd_config, so on such a host it
+#   changes nothing about the listener: `sshd -T` reports 64295 and the kernel
+#   reports 22, permanently.
+#
+#   preflight had an arm for exactly this, and it was UNREACHABLE. It required
+#   the port-22 holder list to be exactly "systemd", but `ss` names every
+#   process holding the socket -- so an open ssh session, which is how anybody
+#   runs an installer on a remote box, adds a per-connection sshd and the list
+#   becomes "sshd/systemd". The arm fired only on a host nobody was logged in
+#   to. Reproduced on a real guest by putting Debian into Ubuntu's shape.
+#
+#   It also recorded the host as ALLOWED, which was the worse half: the install
+#   would complete, administrative ssh would never move, the honeypot could not
+#   bind 22 after the reboot, and the closing notice would tell the operator to
+#   reconnect on a port that is not listening.
+#
+#   Debian ships ssh.socket disabled. UBUNTU ENABLES IT BY DEFAULT, and ubuntu
+#   is the other half of the supported tier.
+# ===========================================================================
+
+# systemctl_stub UNIT... -- a systemctl whose `is-active` succeeds only for the
+#   units named here. Everything else about it is inert.
+systemctl_stub() {
+    mkdir -p "$TMP/bin"
+    printf '%s\n' "$@" > "$TMP/active-units"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [[ ${1:-} == is-active ]]; then\n'
+        printf '  u=${!#}\n'
+        printf '  grep -qx -- "$u" %q && exit 0\n' "$TMP/active-units"
+        printf '  exit 3\n'
+        printf 'fi\n'
+        printf 'exit 0\n'
+    } > "$TMP/bin/systemctl"
+    chmod +x "$TMP/bin/systemctl"
+    PATH="$TMP/bin:$PATH"
+}
+
+@test "a socket-activated host is refused, and the reason names socket activation rather than the holder" {
+    pf_load
+    no_network
+    # The shape a live ssh session produces: TWO holders, which is what made
+    # the old exact-match arm unreachable.
+    ss_stub 'LISTEN 0 4096 *:22 *:* users:(("sshd",pid=976,fd=3),("systemd",pid=1,fd=92))' ''
+    systemctl_stub ssh.socket
+    public_json '"tpot_ansible_source": "distro"'
+    pf_stage_b || true
+    assert_check ports fail
+    local d; d=$(pf_detail ports)
+    assert_contains 'SOCKET-ACTIVATED' "$d" 'the ports record'
+    assert_contains 'ssh.socket' "$d" 'the ports record'
+    # The remedy is the point: a refusal that does not say what to change is
+    # a refusal the operator cannot act on.
+    assert_contains 'systemctl disable --now' "$d" 'the ports record'
+    refute_contains 'which is not the host ssh' "$d" 'the ports record'
+}
+
+@test "socket activation is recognised with no session open, which is the only case the old arm caught" {
+    pf_load
+    no_network
+    ss_stub 'LISTEN 0 4096 *:22 *:* users:(("systemd",pid=1,fd=92))' ''
+    systemctl_stub ssh.socket
+    public_json '"tpot_ansible_source": "distro"'
+    pf_stage_b || true
+    assert_check ports fail
+    assert_contains 'SOCKET-ACTIVATED' "$(pf_detail ports)" 'the ports record'
+}
+
+@test "an ordinary sshd on 22 still passes, and is not mistaken for socket activation" {
+    # The no-regression half. Debian ships ssh.socket disabled and this is
+    # the shape every install so far has run against.
+    pf_load
+    no_network
+    ss_stub 'LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=705,fd=6))' ''
+    systemctl_stub
+    public_json '"tpot_ansible_source": "distro"'
+    pf_stage_b || true
+    assert_check ports ok
+    local d; d=$(pf_detail ports)
+    assert_contains 'allowed' "$d" 'the ports record'
+    refute_contains 'SOCKET-ACTIVATED' "$d" 'the ports record'
+}
+
+@test "a holder that is neither ssh nor systemd is still refused, and says so plainly" {
+    pf_load
+    no_network
+    ss_stub 'LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("nginx",pid=99,fd=7))' ''
+    systemctl_stub ssh.socket
+    public_json '"tpot_ansible_source": "distro"'
+    pf_stage_b || true
+    assert_check ports fail
+    assert_contains 'not the host ssh' "$(pf_detail ports)" 'the ports record'
+}

@@ -54,6 +54,14 @@ only, so 13.0 through 13.x all pass.
 installer's distribution-specific surface is `apt`, `dpkg-query` and `systemd`. That is a reasoned
 expectation, not evidence.
 
+**One difference between the two is known and handled.** Ubuntu enables `ssh.socket` by default
+and Debian does not. Under socket activation systemd owns the listening socket and `sshd_config`'s
+`Port` is ignored, so upstream's port move — which edits `sshd_config` — does not move the
+listener. Since 1.0.1 preflight detects this and refuses before changing anything, naming the
+cause and the two commands that fix it; verification carries a second check that reads the kernel's
+socket table rather than sshd's configuration. Both were proven against a Debian host put into
+Ubuntu's shape, not against Ubuntu.
+
 **`aarch64` is expected to work.** Preflight accepts `x86_64` and `aarch64` and rejects anything
 else; upstream publishes multi-architecture images. No ARM host has been used here.
 
