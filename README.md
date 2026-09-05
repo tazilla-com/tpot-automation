@@ -193,8 +193,25 @@ ssh -p 64295 you@your-host
 #   exit 0   ->  installed and verified
 ```
 
+**The answer file must pin the upstream ref.** Nothing is set by default, and preflight refuses a
+run that has not pinned one — upstream's distribution gate cannot be pre-empted otherwise. Three
+keys, taken together:
+
+```yaml
+tpot_upstream_ref:      "fdafa483e1e0f36b0a7b0cbb6bae1031fe06fc37"
+tpot_upstream_url:      "https://raw.githubusercontent.com/telekom-security/tpotce/fdafa483e1e0f36b0a7b0cbb6bae1031fe06fc37/install.sh"
+tpot_upstream_checksum: "0e0b893b86aeca80f4ef43c30b851850b0370f43ced37bcda36ecee52faeda50"
+```
+
+The values for any ref are in `roles/tpot_install/vars/upstream-<ref>.yml`, which
+`tools/pin-upstream.sh` generates. To move the pin, run that tool and take the values from the file
+it writes. `tpot_web_password` is the only other input with no default; supply it with
+`--web-password-file` as above, or in the answer file, or as `TPOT_WEB_PASSWORD`.
+
 Run `--preflight-only` first: it performs every check, prints the report, changes nothing, and
-exits `0`, `11` or `12`. `--check` additionally runs the playbook in check mode.
+exits `0`, `11` or `12`. **A clean host returns `12`, not `0`** — upstream's own gate belongs to
+the copy of `install.sh` the run will fetch, so preflight records it as untested rather than
+passed. `--check` additionally runs the playbook in check mode.
 
 ### Installing over SSH
 
