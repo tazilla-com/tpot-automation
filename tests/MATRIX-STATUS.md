@@ -2,6 +2,11 @@
 
 Dated record of which (upstream ref × platform) pairs have been installed on real hardware.
 
+**Exit `0` was first observed on 2026-09-05**, on the Ubuntu row below: installed, rebooted,
+verified, 25 of 25 checks passing. Until that day this product had never produced its own success
+code, because the network its runs were driven from could not reach the administrative port after
+an install. That was a platform limit, not a product one, and it is fixed.
+
 **A platform may be called *tested* only if it has a row here.** `support-matrix.yml` says what
 this installer *can* drive, which is a claim about code; this file says what it *has* driven.
 `docs/compatibility.md` explains the difference and how the supported list is derived.
@@ -47,16 +52,18 @@ cannot reach it:
 
 ### Not verified
 
-* **Exit `0` was not observed.** The post-boot verification unit fired and wrote
-  `/var/lib/tpot-automation/result.json` on the host; that file cannot be read from the network
-  this run was driven from. The two-invocation contract's second half is therefore unconfirmed.
+* **Exit `0` was not observed on THIS run.** The post-boot verification unit fired and wrote
+  `/var/lib/tpot-automation/result.json` on the host, and that file could not be read from the
+  network the run was driven from — the administrative pinhole was still `--dport 22` only. The
+  Ubuntu row below was made after that was widened and does carry exit `0`; this row is left as it
+  stood, because re-running it is what would change it, not editing it.
 * **Container count was not compared against `min_containers` (39).** Veth interfaces are a proxy:
   a host-network container has none and a two-network container has two.
 * **The dashboard was not opened.** TCP/64297 is unreachable from here.
 * **Resource headroom is unmeasured.** The host sits at its memory ceiling with ballooning
   disabled, which cannot distinguish real pressure from a guest that has touched every page. The
   hive edition's heavier images are pulled at first boot, after the last measurement taken.
-* **No other platform.** `ubuntu:26.04` is supported by derivation from the same pin and has never
+* **No other platform, at the time.** `ubuntu:26.04` has since been run — see the row below — and had never
   been run.
 
 ### Reproducing
@@ -83,6 +90,64 @@ working on a stock Debian 13 cloud image:
   exit `11` and no failing row to explain it.
 * `--check` could not complete on a host with no T-Pot on it: `finalize` enabled a unit whose file
   check mode had not written.
+
+---
+
+## `fdafa483e1e0f36b0a7b0cbb6bae1031fe06fc37` × `ubuntu:26.04`
+
+| | |
+|---|---|
+| Date | 2026-09-05 |
+| Result | **Pass** — exit `20`, rebooted, then exit `0` `EX_OK` |
+| Run ids | `20260905T170636Z` (install), `20260905T171403Z` (verify) |
+| Installer | tpot-automation 1.0.5 |
+| Edition | `h` (hive), the default |
+| Host | Proxmox VM from template `9201 ubuntu2604-golden`: 4 cores, 9216 MB assigned (8864 MiB `MemTotal`), 80 GB, no swap |
+| OS | Ubuntu 26.04.1 LTS, `7.0.0-31-generic`, x86_64 |
+| Overrides | **none.** No `--force-*` flag. `result.json` records `forced: false` |
+
+### This is the row that carries exit `0`
+
+**25 of 25 verification checks passed** — 15 pre-reboot, 10 post-reboot — and the second invocation
+returned `0` `EX_OK`, outcome `ok`, with `post_boot_verify_armed: false` because the unit had
+disarmed itself. The post-reboot half, in full:
+
+| Check | Evidence |
+|---|---|
+| `listen_admin_ssh` | listening on tcp/64295 |
+| `listen_dashboard` | listening on tcp/64297 |
+| `listen_elasticsearch` | listening on tcp/64298 |
+| `elasticsearch_loopback_only` | bound on 127.0.0.1 |
+| `honeypot_ssh_not_sshd` | no sshd process is listening on tcp/22 |
+| `honeypot_ssh_published` | 2 listener(s) on tcp/22 |
+| `honeypot_ssh_container` | expected cowrie, found cowrie |
+| `containers_running` | 39 running, at least 39 expected |
+| `containers_stable` | none restarting, none exited |
+| `tpot_service_active` | `systemctl is-active tpot.service` says "active" |
+
+### What this run also established
+
+* **The socket-activation refusal is right, on the platform it was written for.** Ubuntu ships
+  `ssh.socket` enabled and `ssh.service` disabled, and the template deliberately preserves that.
+  Preflight refused at exit `11` — `22 held by sshd/systemd for ssh.socket … Disable ssh.socket and
+  enable the ssh service` — and changed nothing. Applying exactly that remedy made the install
+  proceed. Until this run the behaviour had only been reproduced on a Debian host put into Ubuntu's
+  shape by hand.
+* **The two container counts agree.** The floor verification used came from "the 39 service
+  block(s) in the installed compose file", and `min_containers[h]` in the pinned ref's data file is
+  39. The 1.0.3 correction — that these are the same quantity — is now measured rather than argued.
+* **The post-boot unit fires on its own and can lose a race.** It ran unattended, found 36 of 39
+  containers up while T-Pot was still starting, and recorded exit `16` rather than reporting
+  success. That is the design working: it did not call an incomplete T-Pot verified. A second
+  invocation once the containers had settled returned `0`.
+
+### Not verified
+
+* **The dashboard was not logged into.** Its listener answered and nginx responded through the
+  administrative pinhole, but no credential was exercised against it.
+* **One edition, one account policy.** `h` with the default account; the other five editions and
+  the `set` password policy remain unexercised.
+* **No `--force-*` path was taken**, so the override arms remain untested on this platform.
 
 ---
 

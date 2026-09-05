@@ -5,7 +5,7 @@
 | Platform | Status | Basis |
 |---|---|---|
 | Debian 13 (`trixie`), x86_64 | **Tested** | installed 2026-09-05; pre-reboot checks 14/14, T-Pot running after reboot. See `tests/MATRIX-STATUS.md` |
-| Ubuntu 26.04, x86_64 | **Supported, never run** | accepted by the pinned upstream ref's gate; `apt`-based |
+| Ubuntu 26.04, x86_64 | **Tested** | installed and **verified** 2026-09-05: exit `0`, 25/25 checks. See `tests/MATRIX-STATUS.md` |
 | Everything else | **Unsupported** | see the gate table below |
 
 Compatibility is the intersection of two constraints:
@@ -50,17 +50,19 @@ vendor image, or a container host — provided it meets the requirements in `REA
 this installer is specific to a provisioning method. The version gate compares the major number
 only, so 13.0 through 13.x all pass.
 
-**Ubuntu 26.04 is expected to work.** Upstream accepts it, it is `apt`-based, and this
-installer's distribution-specific surface is `apt`, `dpkg-query` and `systemd`. That is a reasoned
-expectation, not evidence.
+**Ubuntu 26.04 is tested**, and it is the platform carrying this project's only observed exit `0`:
+installed, rebooted, verified, 25 of 25 checks, no override of any kind.
 
 **One difference between the two is known and handled.** Ubuntu enables `ssh.socket` by default
 and Debian does not. Under socket activation systemd owns the listening socket and `sshd_config`'s
 `Port` is ignored, so upstream's port move — which edits `sshd_config` — does not move the
 listener. Since 1.0.1 preflight detects this and refuses before changing anything, naming the
 cause and the two commands that fix it; verification carries a second check that reads the kernel's
-socket table rather than sshd's configuration. Both were proven against a Debian host put into
-Ubuntu's shape, not against Ubuntu.
+socket table rather than sshd's configuration.
+
+**On a real Ubuntu 26.04 host that refusal fired exactly as designed**, and applying the remedy it
+prints carried the install through to exit `20` and then to `0`. Until then it had only been proven
+against a Debian host put into Ubuntu's shape by hand.
 
 **`aarch64` is expected to work.** Preflight accepts `x86_64` and `aarch64` and rejects anything
 else; upstream publishes multi-architecture images. No ARM host has been used here.

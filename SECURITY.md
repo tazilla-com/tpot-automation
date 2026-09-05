@@ -18,9 +18,10 @@ Debian 13 host: exit `20`, all fourteen pre-reboot verification checks passing,
 and the honeypot answering on TCP/22 after the reboot. `tests/MATRIX-STATUS.md`
 is the dated record and lists what that run did *not* establish.
 
-**One host, one platform, one edition.** Every other platform, and the whole of
-the post-reboot verification record, remain unexercised: exit `0` has never been
-observed from this product. What has been executed besides that single install,
+**Two platforms, one edition.** Debian 13 and Ubuntu 26.04 have each been installed at the
+pinned ref, and the Ubuntu run was carried through the reboot to **exit `0`** with all twenty-five
+verification checks passing. What remains unexercised is every other edition, the `set` account
+password policy, and every `--force-*` override. What has been executed besides that single install,
 all of it unprivileged on a development box: the tree's own gate
 suite, `install.sh` itself in every mode it offers, and the roles far enough to
 establish that their expressions evaluate and their modules behave as written.

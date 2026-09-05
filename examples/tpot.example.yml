@@ -14,14 +14,14 @@
 # the rest to the built-in defaults -- a value you copied without deciding on
 # is a value nobody will dare change later.
 #
-# WHAT HAS BEEN RUN, AND WHAT HAS NOT. This is version 1.0.0.
-# ONE INSTALL HAS BEEN MADE WITH THIS TOOL: a Debian 13 host on 2026-09-05,
-# exit 20, all fourteen pre-reboot checks passing, and T-Pot running after
-# the reboot. tests/MATRIX-STATUS.md is the dated record and says plainly
-# what that run did not establish -- exit 0 above all, which has never been
-# observed. Every other platform, and most of the settings below, remain
-# unexercised: one install exercises one edition, one account policy and one
-# set of ports. So a setting below is READ, TYPED, VALIDATED AND RECORDED
+# WHAT HAS BEEN RUN, AND WHAT HAS NOT. This is version 1.0.6.
+# BOTH SUPPORTED PLATFORMS HAVE BEEN INSTALLED, 2026-09-05: Debian 13 to exit
+# 20 with T-Pot running after the reboot, and Ubuntu 26.04 all the way to
+# EXIT 0 -- installed, rebooted, verified, twenty-five of twenty-five checks,
+# no override of any kind. tests/MATRIX-STATUS.md is the dated record and says
+# what those runs did NOT establish. Both exercised one edition, one account
+# policy and one set of ports, so most of the settings below remain unobserved
+# on a real box. So a setting below is READ, TYPED, VALIDATED AND RECORDED
 # exactly as described, and is then acted on by tasks that have run against
 # a real machine once, in one configuration. docs/roadmap-ioc.md, which
 # the prose names below, is still unwritten. docs/firewall.md, also named

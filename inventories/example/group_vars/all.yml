@@ -9,12 +9,12 @@
 #
 # WHAT HAS BEEN RUN, AND WHAT HAS NOT, AND IT IS MOST OF WHAT THIS FILE
 # DESCRIBES. This is version 1.0.0. ONE INSTALL HAS BEEN MADE
-# WITH THIS TOOL: a Debian 13 host on 2026-09-05, exit 20, all fourteen
-# pre-reboot checks passing, and T-Pot running after the reboot. See
-# tests/MATRIX-STATUS.md, which also says what that run did not establish --
-# exit 0 above all, which has never been observed. That single run exercised
-# one edition, one account policy and one set of ports, so most of the
-# behaviours described below have still not been observed on a real box. A
+# WITH THIS TOOL ON BOTH SUPPORTED PLATFORMS, 2026-09-05: Debian 13 to exit 20
+# with T-Pot running after the reboot, and Ubuntu 26.04 all the way to EXIT 0 --
+# installed, rebooted, verified, twenty-five of twenty-five checks, no override
+# of any kind. tests/MATRIX-STATUS.md is the dated record and says what those
+# runs did NOT establish. Both exercised one edition, one account policy and one
+# set of ports, so most of the settings below remain unobserved on a real box. A
 # setting below is READ, TYPED, VALIDATED AND RECORDED exactly as described --
 # that half runs, and is tested -- and is then acted on by tasks that are
 # written, linted, syntax-checked and gated. docs/roadmap-ioc.md, which the

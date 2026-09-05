@@ -5,6 +5,49 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6] - 2026-09-05
+
+### Added
+
+**`ubuntu:26.04` is tested, and it carries this project's first observed exit `0`.**
+
+Both of those are firsts. Ubuntu was half the supported tier and had never been run; and this
+product had never produced its own success code, because the network its runs were driven from
+could not reach the administrative port after an install — a platform limit, not a product one, now
+fixed. `tests/MATRIX-STATUS.md` carries the row.
+
+```
+install   exit 20  EX_REBOOT   221 s   forced: false
+verify    exit  0  EX_OK        17 s   25 of 25 checks
+```
+
+Ten post-reboot checks, none of which had ever run anywhere: the three administrative listeners,
+Elasticsearch bound to loopback only, no sshd on tcp/22, two listeners published there, **the
+honeypot on 22 identified as cowrie and matched against the installed edition**, 39 of 39
+containers running, none restarting or exited, and `tpot.service` active.
+
+### What the Ubuntu run established beyond the row
+
+**The socket-activation refusal is right on the platform it was written for.** Ubuntu ships
+`ssh.socket` enabled and `ssh.service` disabled. Preflight refused at exit `11` — naming socket
+activation, and changing nothing — and applying exactly the remedy it prints carried the install
+through. Until now that behaviour had only been reproduced on a Debian host put into Ubuntu's shape
+by hand.
+
+**The two container counts agree, measured rather than argued.** Verification derived its floor from
+"the 39 service block(s) in the installed compose file"; `min_containers[h]` in the pinned ref's
+data file is 39. That is the 1.0.3 correction confirmed on a box.
+
+**The post-boot unit fires unattended and can lose a race — and loses it safely.** It ran by itself,
+found 36 of 39 containers up while T-Pot was still starting, and recorded exit `16` rather than
+reporting success. It did not call an incomplete T-Pot verified. The second invocation, once the
+containers had settled, returned `0`.
+
+### Changed
+
+Every document that said exit `0` had never been observed now says when it was, and the platform
+tables list Ubuntu first because it is the more completely exercised of the two.
+
 ## [1.0.5] - 2026-09-05
 
 ### Fixed
@@ -248,7 +291,8 @@ seconds with all fourteen pre-reboot verification checks passing, then rebooted
 with the honeypot answering on TCP/22. The run used no `--force-*` override of
 any kind. `tests/MATRIX-STATUS.md` is the dated record.
 
-**What has not.** Exit `0` has never been observed. The post-boot verification
+**What has not.** Exit `0` has never been observed. *(First observed 2026-09-05 on Ubuntu 26.04,
+once the platform's administrative pinhole was widened — see 1.0.6.)* The post-boot verification
 unit fires and writes its record to the host, and the network that install was
 driven from cannot reach the host afterwards to read it — administrative SSH
 moves to 64295 by design. One platform, one edition, one account policy and one

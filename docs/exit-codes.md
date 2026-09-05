@@ -343,7 +343,9 @@ That sequence has been performed once as far as `20`, on 2026-09-05. Its
 second half has not: the host was verified before the reboot -- `--verify-only`
 correctly refused it with `16`, `listen_admin_ssh` passing and the two container
 listeners failing -- and after the reboot it could no longer be reached from
-where the run was driven. **Exit `0` has never been observed.** On this
+where the run was driven. **Exit `0` was first observed on 2026-09-05**, once the platform's
+administrative pinhole was widened to reach port 64295 after an install: Ubuntu 26.04, 25 of 25
+checks, recorded in `tests/MATRIX-STATUS.md`. On this
 project's own development box both invocations stop at `11` on the `root`
 check, at step 3 of ten.
 

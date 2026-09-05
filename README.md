@@ -7,7 +7,7 @@ verifies the result, and exits with a code a caller can branch on.
 
 With no terminal attached it prompts for nothing. It vendors no upstream code.
 
-**Version 1.0.5**, [Apache License 2.0](LICENSE). Installed and exercised on Debian 13 (x86_64);
+**Version 1.0.6**, [Apache License 2.0](LICENSE). Installed and exercised on Debian 13 (x86_64);
 see [Supported platforms](#supported-platforms).
 
 ---
@@ -174,16 +174,21 @@ start, so a host near the floor fills up over time; Elasticsearch is where that 
 
 | Platform | Status |
 |---|---|
+| Ubuntu 26.04, x86_64 | **Tested** — installed and **verified** 2026-09-05: exit `0`, 25/25 checks |
 | Debian 13, x86_64 | **Tested** — installed 2026-09-05; pre-reboot checks 14/14, T-Pot running after reboot |
-| Ubuntu 26.04, x86_64 | Supported, never run |
 
 Support is the intersection of upstream's own distribution gate at the pinned ref with this
 installer's `apt-get` requirement. `tools/pin-upstream.sh` computes it; move the pin and it is
 recomputed.
 
-Any Debian 13 host is expected to work regardless of how it was provisioned — the version gate
-compares the major number only. Ubuntu 26.04 and `aarch64` are expected to work and have not been
-run.
+Both supported platforms have been installed and dated. Any Debian 13 host is expected to work
+regardless of how it was provisioned — the version gate compares the major number only. `aarch64`
+is expected to work and has not been run.
+
+**Ubuntu needs one change made to it first, and the installer refuses until it is.** Ubuntu enables
+`ssh.socket` by default, under which systemd owns the listening socket and `sshd_config`'s `Port` is
+ignored — so upstream's port move would silently do nothing. Preflight detects this and stops before
+changing anything, naming the two commands that fix it.
 
 `docs/compatibility.md` has upstream's gate row by row, the reason each excluded platform is
 excluded, and how to reach an older release.
