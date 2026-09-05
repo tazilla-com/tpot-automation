@@ -94,20 +94,34 @@ tpot_install_upstream:
   # deliberately did not. Saying so is the point: a number recorded and never
   # checked is exactly the kind of thing a reader assumes is load-bearing.
   #
-  # WHY IT WAS NOT BUILT. The two quantities are not yet proven to measure the
-  # same thing. This map is upstream's service count for the edition at pin
-  # time, minus the telemetry service. roles/tpot_verify counts service blocks
-  # in the compose file installed on the box. Those SHOULD agree and they were
-  # not shown to: on the 2026-09-05 install, min_containers[h] is 39 while a
-  # naive count of the installed compose file gave 41 runtime services out of
-  # 60 keys. That difference may be entirely in how the two count -- build-only
-  # `_local` entries, `tpotinit`, the telemetry service -- and until somebody
-  # establishes which, a check comparing them would fire on a healthy install.
+  # WHY IT WAS NOT BUILT -- AND THE FIRST ANSWER GIVEN HERE WAS WRONG.
   #
-  # This tree treats a check that fails a good install over a number nobody can
-  # act on as roughly as bad as a check that passes for something it did not
-  # establish. So the comparison waits for the equivalence to be established on
-  # a box, and the open item says so rather than this file implying otherwise.
+  # This comment said the two were "not proven to measure the same thing",
+  # citing 41 runtime services out of 60 keys against a map that says 39. That
+  # 60/19/41 was a count of every `^  key:` in the file -- which sweeps up the
+  # top-level `networks:` and `volumes:` mappings and the build-only stanzas --
+  # and not a count of the `services:` mapping, which is the only thing either
+  # side measures.
+  #
+  # THEY ARE THE SAME QUANTITY AND THEY ARE MEANT TO BE EQUAL. Both are the
+  # number of keys in the top-level `services:` mapping of the edition's
+  # compose file, minus the telemetry service. tools/pin-upstream.sh counts it
+  # with a three-state walk of that mapping and refuses to write the file at
+  # all if the restart-policy count does not equal the service count -- so a
+  # compose carrying build-only blocks could not have produced this map.
+  # roles/tpot_install/tasks/configure-env.yml asserts, after its own rewrite,
+  # that the installed file went from N services to N-1. A box with 60 service
+  # keys would have gone to 59 and the run would have stopped there.
+  #
+  # ONE LEGITIMATE DIFFERENCE EXISTS, and it is why both maps are carried:
+  # with tpot_upstream_telemetry: on nothing is removed, so the box has
+  # `services[type]`, one more than `min_containers[type]`.
+  #
+  # So the comparison is buildable and worth building -- as a WARNING, keyed
+  # on the telemetry setting. It is not built yet because the box that would
+  # exercise it has been destroyed, and this tree does not ship a check whose
+  # first run is somebody else's install. tasks/open/004 carries it with the
+  # corrected reasoning.
   #
   # WHAT IS ESTABLISHED, and is cheap to re-check by eye: min_containers[k]
   # equals services[k] minus one for every edition here, which is the telemetry

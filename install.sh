@@ -19,7 +19,10 @@
 #     1  parse flags                                        no mutation
 #     2  open the transcript through the redactor            creates the log dir
 #     3  preflight STAGE A                                   NO mutation
+#   3.5  create $RUNDIR, 0700, on tmpfs -- AFTER stage A,    tmpfs only
+#        because "is /run usable" is one of stage A's checks
 #     4  merge config -> merged.json, 0600, on tmpfs         tmpfs only
+#   4.5  teach the redactor what to hide                     no mutation
 #     5  preflight STAGE B                                   NO mutation
 #        `-- --preflight-only exits here: 0, 11 or 12
 #     6  tree hygiene: CRLF, .DS_Store, __MACOSX             FIRST mutation
@@ -28,6 +31,15 @@
 #     9  ansible-playbook site.yml -e @<merged>              yes
 #    10  failure class -> exit code; result.json; reboot;    yes
 #        the notice
+#
+#   3.5 AND 4.5 ARE IN THAT LIST BECAUSE LEAVING THEM OUT COST SOMETHING.
+#   $RUNDIR is created AFTER stage A, and it has to be: proving /run is usable
+#   is one of stage A's own checks, and creating the run directory first would
+#   put the merged document -- which holds the dashboard password -- on a
+#   filesystem nothing had yet shown to be tmpfs. The consequence is that
+#   stage A's records have nowhere to be flushed to, which is why every stage
+#   A refusal recorded `"preflight": []` in result.json until 1.0.2. That
+#   ordering was invisible here, where a reader looks first.
 #
 #   STEP 9 HAS A PLAY TO RUN. site.yml, verify.yml and roles/** landed on
 #   2026-09-04. The banner above step 9 says what still guards a release that

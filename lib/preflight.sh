@@ -1322,9 +1322,11 @@ _tpot_pf_check_os() {
             # so this branch was unreachable and nobody could read the claim.
             # D-11 pinned a ref, the tier became two rows, and the sentence
             # started printing on every run on a supported box -- asserting a
-            # test campaign that has never happened. Nothing in this project
-            # has ever been installed on any box, and the file that would
-            # record such a run, tests/MATRIX-STATUS.md, does not exist.
+            # test campaign that had not happened. Since 2026-09-05 one row
+            # DOES exist in tests/MATRIX-STATUS.md -- debian:13 at the pinned
+            # ref -- which sharpens the distinction rather than removing it:
+            # this line reports the TIER, and the tier also contains
+            # ubuntu:26.04, which nobody has ever installed.
             #
             # So the tier means exactly two things, and the message now says
             # only those two: the pinned upstream's own gate accepts this

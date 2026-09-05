@@ -65,16 +65,33 @@ for f in "${refs[@]}"; do
     [[ $ref =~ ^[0-9a-f]{40}$ ]] || { note 'skipping %s -- not a pinned ref' "$base"; continue; }
     checked=$(( checked + 1 ))
 
-    if [[ $status_text != *"$ref"* ]]; then
-        fail 'no section in MATRIX-STATUS.md names the pinned ref %s. Pinning a ref makes a platform SUPPORTED; only a dated run makes it TESTED.' "$ref"
+    # A HEADING that names the ref, not a mention of it. This distinction is
+    # the whole gate, and getting it wrong made this file worthless: the first
+    # version matched the ref ANYWHERE and then took the next `| Date |` row,
+    # so a status file reading
+    #
+    #     Superseding the earlier pin <ref>, which was never run.
+    #     ## <a completely different ref> x debian:13
+    #     | Date | 2026-09-05 |
+    #
+    # passed a release whose pinned ref had no run at all -- it borrowed
+    # another ref's date. Reproduced 2026-09-05 before this was rewritten.
+    if ! grep -qE "^#+ .*${ref}" -- "$STATUS"; then
+        if [[ $status_text == *"$ref"* ]]; then
+            fail 'MATRIX-STATUS.md MENTIONS the pinned ref %s but has no section headed by it. A mention is not a run.' "$ref"
+        else
+            fail 'no section in MATRIX-STATUS.md names the pinned ref %s. Pinning a ref makes a platform SUPPORTED; only a dated run makes it TESTED.' "$ref"
+        fi
         continue
     fi
 
     derived=$(sed -n 's/^[[:space:]]*derived_at:[[:space:]]*"\{0,1\}\([0-9-]\{10\}\).*/\1/p' "$f" | head -n 1)
-    # The date on the row that names this ref: the first `| Date | ... |` after it.
+    # The date from INSIDE that ref's own section: start at its heading, stop
+    # at the next heading, and take the `| Date |` row between them. A date
+    # that belongs to the next section is a different run.
     row=$(awk -v ref="$ref" '
-        index($0, ref) { seen = 1 }
-        seen && /^\| *Date *\|/ { print; exit }
+        /^#+ / { inside = ($0 ~ ref) ? 1 : 0; next }
+        inside && /^\| *Date *\|/ { print; exit }
     ' "$STATUS" | sed -n 's/.*| *\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\) *|.*/\1/p')
 
     if [[ -z $row ]]; then

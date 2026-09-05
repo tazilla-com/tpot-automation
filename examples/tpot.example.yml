@@ -261,9 +261,9 @@
 # SUPPORTED IS NOT TESTED. tools/pin-upstream.sh derived debian:13 and
 # ubuntu:26.04 from this ref's own gate, read out of upstream's source. That
 # says what upstream will accept and what this installer can drive, and
-# nothing more. The evidence for a tested row would be a dated run in
-# tests/MATRIX-STATUS.md, which does not exist, because no T-Pot has ever
-# been installed by this project -- on any release, at any ref.
+# nothing more. The evidence for a tested row is a dated run in
+# tests/MATRIX-STATUS.md. ONE ROW EXISTS: debian:13 at this ref, 2026-09-05.
+# ubuntu:26.04 is supported by the same gate and has never been installed.
 #
 # AND PINNING A COMMIT DOES NOT PIN THE SOFTWARE THAT RUNS. T-Pot's own .env
 # names a mutable image tag and sets a pull policy of `always`, so every

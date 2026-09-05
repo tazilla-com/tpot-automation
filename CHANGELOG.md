@@ -5,6 +5,65 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-09-05
+
+### Fixed
+
+**`tests/release-gate.sh` passed a release whose pinned ref had no run at all.** It matched the ref
+*anywhere* in `MATRIX-STATUS.md` and then took the next `| Date |` row, so a file reading
+
+```
+Superseding the earlier pin <ref>, which was never run.
+## <a different ref> × debian:13
+| Date | 2026-09-05 |
+```
+
+passed, borrowing another ref's date. A gate that does not gate is worse than no gate, and this one
+shipped in 1.0.2 one commit after being written. It now requires a **heading** that names the ref
+and reads the date from inside that section only, and distinguishes "mentions the ref" from "has a
+section for it" in the message. Reproduced before the fix and proven against both shapes after.
+
+**Six passages asserting things that had stopped being true**, found by re-reading rather than by a
+gate — none of them is checkable, which is why they survived two sweeps:
+
+* the example inventory, both example answer files and `lib/preflight.sh` still said
+  `tests/MATRIX-STATUS.md` "does not exist, because no T-Pot has ever been installed";
+* `install.sh`'s own ten-step header still said no run of it had ever installed anything;
+* the 1.0.2 notes said "nine records, including the two that failed". Exactly one fails (`root`);
+  the second failure in the measurement behind that sentence came from pointing `--runtime-dir` at a
+  non-tmpfs path.
+
+**`install.sh`'s step list was not a faithful list.** Steps 3.5 (create `$RUNDIR`) and 4.5 (teach
+the redactor what to hide) exist in the body and were missing from the header — and 3.5's absence is
+*why* the ordering behind the 1.0.2 `result.json` defect was invisible where a reader looks first.
+Both are in it now, with the reason `$RUNDIR` cannot be created earlier: proving `/run` is usable is
+one of stage A's own checks, and creating it first would put the merged document, which holds the
+dashboard password, on a filesystem nothing had shown to be tmpfs.
+
+### Changed
+
+**CI is stricter and states its own dependencies.** `tests/run-gates.sh --strict` rather than plain,
+so a gate that cannot run on the runner fails instead of being counted as a pass — which is what
+`run-gates.sh`'s own header reserves `--strict` for. PyYAML is installed explicitly rather than
+relied on: `tests/check-matrix-parse.sh` reads `support-matrix.yml` through a real parser as its
+second opinion on the bash reader, and depending silently on the runner image carrying it would be
+green for a reason nobody chose. Every job has a timeout.
+
+**The workflows say plainly that their actions are not pinned to a commit**, and why: this project's
+central argument is that a mutable ref is not a pin, `actions/checkout@v4` is a mutable tag by
+exactly that argument, and the box these were written on cannot reach GitHub's API to resolve a sha.
+A sha nobody verified would be worse than a tag everybody can see is a tag. Recorded as an open item
+rather than left as an inconsistency a reader has to notice.
+
+**The `min_containers` reasoning in the per-ref data file was wrong and is corrected.** 1.0.2 said
+the pin-time map and the on-box count were "not proven to measure the same thing", citing 41 runtime
+services out of 60 keys. That count swept up the top-level `networks:` and `volumes:` mappings
+instead of counting the `services:` mapping, which is the only thing either side measures. They are
+the same quantity and are meant to be equal, with exactly one legitimate difference — telemetry left
+on. The comparison is therefore buildable and worth building as a warning; it is not built yet
+because the guest that would exercise it was destroyed, and this tree does not ship a check whose
+first execution is somebody else's install.
+
 ## [1.0.2] - 2026-09-05
 
 ### Added
@@ -48,7 +107,8 @@ Every one of those is stage A.
 The records are in memory in the same shell, so `lib/result.sh` now takes them
 from there when there is no run directory, writing them beside the destination as
 a `$$`-scoped dotfile removed with the kv file it mirrors. Measured before: exit
-`11`, zero records. After: exit `11`, nine records, including the two that failed.
+`11`, zero records. After: exit `11`, nine records, with the one that failed
+(`root`) named among them.
 
 ### Changed
 

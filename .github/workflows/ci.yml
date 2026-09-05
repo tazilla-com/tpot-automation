@@ -6,6 +6,14 @@
 # job of this workflow is to make a pull request from a stranger hit them
 # without anybody remembering to ask.
 #
+# THE ACTIONS BELOW ARE NOT PINNED TO A COMMIT, AND THAT IS A GAP, NOT A VIEW.
+# This project's central argument is that a mutable ref is not a pin -- it says
+# so about upstream T-Pot at length -- and `actions/checkout@v4` is a mutable
+# tag by exactly that argument. The reason it is not a sha here is narrow and
+# worth stating rather than hiding: the box these workflows were written on
+# cannot reach GitHub's API to resolve one, and a sha nobody verified would be
+# worse than a tag everybody can see is a tag. Recorded in tasks/open/004.
+#
 # NOTHING HERE INSTALLS T-POT. Every suite below is unprivileged and offline:
 # no root, no docker, no network at lint time, and no target host. Whether
 # this installer works on a given platform is a runtime property recorded in
@@ -39,11 +47,24 @@ jobs:
   gates:
     name: build gates
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
+      - name: The gates' own dependencies
+        # tests/check-matrix-parse.sh reads support-matrix.yml through a real
+        # YAML parser as its second opinion on the bash reader, so PyYAML is a
+        # dependency of the gate suite and not of the product. It happens to be
+        # present on the runner image today; a suite that silently depends on
+        # that would report green for a reason nobody chose.
+        run: python3 -c 'import yaml' || python3 -m pip install --disable-pip-version-check PyYAML
+
       - name: Run every gate
-        run: bash tests/run-gates.sh
+        # --strict: a SKIPPED gate fails here. run-gates.sh's own header
+        # reserves that for a release build, and CI is the closest thing this
+        # tree has to one -- a gate that cannot run on the runner must be
+        # visible, not quietly counted as a pass.
+        run: bash tests/run-gates.sh --strict
 
       - name: Prove every gate can fail
         # A gate suite that passes proves nothing on its own -- a gate with a
@@ -55,6 +76,7 @@ jobs:
   unit:
     name: unit suite
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -71,6 +93,7 @@ jobs:
   lint:
     name: lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -113,6 +136,7 @@ jobs:
   entrypoint:
     name: entrypoint contract
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
