@@ -5,6 +5,45 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] - 2026-09-05
+
+### Fixed
+
+**The CI shipped in 1.0.2 did not run.** Two of its four jobs failed on their first execution, and
+both failures were in the workflow rather than in anything it tested — the gate suite and the
+linters passed. This is the release that makes CI actually work, and it exists because CI could not
+be executed from the machine it was written on.
+
+**`npm install -g bats` needs root.** On a hosted runner it tries to create
+`/usr/local/share/man/man7` and dies `EACCES`. The correction is not clever, and that is the
+uncomfortable part: **this tree already documented the right command in three places** —
+`tests/run-bats.sh` prints `npm install -g --prefix ~/.local bats` when bats is missing, twice, and
+the developer notes say the same. CI was installing a tool a different way from every contributor.
+It now uses that line and adds `$HOME/.local/bin` to `$GITHUB_PATH`.
+
+**GitHub runs every `run:` block as `/usr/bin/bash -e`.** The entrypoint job's contract check runs
+`install.sh --preflight-only`, whose whole subject is a command that exits non-zero on purpose, and
+then read `$?` on the following line — which `-e` never let it reach. The step died at exit 11: the
+very refusal it was written to inspect. `set -uo pipefail` does not undo an `-e` the runner
+supplied; only `|| rc=$?` does. The step is now verified locally under `bash -e`, which is what
+should have been done in the first place.
+
+**PyYAML could not have been installed if it had been missing.** The gates job's fallback was
+`python3 -m pip install`, which a modern Ubuntu refuses outside a virtualenv (PEP 668) — a fallback
+that works only when it is not needed. The job now uses `actions/setup-python` and installs into
+that interpreter, like the lint job already did.
+
+### Changed
+
+**The actions moved off the deprecated Node 20 runtime.** A tagged run reported
+*"Node.js 20 is deprecated … actions/checkout@v4 … being forced to run on Node.js 24"*, so
+`actions/checkout` goes to `v5` and `actions/setup-python` to `v6`, their Node 24 successors.
+
+Those two version numbers **could not be verified from the machine this was written on** — GitHub's
+API is unreachable from it — and the workflow says so beside them. If a run fails with "Unable to
+resolve action", that is the cause and the fix is two lines. It fails loudly and at once rather than
+silently, which is the only reason changing them unverified was acceptable.
+
 ## [1.0.3] - 2026-09-05
 
 ### Fixed

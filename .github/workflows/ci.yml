@@ -8,11 +8,20 @@
 #
 # THE ACTIONS BELOW ARE NOT PINNED TO A COMMIT, AND THAT IS A GAP, NOT A VIEW.
 # This project's central argument is that a mutable ref is not a pin -- it says
-# so about upstream T-Pot at length -- and `actions/checkout@v4` is a mutable
+# so about upstream T-Pot at length -- and `actions/checkout@v5` is a mutable
 # tag by exactly that argument. The reason it is not a sha here is narrow and
 # worth stating rather than hiding: the box these workflows were written on
 # cannot reach GitHub's API to resolve one, and a sha nobody verified would be
 # worse than a tag everybody can see is a tag. Recorded in tasks/open/004.
+#
+# THE MAJORS ARE THE POST-NODE-20 ONES, which is the same gap seen from the
+# other side. GitHub deprecated the Node 20 runtime on its runners; checkout@v4
+# and setup-python@v5 are Node 20 actions and v5 and v6 are their Node 24
+# successors. Those two version numbers could NOT be verified from here -- the
+# API is unreachable from the box this was written on -- so if a run fails with
+# "Unable to resolve action", that is the cause and the fix is these two lines.
+# It fails loudly and at once rather than silently, which is the only reason
+# changing them unverified was acceptable at all.
 #
 # NOTHING HERE INSTALLS T-POT. Every suite below is unprivileged and offline:
 # no root, no docker, no network at lint time, and no target host. Whether
@@ -49,7 +58,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
 
       - name: The gates' own dependencies
         # tests/check-matrix-parse.sh reads support-matrix.yml through a real
@@ -57,7 +70,13 @@ jobs:
         # dependency of the gate suite and not of the product. It happens to be
         # present on the runner image today; a suite that silently depends on
         # that would report green for a reason nobody chose.
-        run: python3 -c 'import yaml' || python3 -m pip install --disable-pip-version-check PyYAML
+        #
+        # Installed into setup-python's interpreter rather than the system one:
+        # a modern Ubuntu marks the system Python externally managed (PEP 668)
+        # and refuses `pip install` outside a virtualenv. The first version of
+        # this step would have died there had PyYAML ever been absent -- a
+        # fallback that only works when it is not needed.
+        run: python -m pip install --disable-pip-version-check PyYAML
 
       - name: Run every gate
         # --strict: a SKIPPED gate fails here. run-gates.sh's own header
@@ -78,10 +97,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install bats
-        run: npm install -g bats
+        # THE COMMAND THIS TREE ALREADY DOCUMENTS, and the reason it is that
+        # one. `npm install -g bats` needs root: on a GitHub runner it tries to
+        # write man pages into /usr/local/share/man and dies EACCES, which is
+        # exactly what the first run of this workflow did. --prefix $HOME/.local
+        # is what tests/run-bats.sh prints when bats is missing, and what the
+        # workspace notes tell a developer to run. CI and a contributor should
+        # not be installing the same tool two different ways.
+        run: |
+          set -euo pipefail
+          npm install -g --prefix "$HOME/.local" bats
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run the unit suite
         # run-bats.sh exits 3 when bats is absent rather than exiting 0 with
@@ -95,9 +124,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
@@ -138,7 +167,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: The modes that change nothing all exit 0
         run: |
@@ -160,13 +189,22 @@ jobs:
         # which code comes back, only that the artefact agrees with it and
         # that the checks which ran are in there. A runner that happened to be
         # root would still satisfy it.
+        #
+        # `|| rc=$?` RATHER THAN `rc=$?` ON THE NEXT LINE. GitHub runs every
+        # `run:` block as `/usr/bin/bash -e {0}`, so a non-zero exit kills the
+        # step where it happens -- and this step's whole subject is a command
+        # that exits non-zero on purpose. The first version read the status on
+        # the following line and never reached it: the step died at exit 11,
+        # which is the very refusal it was written to inspect. `set -uo
+        # pipefail` does not undo the -e that Actions supplied; only the `||`
+        # makes the failure non-fatal.
         run: |
           set -uo pipefail
           tmp=$(mktemp -d)
+          rc=0
           bash install.sh -y --preflight-only \
               --state-dir "$tmp/state" --log-dir "$tmp/log" \
-              </dev/null >/dev/null 2>&1
-          rc=$?
+              </dev/null >/dev/null 2>&1 || rc=$?
           echo "install.sh --preflight-only exited $rc"
           python3 - "$tmp/state/result.json" "$rc" <<'PY'
           import json, sys
