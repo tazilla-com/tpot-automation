@@ -1,113 +1,91 @@
-# MATRIX-STATUS — which (upstream ref × distribution) pairs have been installed, and when
+# Matrix status
 
-**This file is the only thing in this repository entitled to use the word *tested*.**
+Dated record of which (upstream ref × platform) pairs have been installed on real hardware.
 
-`support-matrix.yml` says which releases this installer *can* drive. That is a claim about code.
-This file says which ones it *has* driven, on a real machine, on a stated date, to a stated
-outcome. D-07 keeps those two apart deliberately, because the first is cheap to assert and the
-second is not.
-
-A row here is evidence or it is nothing. Each one names the run that produced it, what that run
-proved, and — the part that matters more — **what it did not**.
+**A platform may be called *tested* only if it has a row here.** `support-matrix.yml` says what
+this installer *can* drive, which is a claim about code; this file says what it *has* driven.
+`docs/compatibility.md` explains the difference and how the supported list is derived.
 
 ---
 
-## fdafa483e1e0f36b0a7b0cbb6bae1031fe06fc37 × debian 13
+## `fdafa483e1e0f36b0a7b0cbb6bae1031fe06fc37` × `debian:13`
 
 | | |
 |---|---|
-| **Date** | 2026-09-05 |
-| **Outcome** | **installed**, exit 20 `EX_REBOOT`, then rebooted and T-Pot came up |
-| **Run id** | `20260905T074339Z` (install), `20260905T080402Z` (a pre-reboot `--verify-only`) |
-| **Installer** | tpot-automation 0.1.0 at commit `9e15a30`, plus the two fixes this run forced (below) |
-| **Edition** | `h` (hive) — the default. `TPOT_TYPE=HIVE` in T-Pot's own `.env` afterwards |
-| **Host** | Proxmox VM, 4 cores, 8192 MB assigned (7880 MiB seen), 80 GB disk, no swap |
-| **OS** | Debian GNU/Linux 13 (trixie), `6.12.107+deb13-cloud-amd64`, x86_64, stock cloud image |
-| **Upstream** | fetched entrypoint sha256 `0e0b893b…da50`, **verified**; payload ref consistent |
-| **Duration** | 276 s total; 210 s of that was upstream's own installer |
+| Date | 2026-09-05 |
+| Result | **Pass** — exit `20` `EX_REBOOT`, then rebooted and T-Pot started |
+| Run id | `20260905T084900Z` |
+| Installer | tpot-automation 0.1.0 |
+| Edition | `h` (hive), the default. `TPOT_TYPE=HIVE` in T-Pot's `.env` afterwards |
+| Duration | 278 s, of which 210 s was upstream's own installer |
+| Host | Proxmox VM: 4 cores, 9216 MB assigned (8876 MiB `MemTotal`), 80 GB disk, no swap |
+| OS | Debian GNU/Linux 13 (trixie), `6.12.107+deb13-cloud-amd64`, x86_64, stock cloud image |
+| Upstream | entrypoint sha256 `0e0b893b…da50` verified; payload ref consistent |
+| Overrides | **none.** No `--force-*` flag. `result.json` records `forced: false` |
 
-### What this run proves
+### Verified
 
-* **The unattended path works end to end on a stock cloud image.** No terminal, stdin `/dev/null`,
-  every input from a root-owned answer file and a root-owned password file. Nothing was typed.
-* **No credential ever reached a command line** (D-08). Upstream was driven as
-  `-s -t s -b <ref> -r <repo>` — the sensor type, which is the one code path that never asks for
-  one — and the dashboard credential was written into T-Pot's `.env` afterwards, from a file.
-  `result.json` records the exact argv.
-* **The edition swap is real.** Upstream installed the *sensor* compose; the run replaced it with
-  the *hive* one, and `TPOT_TYPE=HIVE` is what the box ended up with.
-* **Telemetry is off** (D-09): no `ewsposter` service in the live compose file. Note that
-  upstream's own install still *pulls* the ewsposter image — D-09 removes the service, not the
-  image, and the image sits unused on disk.
-* **Administrative SSH moved to 64295** and TCP/22 was left free until the reboot.
-* **All 14 pre-reboot verification checks passed.** Account, shadow entry, sshd config validity,
-  admin port, absence of extra listeners, `.env` present, `WEB_USER` written, upstream's own
-  `ls`/`WEB_USER` left untouched, compose present, telemetry absent, container floor, docker
-  daemon, `tpot.service` enabled, `vm.max_map_count` effective.
-* **`--verify-only` refuses a box that has not rebooted.** Run before the reboot it exited 16
-  `EX_VERIFY`: `listen_admin_ssh` passed, `listen_dashboard` and `listen_elasticsearch` failed
-  with *"nothing listens … after 30 attempts"*. It did not report success for a T-Pot that was
-  not running, which is the property the two-invocation contract rests on.
-* **After the reboot, T-Pot runs.** Verified from outside the box, because by then nothing could
-  get into it (see below):
-  * TCP/22 answers `SSH-2.0-OpenSSH_8.8`, serves the login banner **"Fedora release 36 (Thirty
-    Six)"** on a Debian 13 host, and offers `password` authentication that the real sshd has
-    disabled. The real sshd is OpenSSH 10.0p2. **That is the honeypot, not the host.**
-  * The guest agent reports 24 docker bridges and 34 veth pairs where a clean boot has none.
+| Check | Evidence |
+|---|---|
+| Unattended, no terminal | stdin `/dev/null`, all input from a root-owned answer file and password file |
+| No credential on any command line | `result.json` records the argv: `-s -t s -b <ref> -r <repo>` |
+| Edition applied after the sensor install | upstream installed the sensor compose; `TPOT_TYPE=HIVE` afterwards |
+| Telemetry disabled | no `ewsposter` service in the live compose file |
+| Administrative SSH moved | `sshd -T` reports port 64295; TCP/22 free until the reboot |
+| Pre-reboot verification | 14 of 14 checks passed |
+| `--verify-only` refuses an unrebooted host | exit `16` `EX_VERIFY`; `listen_admin_ssh` passed, the two container listeners failed |
+| Post-reboot: T-Pot running | see below |
 
-### What this run does NOT prove
+Post-reboot state was established from outside the host, because after the install this network
+cannot reach it:
 
-* **The post-reboot verification records were never read.** The `finalize` unit was armed and
-  fired on the reboot, and it writes `/var/lib/tpot-automation/result.json` on the box — but this
-  platform cannot reach it. The orchestrator→project firewall allows `--dport 22` exactly;
-  after the install that port is the honeypot, the real sshd is on 64295 behind a drop, the
-  project token holds neither `VM.Console` nor `VM.GuestAgent.FileRead`, and guest→orchestrator
-  is blocked in the other direction too. All four were measured, not assumed. So **exit 0 has
-  never been observed from this product** — only the 20 that precedes it, and independent
-  evidence that the thing 0 would be asserting is true.
-* **The container count was never checked against `min_containers` (39 for `h`).** 34 veth pairs
-  is a proxy, not a count: a container on the host network has no veth and one with two networks
-  has two.
-* **The dashboard was never opened.** 64297 is behind the same drop.
-* **8192 MB is not a pass.** It is 7880 MiB measured, below this product's own 8192 MiB floor, and
-  the run used `--force-low-resources`. `result.json` records `forced`. **Nothing here says
-  T-Pot is comfortable in 8 GB** — only that it installed and started. The hive edition's heavier
-  images are pulled at *first boot*, not during the install, so peak pressure came after the last
-  measurement anyone took.
-* **Nothing about any other distribution.** `ubuntu 26.04` is in the supported tier by derivation
-  from the same pin and has never been run.
+* TCP/22 answers as an SSH server whose advertised version differs from the host's real `sshd`
+  (OpenSSH 10.0p2), presents a fabricated login banner, and offers password authentication that
+  the real `sshd` has disabled. Two connections drew two different personas, which is the
+  honeypot's behaviour and not `sshd`'s.
+* The guest agent reports 24 Docker bridges and 31 veth interfaces where a clean boot has none.
 
-### Two defects this run had to fix before it could run at all
+### Not verified
 
-Both are in `git log` with their evidence; they are named here because a reader comparing this
-row against an older checkout will not otherwise understand why it would not reproduce.
+* **Exit `0` was not observed.** The post-boot verification unit fired and wrote
+  `/var/lib/tpot-automation/result.json` on the host; that file cannot be read from the network
+  this run was driven from. The two-invocation contract's second half is therefore unconfirmed.
+* **Container count was not compared against `min_containers` (39).** Veth interfaces are a proxy:
+  a host-network container has none and a two-network container has two.
+* **The dashboard was not opened.** TCP/64297 is unreachable from here.
+* **Resource headroom is unmeasured.** The host sits at its memory ceiling with ballooning
+  disabled, which cannot distinguish real pressure from a guest that has touched every page. The
+  hive edition's heavier images are pulled at first boot, after the last measurement taken.
+* **No other platform.** `ubuntu:26.04` is supported by derivation from the same pin and has never
+  been run.
 
-1. **`reachability_apt` refused to install on a stock Debian 13 cloud image.** That image
-   configures no apt URL, only `mirror+file:///etc/apt/mirrors/debian.list`, which the check
-   skipped as local; the check is HARD, so a hard inconclusive became `EX_PREFLIGHT` — exit 11
-   with no `FAIL` row anywhere to explain it. Fixed by following the indirection (commit
-   `77fad44`).
-2. **`--check` could not complete on a box with no T-Pot on it.** `finalize` enables a unit whose
-   file check mode never wrote. Fixed by gating the enable on check mode (commit `9e15a30`).
+### Reproducing
 
-### How to reproduce
-
-```bash
-# on the target, as root, from a checkout of this repository
-./install.sh -y \
-    -c /root/answers.yml \                 # pins tpot_upstream_ref, _url, _checksum
-    --web-password-file /root/web-password \
-    --force-low-resources                  # only because 8192 MB < the 8192 MiB floor
+```sh
+./install.sh -y --config /root/answers.yml --web-password-file /root/web-password
 ```
 
-Run it under a **pre-opened** SSH ControlMaster if the box is remote and its administrative port
-is firewalled: upstream moves sshd to 64295 mid-run, and an established connection survives that
-while a new one cannot be made. Detach the run (`setsid`) so a dropped session does not kill it.
+The answer file pins `tpot_upstream_ref`, `tpot_upstream_url` and `tpot_upstream_checksum`. See
+`README.md` for the full sequence and for driving the install over SSH.
+
+### Prior run, same day
+
+An earlier run at 07:43 on the same host used `--force-low-resources`, because the guest had 8192
+MB assigned and `MemTotal` is always lower than that. It reached the same outcome. The host was
+rolled back and re-provisioned with 9216 MB so the run above could be made without an override;
+that run supersedes it.
+
+Two defects were found and fixed between the two runs, both of which prevented the installer from
+working on a stock Debian 13 cloud image:
+
+* `reachability_apt` treated `mirror+file:///etc/apt/mirrors/debian.list` — the only apt source a
+  Debian cloud image configures — as unreachable, and the check is hard, so preflight refused with
+  exit `11` and no failing row to explain it.
+* `--check` could not complete on a host with no T-Pot on it: `finalize` enabled a unit whose file
+  check mode had not written.
 
 ---
 
 ## Everything else
 
-**Untested.** Every other cell of `support-matrix.yml`, in both tiers, at every ref. The legacy
-tier in particular is documented and explicitly not claimed (D-07); today's upstream refuses most
-of it outright.
+**Untested.** Every other platform, at every ref. See `docs/compatibility.md`.

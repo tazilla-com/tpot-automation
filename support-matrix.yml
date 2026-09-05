@@ -67,10 +67,13 @@
 #
 # LEGACY  tpot_support_matrix_legacy
 #
-#     MEANING: the automation this project replaces was installed on these
-#     nine releases, and they are reachable HERE only by pinning an older
-#     upstream ref -- tpot_upstream_ref is the knob. They are documented so
-#     that the users the old installer serves are not silently abandoned.
+#     MEANING: a RECORD OF WHERE THE PREDECESSOR RAN, and nothing stronger.
+#     The tenant-specific automation this project replaces was installed on
+#     these nine releases. That list was a suggestion of what this project
+#     might aim at -- not a requirement, and not a compatibility claim made
+#     here (D-12). They are reachable only by pinning an older upstream ref;
+#     tpot_upstream_ref is the knob. They are kept so that the users the old
+#     installer serves are not silently abandoned.
 #
 #     THEY ARE NOT TESTED, AND MAY NEVER BE DESCRIBED AS TESTED. The evidence
 #     behind them is a run of a DIFFERENT installer against whichever
@@ -239,9 +242,10 @@ tpot_support_matrix_supported:
   - "debian:13"
   - "ubuntu:26.04"
 
-# LEGACY -- documented, reachable only by pinning an older upstream ref, and
-# never described as tested. The nine releases the automation this project
-# replaces was installed on.
+# LEGACY -- a historical record of where the predecessor ran, reachable only by
+# pinning an older upstream ref, and never described as tested. It is not a
+# compatibility claim by this project (D-12); today's upstream refuses eight of
+# the nine outright. docs/compatibility.md is the operative document.
 tpot_support_matrix_legacy:
   # Debian. VERSION_ID is a bare major ("12"), so the row is a bare major too.
   - "debian:11"

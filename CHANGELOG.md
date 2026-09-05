@@ -400,9 +400,9 @@ The support matrix has two tiers, and the honest statement of each is:
   from. **Tested** is a different word needing a different artefact -- a dated
   row in `tests/MATRIX-STATUS.md`. Exactly one cell has one: `debian:13` at ref
   `fdafa483…`. `ubuntu:26.04` is supported by derivation and has never been run.
-- **Legacy is nine older releases, documented and never claimed as tested:**
-  Debian 11/12/13, Ubuntu 20.04/22.04/24.04 and Linux Mint 20/21/22. They are
-  the releases the earlier installer was used on. Upstream T-Pot's own
+- **Legacy is a historical record of where the predecessor ran, not a
+  compatibility claim by this project (D-12):** Debian 11/12/13, Ubuntu
+  20.04/22.04/24.04 and Linux Mint 20/21/22. Upstream T-Pot's own
   `install.sh` refuses eight of the nine outright -- Linux Mint is absent from
   its distribution list entirely, Debian is compared against major `13` and
   Ubuntu against the exact string `26.04`, both with string inequality and no
