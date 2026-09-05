@@ -487,8 +487,9 @@
 # a firewall that was filtering before this run is not filtering after it.
 # docs/firewall.md works that through, and carries a worked example ruleset.
 # Note what it says about itself: nobody here has loaded that ruleset on a
-# host running T-Pot, because this project has never installed one. It is a
-# starting point to verify, not a tested recipe.
+# host running T-Pot. One T-Pot has been installed by this project, and no
+# filtering of any kind was applied to it. It is a starting point to verify,
+# not a tested recipe.
 # tpot_firewall_mode: "none"
 
 # Whether install.sh may install its own prerequisites (apt packages,
