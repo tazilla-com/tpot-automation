@@ -334,7 +334,8 @@
 # With `always` or `if-required`, the documented contract is that the exit
 # code is meaningless and result.json is the answer.
 # Note that the host will reboot on its own regardless: upstream's playbook
-# installs a root cron job that reboots the machine daily at 02:42.
+# installs a root cron job that reboots the machine nightly, at a time it
+# randomises per install. The closing notice names the one this box got.
 # tpot_reboot_policy: never
 
 # Hard floor and warning threshold for memory, in MiB. Below the floor the run

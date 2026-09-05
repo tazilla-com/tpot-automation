@@ -243,7 +243,7 @@
       "required": false,
       "env": true,
       "config_file": true,
-      "help": "never exits 20 and arms a post-boot verification unit instead of rebooting. The host reboots anyway: upstream's playbook installs a root cron job that reboots it daily at 02:42."
+      "help": "never exits 20 and arms a post-boot verification unit instead of rebooting. The host reboots anyway: upstream's playbook installs a root cron job that reboots it nightly, at an hour and minute it randomises per install. The closing notice names the time this box got; crontab -l -u root is where it lives."
     },
     {
       "name": "tpot_min_memory_mb",

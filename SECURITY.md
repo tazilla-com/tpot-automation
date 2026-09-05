@@ -331,8 +331,10 @@ and nowhere else.
   sudo grant is not the only privileged path it has.
 * **Upstream disables the systemd DNS stub listener, installs Docker from
   Docker's own repository, and removes packages it considers conflicting.**
-* **Upstream installs a root cron job that reboots the host every day at
-  02:42**, stopping T-Pot and pruning containers, images and volumes first.
+* **Upstream installs a root cron job that reboots the host every night, at a
+  time it randomises per install** (hour from `range(0, 5)`, minute from
+  `range(0, 60)`), stopping T-Pot and pruning containers, images and volumes
+  first. It goes into ROOT's crontab, not `/etc/cron.d`.
 * **T-Pot re-pulls its container images every time it starts**, because its
   own pull policy defaults to `always`. Pinning an upstream ref pins the
   recipe and never the images, so the software running on a verified box

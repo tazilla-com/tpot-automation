@@ -93,8 +93,9 @@ box (project record, kept outside this repository: `notes/upstream-facts.md`,
   the `docker` group — which is equivalent to root on that machine;
 * removes packages it considers conflicting, installs shell aliases, and
   enables `tpot.service`;
-* installs a root cron job that reboots the host every day at 02:42, stopping
-  T-Pot and pruning containers, images and volumes first.
+* installs a root cron job that reboots the host every night at a time it
+  randomises per install, stopping T-Pot and pruning containers, images and
+  volumes first.
 
 The firewalld and SELinux steps are scoped to the Red Hat family in this
 project's record. **That is where the scoping stops being verified**: nothing

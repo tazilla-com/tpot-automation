@@ -888,6 +888,33 @@ _tpot_failure_stage() {
     return 0
 }
 
+# _tpot_reboot_cron_schedule
+#   Print HH:MM for the daily reboot upstream installed, or fail.
+#
+#   Upstream's task is named "Setup a randomized daily reboot" and picks the
+#   hour from range(0, 5) and the minute from range(0, 60) at install time
+#   (installer/install/tpot.yml:1229-1239 at the pinned ref), writing the job
+#   into ROOT's crontab -- not /etc/cron.d, which is where somebody looking
+#   for it will look first. Every document in this tree used to state 02:42.
+#   That was never true of anything; the first real install landed on 01:16.
+#
+#   Failing is normal and is not an error: on a --check run, on a preflight
+#   refusal, and on any run that stopped before upstream did, the job does not
+#   exist yet. The caller then leaves the field at its default, which
+#   describes the range rather than inventing a time.
+_tpot_reboot_cron_schedule() {
+    local line minute hour
+    command -v crontab >/dev/null 2>&1 || return 1
+    line=$(crontab -l -u root 2>/dev/null \
+           | grep -F 'T-Pot Daily Reboot' \
+           | grep -v '^[[:space:]]*#' \
+           | head -n 1) || return 1
+    [[ -n $line ]] || return 1
+    read -r minute hour _ <<<"$line" || return 1
+    [[ $minute =~ ^[0-9]{1,2}$ && $hour =~ ^[0-9]{1,2}$ ]] || return 1
+    printf '%02d:%02d -- upstream randomises this per install\n' "$hour" "$minute"
+}
+
 # _tpot_fill_notice CODE
 #   Point lib/notice.sh at this run's real values. Every port, the dashboard
 #   user, the telemetry and forwarding states and both file paths come from
@@ -897,6 +924,10 @@ _tpot_failure_stage() {
 _tpot_fill_notice() {
     local code=$1 value
     local -a pairs=(
+        # install_type was missing from this list until 2026-09-05, so the
+        # banner rendered "for install type '?'" on every run that ever
+        # printed it -- which, until the first real install, was none.
+        install_type:tpot_install_type
         admin_ssh_port:tpot_admin_ssh_port
         dashboard_port:tpot_dashboard_port
         elasticsearch_port:tpot_elasticsearch_port
@@ -918,6 +949,11 @@ _tpot_fill_notice() {
 
     value=$(uname -n 2>/dev/null) || value=''
     [[ -n $value ]] && notice_set host "$value"
+
+    # The daily reboot upstream schedules is RANDOMISED per install, so the
+    # only way to name it truthfully is to read the job it actually wrote.
+    value=$(_tpot_reboot_cron_schedule) || value=''
+    [[ -n $value ]] && notice_set reboot_cron "$value"
 
     [[ -n ${TPOT_LOG:-} ]] && notice_set log "$TPOT_LOG"
     [[ -n ${TPOT_RESULT_JSON:-} ]] && notice_set result "$TPOT_RESULT_JSON"
@@ -1043,6 +1079,13 @@ _tpot_step_10() {
     # completed. --check changes nothing, so it never claims it.
     if (( play_rc == 0 )) && (( ! OPT_CHECK )) && (( ! OPT_PREFLIGHT_ONLY )); then
         notice_set state installed
+    fi
+
+    # The mode, so the banner can say the true thing about a --check run that
+    # failed inside the playbook. See notice_text's first branch for what it
+    # used to say instead.
+    if (( OPT_CHECK )); then
+        notice_set check yes
     fi
 
     TPOT_EXIT_CODE=$code

@@ -50,8 +50,9 @@ no firewall rules of its own**, and upstream is not neutral either — see
 **4. Use a dedicated machine.** Upstream removes packages it considers
 conflicting, puts the install account in the `docker` group (which is equivalent
 to root on that box), and installs a root cron job that **reboots the host every
-day at 02:42**. Nothing about this is safe to bolt onto a server that has
-another job.
+night, at an hour and minute it randomises per install** (upstream's own task is
+called "Setup a randomized daily reboot", `random_hour: range(0, 5)`). Nothing
+about this is safe to bolt onto a server that has another job.
 
 This is the notice `install.sh` prints at the end of a successful run. It is
 generated from `lib/notice.sh` and embedded here verbatim; `tests/check-notice-doc.sh`
@@ -89,7 +90,8 @@ edit it by hand.
   repository and installed Docker, removed packages it considers
   conflicting, put the install account in the `docker` group --
   which is equivalent to root on this box -- and added a root cron
-  job that REBOOTS THIS HOST EVERY DAY AT 02:42.
+  job that REBOOTS THIS HOST EVERY DAY, at
+  a time upstream randomised between 00:00 and 04:59.
   On Red Hat family distributions it also set the firewalld public
   zone target to ACCEPT and put SELinux into monitor (permissive)
   mode, so a firewall that was filtering here before is not
@@ -104,6 +106,7 @@ edit it by hand.
   Result:     /var/lib/tpot-automation/result.json      exit code 20
 ================================================================
 ```
+<!-- END GENERATED NOTICE -->
 <!-- END GENERATED NOTICE -->
 
 The block above renders the shipped defaults, including the default edition
@@ -327,7 +330,7 @@ that is where it stops. What upstream clones names a *mutable* image tag: its
 `.env` sets `TPOT_VERSION=24.04.1`, every service is
 `${TPOT_REPO}/<name>:${TPOT_VERSION}`, and `TPOT_PULL_POLICY=always`. Two
 installs from this same commit, a month apart, can run different containers, and
-the daily 02:42 reboot upstream installs re-pulls them again on a box nobody has
+the daily reboot upstream installs re-pulls them again on a box nobody has
 touched. `result.json` reports that as `upstream.pins_payload: false`, which is
 permanent rather than a placeholder. **Wherever this project says a ref is
 pinned, this paragraph is the other half of the sentence.**
@@ -447,9 +450,9 @@ owes you; it is not a transcript of something that has happened, and
 **If you never make the second invocation, the box is specified to finish
 verifying itself.** `roles/finalize` installs a systemd unit that re-runs
 verification on the next boot, rewrites `result.json`, and then disarms itself —
-which it must, because upstream's own cron job reboots this host every night at
-02:42 and a unit left armed would re-assert a dated record daily against a box
-nobody has looked at since.
+which it must, because upstream's own cron job reboots this host every night and
+a unit left armed would re-assert a dated record daily against a box nobody has
+looked at since.
 
 **That unit does not re-derive its inputs, and the file it reads is part of the
 product's permanent on-disk surface.** It reads the configuration this box was
@@ -663,12 +666,16 @@ upstream's own list:
   the `docker` group, which is equivalent to root on that machine**;
 * removes packages it considers conflicting, installs shell aliases, and adds and
   enables `tpot.service`;
-* **installs a root cron job that reboots the host every day at 02:42**, stopping
-  T-Pot and pruning containers, images and volumes first.
+* **installs a root cron job that reboots the host every night at a RANDOMISED
+  time**, stopping T-Pot and pruning containers, images and volumes first. The
+  hour comes from `range(0, 5)` and the minute from `range(0, 60)`, chosen when
+  you install, so no two boxes share a time and no document can name yours. The
+  installer reads the job it actually wrote and prints that time in the closing
+  notice; `crontab -l -u root` is where to look for it afterwards.
 
 **And the software keeps moving after you verify it.** T-Pot's pull policy
 defaults to `always`, so the container images are re-pulled at **every** start —
-including the daily 02:42 reboot. Pinning the upstream ref pins the recipe; it
+including that nightly reboot. Pinning the upstream ref pins the recipe; it
 does not pin the images, so the software running on a box is not necessarily the
 software that was verified on it — see
 [The upstream pin](#the-upstream-pin-and-what-it-does-not-pin), which names the

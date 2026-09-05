@@ -863,6 +863,36 @@
     modification_time: preserve
     access_time: preserve
 
+- name: Record that check mode cannot arm the post-boot verification
+  # THE DEFECT THIS CLOSES, MEASURED RATHER THAN IMAGINED
+  #   `install.sh --check` documents itself as "preflight, then the playbook
+  #   in check mode. Changes nothing on the box." On a box with no T-Pot on
+  #   it -- which is every box a person would rehearse against -- it used to
+  #   end here, at the enable task below, with
+  #
+  #       Could not find the requested service
+  #       tpot-automation-verify.service: host
+  #
+  #   and install.sh reported the play failed in stage "finalize", exit 16,
+  #   under a banner announcing that T-Pot was not fully installed and the
+  #   box had changed. Every specific in that banner was false. The cause is
+  #   ordinary and has nothing to do with this unit: the template above
+  #   honours check mode, so the unit file was never written, so systemd was
+  #   asked to enable a unit that does not exist. Measured on the first real
+  #   install, 2026-09-05.
+  #
+  #   The rule the rest of this role already follows is the one that applies:
+  #   a task whose input is a file an earlier task WOULD have created cannot
+  #   run in check mode, and says so, rather than failing as though the box
+  #   were wrong. Section 2 does exactly this for the permanent copy.
+  ansible.builtin.set_fact:
+    tpot_run_warnings: "{{ tpot_run_warnings + ['Check mode: the post-boot verification unit was
+                           not enabled, because check mode did not write ' ~ tpot_finalize_unit_path ~
+                           ' for systemd to find. A real run arms it here. Nothing about whether this
+                           box can arm it has been established either way.'] }}"
+  when:
+    - ansible_check_mode
+
 - name: Enable the post-boot verification unit for the next boot
   # ansible.builtin.systemd, not ansible.builtin.systemd_service: the second
   # name only exists from ansible-core 2.16, and tpot_ansible_core_spec
@@ -875,10 +905,15 @@
   # has not rebooted, and "installed but not yet rebooted" is precisely the
   # state this project refuses to call verified -- it is what exit 20 means.
   # The unit runs once, on the next boot, and disarms itself when it passes.
+  #
+  # NOT IN CHECK MODE. The template above did not write the unit file, so
+  # there is nothing on disk for systemd to enable; see the record above.
   ansible.builtin.systemd:
     name: "{{ tpot_finalize_unit_name }}"
     enabled: true
     daemon_reload: true
+  when:
+    - not ansible_check_mode
 
 - name: Report what the next boot will do
   # Every line of this folded scalar sits at the same indentation on purpose.
@@ -899,3 +934,8 @@
       changed one; see the warning above' }}.
       If that passes it removes the marker, so it never fires again. Nothing
       has been started and nothing has been rebooted by this play.
+  # Check mode wrote neither the unit nor the marker, so every clause above
+  # would be a claim about files that do not exist. The warning recorded
+  # further up says what check mode did instead.
+  when:
+    - not ansible_check_mode

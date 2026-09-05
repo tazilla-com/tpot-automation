@@ -145,6 +145,22 @@ _write() {
     printf '%s\n' "${body//@@/}" > "$path"
 }
 
+_fixture_check_reboot_time() {
+    local d=$1
+    _write "$d/docs.md" <<'EOF'
+# A duration and a timestamp must NOT trip this gate: it is about claims, not
+# about clock literals. Neither of these lines mentions upstream's cron job.
+The verification retries for 05@@:00 before giving up.
+Run started 07@@:43 and finished 07@@:48.
+
+# The range bounds describe the randomisation and are allowed by name.
+Upstream reboots the host nightly, between 00@@:00 and 04@@:59.
+
+# THIS is the failure: a fixed time asserted as the daily reboot.
+Upstream installs a root cron job that reboots the host every day at 02@@:42.
+EOF
+}
+
 _fixture_check_no_tty() {
     local d=$1
     _write "$d/prompt.sh" <<'EOF'
@@ -397,6 +413,7 @@ _fixture_for() {
         check-stage-map.sh)        printf '_fixture_check_stage_map' ;;
         check-example-parity.sh)   printf '_fixture_check_example_parity' ;;
         check-matrix-parse.sh)     printf '_fixture_check_matrix_parse' ;;
+        check-reboot-time.sh)      printf '_fixture_check_reboot_time' ;;
         *)                         printf '' ;;
     esac
 }

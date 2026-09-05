@@ -92,10 +92,30 @@ _TPOT_NOTICE_SH_LOADED=1
 #   reboot_required    true | false
 #   log                path of this run's transcript
 #   result             path of this run's result.json
+#   check              yes | no -- whether this was a --check run. It gets its
+#                      own banner because NEITHER of the other two is true of
+#                      one: the playbook changed nothing, so the part-finished
+#                      warnings are all false, and yet `untouched` is keyed on
+#                      exit codes 10/11/12 and a --check run that fails inside
+#                      the playbook exits 16.
+#   reboot_cron        when upstream's daily reboot job fires. It is a FIELD
+#                      and not a literal because upstream RANDOMISES it: its
+#                      own task is called "Setup a randomized daily reboot"
+#                      and reads
+#                          random_minute: "{{ range(0, 60) | random }}"
+#                          random_hour:   "{{ range(0, 5)  | random }}"
+#                      (installer/install/tpot.yml:1229-1239 at the pinned
+#                      ref). So no fixed time is true of two installs, and
+#                      gate-allow: reboot-time both times are quoted on purpose -- the claim this tree copied for months, and the measurement that refuted it
+#                      every copy of this text said 02:42; the box that found it reboots at 01:16.
+#                      The default is the honest description of the range, and
+#                      install.sh replaces it with the schedule THIS box got.
 #   exit_code          the code this run is about to exit with
 # ---------------------------------------------------------------------------
 declare -gA _NOTICE=(
     [state]='pending'
+    [check]='no'
+    [reboot_cron]='a time upstream randomised between 00:00 and 04:59'
     [install_type]=''
     [admin_ssh_port]='64295'
     [dashboard_port]='64297'
@@ -237,7 +257,8 @@ notice_lines() {
         printf 'firewall mode %s was requested\n' "${_NOTICE[firewall]}"
     fi
     printf 'the install account is in the docker group, which is equivalent to root here\n'
-    printf 'upstream installed a root cron job that reboots this host daily at 02:42\n'
+    printf 'upstream installed a root cron job that reboots this host daily, at %s\n' \
+        "${_NOTICE[reboot_cron]}"
     return 0
 }
 
@@ -293,7 +314,46 @@ notice_text() {
     local pot
 
     if [[ ${_NOTICE[state]} != 'installed' ]]; then
-        if _tpot_notice_untouched; then
+        if [[ ${_NOTICE[check]} == 'yes' ]]; then
+            # WHY THIS BRANCH EXISTS, MEASURED RATHER THAN IMAGINED
+            #   On 2026-09-05 a `--check` run against a clean Debian 13 box
+            #   failed inside the playbook and exited 16, so it rendered the
+            #   part-finished banner below: it announced that the box had
+            #   changed, that administrative SSH may already have moved, that
+            #   TCP/22 may already be a honeypot, and that docker and a daily
+            #   reboot cron job may already be installed. Every one of those
+            #   was false -- check mode had changed nothing. A banner that
+            #   tells an operator to go and check four things that cannot have
+            #   happened is worse than no banner, because the next one they
+            #   read will be believed a little less.
+            #
+            #   `untouched` could not cover it: that predicate is keyed on
+            #   exit codes 10, 11 and 12, and a --check run that gets as far as
+            #   the playbook and fails there exits 16 like any other play
+            #   failure. The mode is the fact that matters here, not the code.
+            out+=(
+                "$rule"
+                " This was a --check run. The playbook changed nothing."
+                "$rule"
+                "  Check mode does not touch the box, so none of the changes an"
+                "  install makes have been made:"
+                ""
+                "    * administrative SSH has NOT moved to port ${_NOTICE[admin_ssh_port]}"
+                "    * TCP/${_NOTICE[honeypot_ssh_port]} is NOT a honeypot; it is whatever it was before"
+                "    * no dashboard is listening on ${_NOTICE[dashboard_port]}"
+                "    * docker was NOT installed and no reboot job was created"
+                ""
+                "  One thing IS different, and check mode does not cover it:"
+                "  install.sh installs its own prerequisites -- ansible-core"
+                "  above all -- BEFORE the playbook starts, so those may be on"
+                "  this box now. --no-install-deps is how a run refuses that."
+                ""
+                "  A --check run cannot prove an install will succeed. Tasks"
+                "  whose input is a file an earlier task would have written"
+                "  have nothing to read, and report that rather than guessing."
+                ""
+            )
+        elif _tpot_notice_untouched; then
             out+=(
                 "$rule"
                 " T-Pot was NOT installed. Your box is unchanged."
@@ -320,7 +380,7 @@ notice_text() {
                 "            ssh -p ${_NOTICE[admin_ssh_port]} you@${_NOTICE[host]}"
                 "    * TCP/${_NOTICE[honeypot_ssh_port]} may already be a honeypot that answers as if it"
                 "      were a real shell"
-                "    * Docker, its repository and a daily 02:42 reboot cron job"
+                "    * Docker, its repository and a daily reboot cron job"
                 "      may already be installed"
                 ""
                 "  Read the transcript below before re-running anything."
@@ -399,7 +459,8 @@ notice_text() {
         "  repository and installed Docker, removed packages it considers"
         "  conflicting, put the install account in the \`docker\` group --"
         "  which is equivalent to root on this box -- and added a root cron"
-        "  job that REBOOTS THIS HOST EVERY DAY AT 02:42."
+        "  job that REBOOTS THIS HOST EVERY DAY, at"
+        "  ${_NOTICE[reboot_cron]}."
         "  On Red Hat family distributions it also set the firewalld public"
         "  zone target to ACCEPT and put SELinux into monitor (permissive)"
         "  mode, so a firewall that was filtering here before is not"
