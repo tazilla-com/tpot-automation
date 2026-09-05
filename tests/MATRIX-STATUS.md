@@ -197,6 +197,30 @@ be derived from it.
   the `set` password policy remain unexercised.
 * **No `--force-*` path was taken**, so the override arms remain untested on this platform.
 
+### Re-verified at 1.1.0 — 2026-09-05, 21:18 UTC
+
+The same guest, still installed, re-verified with the 1.1.0 tree to exercise the code that release
+changed. `install.sh --verify-only -y -c /root/tpot-answers.yml` returned **exit 0 in 16.8 s**,
+27 checks declared, 25 pass and 2 skipped.
+
+What this run proves that a unit test cannot:
+
+* **`host.matrix_tier` reads `supported`.** On this same box before 1.1.0 it read `legacy` beside
+  `host.supported: true` — the combination `lib/matrix.sh` forbids in terms. The producer/consumer
+  key-name defect is closed on a real artefact, not only in a fixture.
+* **`invocation.forced` is `[]` and `host.forced` is `false`** in one document, which is what makes
+  them readable as the two different questions they answer.
+* **`compose_count_matches_pin` records `skipped`, with its reason**, rather than raising —
+  `roles/tpot_install` does not run in a `--verify-only` play, so `tpot_install_upstream` is
+  undefined. That is the ordinary state of this invocation and of the post-boot unit, and it was
+  the failure mode most likely to have shipped broken.
+* **`containers_running` reports "39 running, at least 39 expected … counted after waiting up to
+  300 s for them to come up".** The bounded wait is in force and the floor is unchanged.
+
+**It does not exercise the fast path**, which by design cannot fire here: the unit is active and
+39 containers are running, so the listeners can appear and are waited for normally. The refusal
+arm still has no run behind it on a real box.
+
 ---
 
 ## Everything else
