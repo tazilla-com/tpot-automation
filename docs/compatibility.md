@@ -4,15 +4,14 @@
 
 | Platform | Status | Basis |
 |---|---|---|
-| Debian 13 (`trixie`), x86_64 | **Tested** | installed and verified on 2026-09-05; see `tests/MATRIX-STATUS.md` |
-| Ubuntu 26.04, x86_64 | **Supported, untested** | accepted by the pinned upstream ref's gate; `apt`-based; never run |
+| Debian 13 (`trixie`), x86_64 | **Tested** | installed 2026-09-05; pre-reboot checks 14/14, T-Pot running after reboot. See `tests/MATRIX-STATUS.md` |
+| Ubuntu 26.04, x86_64 | **Supported, never run** | accepted by the pinned upstream ref's gate; `apt`-based |
 | Everything else | **Unsupported** | see the gate table below |
 
-Compatibility is not a preference of this project. It is the intersection of two
-constraints:
+Compatibility is the intersection of two constraints:
 
-1. **Upstream T-Pot's own distribution gate**, applied on the target host before it reads any
-   argument and with no override flag.
+1. **Upstream T-Pot's own distribution gate**, applied on the target host with no override flag.
+   It runs after `getopts`, so no flag reaches it and none can relax it.
 2. **This installer's package-manager requirement**, `apt-get`.
 
 `tools/pin-upstream.sh` computes that intersection from upstream's `install.sh` at the pinned ref
@@ -37,11 +36,10 @@ Read from `install.sh` at `fdafa483e1e0f36b0a7b0cbb6bae1031fe06fc37`. Upstream m
 The comparison is string inequality. There is no ordering and no "or newer": Ubuntu 25.10 and
 Ubuntu 26.10 both fail the `26.04` test, and Debian 12 fails the `13` test.
 
-Raspberry Pi OS is excluded by this project rather than by upstream. Two reasons, in order: no
-install has ever been made on it here, and the `ID_LIKE` match rule forbids folding it into
-`debian`. Separately, upstream's Raspbian path looks broken at this ref — its gate requires major
-13 while `download.docker.com/linux/raspbian` publishes no `trixie` suite (404, checked
-2026-09-04).
+Raspberry Pi OS is excluded by this project rather than by upstream: no install has ever been
+made on it here, and it is not treated as Debian. Upstream's Raspbian path also looks broken at
+this ref — its gate requires major 13 while `download.docker.com/linux/raspbian` publishes no
+`trixie` suite (404, checked 2026-09-04).
 
 ## What "expected to work" means
 
@@ -52,35 +50,34 @@ vendor image, or a container host — provided it meets the requirements in `REA
 this installer is specific to a provisioning method. The version gate compares the major number
 only, so 13.0 through 13.x all pass.
 
-**Ubuntu 26.04 is expected to work** and has not been run. Upstream accepts it, it is `apt`-based,
-and this installer's only distribution-specific dependencies are `apt-get` and `systemd`. That is
-a reasoned expectation, not evidence. Treat the first Ubuntu install as a first install.
+**Ubuntu 26.04 is expected to work.** Upstream accepts it, it is `apt`-based, and this
+installer's distribution-specific surface is `apt`, `dpkg-query` and `systemd`. That is a reasoned
+expectation, not evidence.
 
-**`aarch64` is expected to work and has not been run.** Preflight accepts `x86_64` and `aarch64`;
-upstream publishes multi-architecture images. No ARM host has been used here.
+**`aarch64` is expected to work.** Preflight accepts `x86_64` and `aarch64` and rejects anything
+else; upstream publishes multi-architecture images. No ARM host has been used here.
 
-A platform moves from *expected* to *tested* by one route only: a dated run recorded in
-`tests/MATRIX-STATUS.md`. No other artefact in this repository may call a platform tested.
+A platform moves from *expected* to *tested* by one route: a dated run in
+`tests/MATRIX-STATUS.md`.
 
 ## Older releases
 
-An earlier, tenant-specific version of this automation was used on Debian 11/12/13, Ubuntu
-20.04/22.04/24.04 and Linux Mint 20/21/22. **That list is a record of where its predecessor ran.
-It is not a compatibility claim by this project, and it was never verified here.**
+The automation this project replaces was used on Debian 11/12/13, Ubuntu 20.04/22.04/24.04 and
+Linux Mint 20/21/22. **That list records where a different program ran. It is not a compatibility
+claim by this project and was never verified here.**
 
 Today's upstream refuses eight of those nine outright: its gate does not contain Linux Mint at
 all, and its version test requires Debian major 13 or Ubuntu exactly 26.04. Replayed against the
 fixtures in `tests/os-release/`, only Debian 13 passes.
 
 Reaching an older release therefore requires pinning an **older upstream ref** whose gate accepted
-it. That is supported mechanically — `tpot_upstream_ref` takes any tag or full commit sha, and
-`tools/pin-upstream.sh` recomputes everything downstream of it — but it is untested, and an older
-ref may not carry the `-s -t -u -p -b -r` flag surface this installer drives. Verify with
-`--preflight-only` before relying on it.
+it. `tpot_upstream_ref` accepts only a full 40-character commit sha — never a tag and never a
+branch — so this means finding the commit at which upstream's gate named the release you want, and
+running `tools/pin-upstream.sh` against it to recompute everything downstream.
+
+It is untested, and there is a hard limit: an older ref may not carry the flag surface this
+installer drives, in which case nothing here can install it at all. Verify with `--preflight-only`
+before relying on it.
 
 `--force-unsupported-os` relaxes **this installer's** preflight check. It cannot affect upstream's
 gate, which runs on the target host and has no override.
-
-## Architecture
-
-`x86_64` and `aarch64`. Any other value fails preflight and names the two that work.

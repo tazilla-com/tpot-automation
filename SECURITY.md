@@ -12,15 +12,16 @@ tag is supported; there are no backports to earlier tags.
 
 ## The state of this build, before anything below is read
 
-**This tree contains a complete installer that has never installed anything,
-and this document does not blur the two.** The entrypoint (`install.sh`), the
-libraries it sources, the build gates, the Ansible play (`site.yml`,
-`verify.yml`) and its eight roles are all written, linted and gated. Every
-rule below is therefore readable in the tree.
+**This tree has installed T-Pot once, and this document does not overstate
+what that established.** On 2026-09-05 it installed and started T-Pot on a
+Debian 13 host: exit `20`, all fourteen pre-reboot verification checks passing,
+and the honeypot answering on TCP/22 after the reboot. `tests/MATRIX-STATUS.md`
+is the dated record and lists what that run did *not* establish.
 
-**Nothing has ever been installed by this code.** No virtual machine, no root,
-no docker daemon, no network-facing host, no T-Pot -- not once. What has been
-executed, all of it unprivileged on a development box: the tree's own gate
+**One host, one platform, one edition.** Every other platform, and the whole of
+the post-reboot verification record, remain unexercised: exit `0` has never been
+observed from this product. What has been executed besides that single install,
+all of it unprivileged on a development box: the tree's own gate
 suite, `install.sh` itself in every mode it offers, and the roles far enough to
 establish that their expressions evaluate and their modules behave as written.
 Measured on 2026-09-04, `./install.sh`, `--preflight-only` and `--verify-only`
@@ -34,9 +35,10 @@ longer "written" versus "unwritten" -- it is what has been *exercised*:
   the secret channel, the transcript redactor, `result.json`, and the gates
   that fail the build when one of them is broken. These can be checked by
   reading the tree, and running it produces them;
-* **rules the code enforces and nothing has ever exercised** -- everything
-  downstream of a real install: the account, upstream's own files, the compose
-  edit, the credential write, the post-boot unit. These are written as
+* **rules the code enforces and one install has exercised** -- the account,
+  upstream's own files, the compose edit and the credential write were all
+  performed on 2026-09-05 and verified on that host; the post-boot unit fired
+  but its record has never been read back. These are written as
   descriptions of what the code does, because that is what they are, and every
   one of them is unverified against a running host.
 
@@ -151,8 +153,10 @@ handling rules are structural, not advisory:
 
 ## How the dashboard password stays off upstream's command line
 
-**This is implemented, in `roles/tpot_install`, and it has never been run
-against a real host.** What follows is what the code does, and why. The
+**This is implemented in `roles/tpot_install` and has been run against a real
+host once**, on 2026-09-05: `result.json` from that run records the argv upstream
+received, and it carries no credential flag. What follows is what the code does,
+and why. The
 invocation rule it depends on is also enforced by a build gate that fails the
 tree on any line -- code or documentation -- claiming this project hands
 upstream a credential.
@@ -315,7 +319,7 @@ and nowhere else.
   must be reachable for the product to work at all; which of the remaining
   ports should be closed is a site decision. `docs/firewall.md` carries that
   position in full, with a worked example ruleset -- which nobody here has
-  loaded on a host running T-Pot, because this project has never installed one.
+  loaded on a host running T-Pot.
   The closing notice and the preflight report both name which administrative
   ports will be world-reachable -- the part that matters before you walk away
   -- and neither has ever been printed. The exposure line is a preflight stage

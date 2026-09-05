@@ -69,7 +69,8 @@ reach exit `0` or exit `20`**, so none of them claimed to install anything.
   unattended, the compose swap, the `.env` credential write, the telemetry
   removal, verification either side of the reboot, and the post-boot systemd
   unit. It is syntax-clean, `yamllint` clean and passes `ansible-lint`'s
-  `production` profile with no failures. It has never run on a machine.
+  `production` profile with no failures. It has since run on a machine once;
+  see `tests/MATRIX-STATUS.md`.
 - `roles/report`, which the build spec did not name. `site.yml` and `verify.yml`
   both have to write the same two output documents --
   `$RUNDIR/ansible-report.json` and `$RUNDIR/failure-class` -- and a schema
@@ -190,7 +191,7 @@ reach exit `0` or exit `20`**, so none of them claimed to install anything.
   places with two different exit codes.
 - `README.md`, `SECURITY.md`, `docs/exit-codes.md` and this file, each written
   against what the tree contains and each stating plainly where it describes
-  something that is written but has never run -- and, where something is still
+  something that is written but unexercised -- and, where something is still
   unbuilt, saying which gate would break if that stopped being true.
 - `docs/firewall.md`: the firewall position in full -- what this installer
   configures (nothing), what upstream's playbook changes about a host's
@@ -359,8 +360,8 @@ the code, and where a number appears it was measured on the development machine.
   sudo grant written out explicitly rather than inherited from a module default
   -- `community.general.sudoers` defaults `nopassword: true`, which is how an
   account ends up with `NOPASSWD ALL` that nobody wrote down. Upstream's
-  unattended mode refuses to run without that grant. Like the rest of the play,
-  that role has never run.
+  unattended mode refuses to run without that grant. That role ran for the
+  first time on 2026-09-05 and the grant was created as described.
 - Nothing in the tree prints the whole environment: no bare `export`, `env`,
   `printenv` or `set`. That one is held by review rather than by a gate.
 

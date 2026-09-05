@@ -2,13 +2,14 @@
 
 An unattended installer for the [T-Pot](https://github.com/telekom-security/tpotce) honeypot
 platform. It preflights the host, installs its own prerequisites, drives upstream T-Pot's
-installer in upstream's unattended mode at a pinned ref, configures what that mode leaves
-undone, verifies the result, and exits with a code a caller can branch on.
+installer in upstream's unattended mode at a pinned ref, configures what that mode leaves undone,
+verifies the result, and exits with a code a caller can branch on.
 
-It asks no questions, requires no terminal, and vendors no upstream code.
+With no terminal attached it prompts for nothing. It vendors no upstream code.
 
-**Version 0.1.0.** Tested on Debian 13 (x86_64). See [Supported platforms](#supported-platforms)
-and `tests/MATRIX-STATUS.md`.
+**Version 0.1.0.** Installed and exercised on Debian 13 (x86_64); see
+[Supported platforms](#supported-platforms). **No licence has been chosen yet and all rights are
+reserved** — see [Licence](#licence) before using this.
 
 ---
 
@@ -18,12 +19,15 @@ and `tests/MATRIX-STATUS.md`.
 - [Requirements](#requirements)
 - [Supported platforms](#supported-platforms)
 - [Installing](#installing)
+- [After installing](#after-installing)
 - [Exit codes](#exit-codes)
+- [Logs and results](#logs-and-results)
 - [Configuration](#configuration)
 - [Credentials](#credentials)
 - [The upstream pin](#the-upstream-pin)
 - [Telemetry](#telemetry)
 - [Firewall](#firewall)
+- [Removing it](#removing-it)
 - [Scope](#scope)
 - [Licence](#licence)
 - [Documentation](#documentation)
@@ -32,28 +36,38 @@ and `tests/MATRIX-STATUS.md`.
 
 ## What it does to the host
 
-Read this before running anything. A T-Pot install is not reversible in place, and two of its
-effects will lock you out of the machine if you are not expecting them.
+Read this before running anything. Two of these effects will lock you out of the machine if you
+are not expecting them.
 
 **Administrative SSH moves to TCP/64295.** Upstream reconfigures `sshd`. After the install,
 `ssh you@host` on port 22 does not reach this machine's shell.
 
 **TCP/22 becomes a honeypot.** It accepts connections and presents what looks like a shell.
-Nothing typed there executes on the host; everything typed there is recorded as attacker
-activity. Which honeypot listens depends on the edition — Cowrie in the default `h` (hive)
-edition, Endlessh in `t` (tarpit), Beelzebub in `l` (LLM).
+Nothing typed there executes on the host; everything typed there is recorded as attacker activity.
+Which honeypot listens depends on the edition — Cowrie in the default `h` (hive) edition, Endlessh
+in `t` (tarpit), Beelzebub in `l` (llm).
 
-**The host becomes internet-facing by design.** Ports other than administrative SSH, the
-dashboard and the loopback-only search engine are exposed on purpose. This installer adds no
-firewall rules; see [Firewall](#firewall).
+**The host becomes internet-facing by design.** Ports other than the management ports below are
+exposed on purpose. This installer adds no firewall rules; see [Firewall](#firewall).
 
 **Use a dedicated machine.** Upstream removes packages it considers conflicting, adds the install
-account to the `docker` group (equivalent to root on that host), and installs a root cron job
-that reboots the machine nightly at a time it randomises per install.
+account to the `docker` group (equivalent to root on that host), and installs a root cron job that
+reboots the machine nightly at a time it randomises per install.
 
-`install.sh` prints the following notice on a successful run. It is generated from
-`lib/notice.sh` and embedded here verbatim; `tests/check-notice-doc.sh` fails the build if the two
-differ. Regenerate with `tests/check-notice-doc.sh --print`; do not edit it by hand.
+### Management ports after the install
+
+| Port | Service | Exposure |
+|---|---|---|
+| 64295/tcp | administrative `sshd` | all interfaces |
+| 64297/tcp | dashboard, HTTPS, self-signed | all interfaces |
+| 64294/tcp | sensor-to-hive data submission | all interfaces |
+| 64298/tcp | Elasticsearch | loopback only |
+| 22/tcp | **honeypot** | all interfaces |
+
+### The notice `install.sh` prints
+
+Generated from `lib/notice.sh` and embedded verbatim; `tests/check-notice-doc.sh` fails the build
+if the two differ. Regenerate with `tests/check-notice-doc.sh --print`.
 
 <!-- BEGIN GENERATED NOTICE - tests/check-notice-doc.sh -->
 ```
@@ -110,38 +124,50 @@ named on port 22 and the reboot time come from that host's own configuration.
 
 ## Requirements
 
-**Host**
+### Host
 
 | | |
 |---|---|
 | Machine | dedicated, freshly installed |
 | Privilege | root. `install.sh` refuses otherwise |
-| Init | `systemd`, with `/run` on tmpfs |
+| Init | `systemd`, with `/run` on tmpfs — the run directory holding the merged configuration is created there so that secrets never touch a disk |
 | Packages | `apt`-based distribution |
 | Architecture | `x86_64` or `aarch64` |
-| Network | IPv4, non-proxied, outbound 80/443 to the OS mirror, GitHub, GHCR and Docker Hub |
+| Network | IPv4, non-proxied |
 
 Upstream's own installer refuses to run *as* root, so it is invoked as an unprivileged account
 this installer creates.
 
-**Resources**
+### Outbound reachability
 
-| | Hard floor | Recommended | Source |
+Preflight tests each of these and refuses the run if one is unreachable, except where noted.
+
+| Host | Needed for |
+|---|---|
+| your OS package mirror | prerequisites, and upstream's own package installs |
+| `raw.githubusercontent.com` | fetching upstream's `install.sh` at the pinned ref |
+| `github.com` | the payload upstream clones |
+| `galaxy.ansible.com` | the Ansible collections in `requirements.yml` |
+| `pypi.org` | only if `ansible-core` must be built into a virtualenv; otherwise not contacted |
+| the registry named by `TPOT_REPO` in upstream's `.env` | every container image, at install and at **every** start |
+
+### Resources
+
+| | Hard floor | Recommended | Basis |
 |---|---|---|---|
 | Memory | 8192 MiB | 16384 MiB | upstream's sensor minimum and hive recommendation |
-| CPUs | 2 | 4 | no upstream figure exists; the floor is the lower of two disputed values |
+| CPUs | 2 | 4 | upstream states no figure; the floor is this project's |
 | Free disk | 64 GiB | 256 GiB | recommendation is upstream's hive figure; the floor is lower than upstream asks |
 
-Below a floor the run stops with exit `11`. `--force-low-resources` continues and records that it
-was forced in `result.json`.
+Below a floor the run stops with exit `11`. `--force-low-resources` continues and records
+`forced: true` in `result.json`.
 
-The disk floor is deliberately half of upstream's stated minimum, so that a modest test host can
+`MemTotal` is physical RAM minus firmware and kernel reservations, so a machine provisioned with
+exactly 8192 MiB reports less and does not meet the memory floor. Provision above it.
+
+The disk floor is deliberately below upstream's stated minimum so that a modest test host can
 complete a run. T-Pot retains 30 days of captured data by default and re-pulls its images at every
 start, so a host near the floor fills up over time; Elasticsearch is where that surfaces first.
-
-Note that `MemTotal` is physical RAM minus firmware and kernel reservations, so a machine
-provisioned with exactly 8192 MiB reports less and does not meet the memory floor. Provision
-above it.
 
 ---
 
@@ -149,53 +175,57 @@ above it.
 
 | Platform | Status |
 |---|---|
-| Debian 13, x86_64 | **Tested** — installed and verified 2026-09-05 |
+| Debian 13, x86_64 | **Tested** — installed 2026-09-05; pre-reboot checks 14/14, T-Pot running after reboot |
 | Ubuntu 26.04, x86_64 | Supported, never run |
 
-Support is the intersection of upstream's own distribution gate at the pinned ref and this
-installer's `apt-get` requirement. It is computed by `tools/pin-upstream.sh`, not chosen: move the
-pin and the list is recomputed.
+Support is the intersection of upstream's own distribution gate at the pinned ref with this
+installer's `apt-get` requirement. `tools/pin-upstream.sh` computes it; move the pin and it is
+recomputed.
 
-Any Debian 13 host is expected to work regardless of how it was provisioned; the version gate
+Any Debian 13 host is expected to work regardless of how it was provisioned — the version gate
 compares the major number only. Ubuntu 26.04 and `aarch64` are expected to work and have not been
 run.
 
-**`docs/compatibility.md`** has upstream's gate row by row, why each excluded platform is
-excluded, what "expected to work" means, and how to reach an older release by pinning an older
-ref. A platform becomes *tested* only through a dated run in `tests/MATRIX-STATUS.md`.
+`docs/compatibility.md` has upstream's gate row by row, the reason each excluded platform is
+excluded, and how to reach an older release.
 
 ---
 
 ## Installing
 
-Two invocations, because T-Pot requires a reboot and an unrebooted host cannot be verified.
+Run this from a checkout of this repository, as root, on the machine that is to become the
+honeypot. There is no remote-target mode: one host per run.
+
+Clone or copy the repository onto that machine and `cd` into it. Nothing at run time reads `.git`,
+so a tarball of the checkout is enough if the host cannot reach your git server —
+`git archive --format=tar HEAD` piped over SSH is the usual way.
+
+### 1. Rehearse
+
+`--preflight-only` runs every check, prints a report, and changes nothing.
 
 ```sh
-# 1. answer file, outside this repository, root-owned
-./install.sh --example-config > /root/tpot.yml
-chmod 0600 /root/tpot.yml
-"$EDITOR" /root/tpot.yml
-
-# 2. dashboard password in its own root-owned file, never on a command line
-install -m 0600 /dev/null /root/tpot-web-password
-"$EDITOR" /root/tpot-web-password
-
-# 3. install. Closing stdin makes "nothing is prompted" a property, not a promise.
-./install.sh --config /root/tpot.yml \
-             --web-password-file /root/tpot-web-password </dev/null
-#   exit 20  ->  installed; a reboot is required before it can be verified
-
-reboot
-
-# 4. reconnect on the new port and verify
-ssh -p 64295 you@your-host
-./install.sh --verify-only </dev/null
-#   exit 0   ->  installed and verified
+./install.sh --preflight-only --config /root/tpot.yml </dev/null
 ```
 
-**The answer file must pin the upstream ref.** Nothing is set by default, and preflight refuses a
-run that has not pinned one — upstream's distribution gate cannot be pre-empted otherwise. Three
-keys, taken together:
+**A clean host returns `12`, not `0`.** Upstream's distribution gate belongs to the copy of
+`install.sh` this run will fetch, so preflight records it as untested rather than passed. `12`
+means nothing failed. `11` means something did, and the report names it.
+
+`--check` goes further and runs the playbook in check mode. It installs `ansible-core` and the
+collections first, so unlike `--preflight-only` it is not entirely without effect.
+
+### 2. Answer file
+
+```sh
+./install.sh --example-config > /root/tpot.yml
+chmod 0600 /root/tpot.yml
+"${EDITOR:-vi}" /root/tpot.yml
+```
+
+Every key is commented out. Two inputs have no default and the run fails without them.
+
+**The upstream pin**, three keys taken together:
 
 ```yaml
 tpot_upstream_ref:      "fdafa483e1e0f36b0a7b0cbb6bae1031fe06fc37"
@@ -203,55 +233,98 @@ tpot_upstream_url:      "https://raw.githubusercontent.com/telekom-security/tpot
 tpot_upstream_checksum: "0e0b893b86aeca80f4ef43c30b851850b0370f43ced37bcda36ecee52faeda50"
 ```
 
-The values for any ref are in `roles/tpot_install/vars/upstream-<ref>.yml`, which
-`tools/pin-upstream.sh` generates. To move the pin, run that tool and take the values from the file
-it writes. `tpot_web_password` is the only other input with no default; supply it with
-`--web-password-file` as above, or in the answer file, or as `TPOT_WEB_PASSWORD`.
+Without them `reachability_upstream` has no host to test, and it is a hard check, so the run stops
+at exit `11`. The values for any ref are in `roles/tpot_install/vars/upstream-<ref>.yml`, which
+`tools/pin-upstream.sh` generates.
 
-Run `--preflight-only` first: it performs every check, prints the report, changes nothing, and
-exits `0`, `11` or `12`. **A clean host returns `12`, not `0`** — upstream's own gate belongs to
-the copy of `install.sh` the run will fetch, so preflight records it as untested rather than
-passed. `--check` additionally runs the playbook in check mode.
+**The dashboard password**, `tpot_web_password`. Supply it in the answer file, as
+`TPOT_WEB_PASSWORD`, or in its own file:
+
+```sh
+install -m 0600 /dev/null /root/tpot-web-password
+"${EDITOR:-vi}" /root/tpot-web-password
+```
+
+That file holds the password and nothing else. Exactly one trailing newline is stripped; anything
+else in the file, including a second blank line, becomes part of the password.
+
+### 3. Install
+
+```sh
+./install.sh --config /root/tpot.yml              --web-password-file /root/tpot-web-password </dev/null
+```
+
+`</dev/null` closes standard input, which makes "nothing is prompted" a property of the invocation
+rather than a promise. Expect **exit 20**: installed, pre-reboot checks passed, reboot required.
+
+### 4. Reboot and verify
+
+```sh
+reboot
+ssh -p 64295 you@your-host
+./install.sh --verify-only --config /root/tpot.yml </dev/null
+```
+
+`--config` is not optional here. `--verify-only` without an answer file re-derives every setting
+from the schema defaults and will verify the wrong account, edition and ports.
+
+Exit `0` means installed and verified.
 
 ### Installing over SSH
 
-The install moves `sshd` to 64295 while it runs. If the administrative port is firewalled, open a
-multiplexed session **before** starting — an established connection survives the move, a new one
-cannot be made — and detach the run so a dropped session cannot kill it:
+The install moves `sshd` to 64295 while it runs. If the administrative port is firewalled between
+you and the host, open a multiplexed session **before** starting — an established connection
+survives the move, a new one cannot be made — and detach the run so a dropped session cannot kill
+it:
 
 ```sh
 ssh -M -S ~/.tpot.sock -fN -o ServerAliveInterval=30 you@your-host
-ssh -S ~/.tpot.sock you@your-host \
-    'setsid nohup sudo ./install.sh ... </dev/null >/var/log/tpot-install.out 2>&1 &'
+ssh -S ~/.tpot.sock you@your-host     'cd /path/to/tpot-automation && setsid nohup sudo ./install.sh --config /root/tpot.yml      --web-password-file /root/tpot-web-password </dev/null >/var/log/tpot-install.out 2>&1 &'
 ```
 
-### Verification after the reboot
+### If you never make the second invocation
 
-If the second invocation is never made, the host finishes verifying itself. `roles/finalize`
-installs a systemd unit that re-runs verification on the next boot, rewrites `result.json`, and
-disarms itself — necessary because upstream's cron job reboots the host nightly, and a unit left
-armed would re-assert a dated record every day.
+`roles/finalize` installs a systemd unit that re-runs verification on the next boot, rewrites
+`result.json`, and disarms itself. It reads the configuration this host was installed with from
+`/var/lib/tpot-automation/verify-config.json` (root-owned `0600`), written from the merged
+configuration with every secret removed.
 
-The unit reads the configuration this host was installed with from
-`/var/lib/tpot-automation/verify-config.json` (root-owned `0600`), written by `roles/finalize`
-from the merged public document with every secret-typed key removed. Without it the unit would
-verify the shipped defaults — the wrong account, the wrong edition, the wrong ports — fail, and
-never clear its arming marker.
-
-That file is also the manual recovery path, because it is exactly what the unit runs:
+That file is also the manual recovery path:
 
 ```sh
 install.sh --verify-only --config /var/lib/tpot-automation/verify-config.json
 ```
 
-It lives under the state directory because both `lib/config.py` and `lib/preflight.sh` refuse an
-answer file that resolves inside an installer tree.
+---
+
+## After installing
+
+**The dashboard** is on 64297/tcp over HTTPS with a self-signed certificate, and the user is
+`tpot_web_user` (defaulting to the OS account name). If the host is exposed, reach it through a
+tunnel rather than opening the port to the internet:
+
+```sh
+ssh -p 64295 -L 64297:127.0.0.1:64297 you@your-host
+# then browse to https://localhost:64297/
+```
+
+**Elasticsearch** is on 64298/tcp, bound to loopback. Tunnel it the same way.
+
+**The service** is `tpot.service`; `systemctl status tpot` and `docker compose -f
+~<os-user>/tpotce/docker-compose.yml ps` show what is running. Upstream also documents shell
+aliases of its own, `dps` and `dpsw` among them.
+
+**Re-running the installer** on a host that already has T-Pot is not refused. Preflight records a
+warning, and the run installs nothing: upstream's installer is skipped and only configuration and
+verification are applied. To install over the existing checkout, pass `--force-reinstall`, which
+removes it (`rm -rf ~/tpotce`) first. Verification alone is always safe to repeat with
+`--verify-only`.
 
 ---
 
 ## Exit codes
 
-The exit status is the interface. A caller must be able to branch on the outcome without parsing
+The exit status is the interface: a caller must be able to branch on the outcome without parsing
 English.
 
 * **`0` means installed *and* verified**, and nothing weaker. A fresh install that has not
@@ -260,8 +333,6 @@ English.
   `--verify-only` turns it into `0`.
 * **Every failure code says how far the run got.** `11` never touched the host; `14` never ran
   upstream's installer; `16` has T-Pot installed and one assertion unhappy.
-* **`result.json` is written on every path**, including an interruption mid-run, by an exit trap.
-  The exception is a state directory that cannot be created, where the trap warns on stderr.
 
 <!-- BEGIN GENERATED: exit-table -->
 ```text
@@ -280,9 +351,37 @@ CODE  NAME              MEANING
 ```
 <!-- END GENERATED: exit-table -->
 
-`lib/exitcodes.sh` is the source of truth. `tests/check-exit-table.sh` compares this copy, the one
-in `docs/exit-codes.md` and the one `--help` renders against it. `docs/exit-codes.md` says what to
-do about each code.
+### Retrying
+
+| Code | Safe to re-run the same command? |
+|---|---|
+| `10`, `11`, `12` | Yes. Nothing on the host was changed. Fix what the report names first. |
+| `13`, `14` | Yes. Dependencies may be installed; upstream has not run. |
+| `15` | Yes, but upstream's checkout exists and is in an unknown state. Set `tpot_force_reinstall` so it is removed and re-cloned. |
+| `16` | Do not re-install. T-Pot is on the host; read `result.json`, fix the finding, and re-run `--verify-only`. |
+| — | A full re-run on an installed host installs nothing: preflight detects it, expects the post-install port layout, and applies configuration and verification only. |
+| `20` | Not a failure. Reboot, then `--verify-only`. |
+| `30`, `40` | Read the transcript first. `40` is a bug in this installer; attach the transcript to the report. |
+
+`lib/exitcodes.sh` is the source of truth. `docs/exit-codes.md` says what to do about each code.
+
+---
+
+## Logs and results
+
+Written on every path, including a failed or interrupted run.
+
+| | |
+|---|---|
+| `/var/log/tpot-automation/install-<run-id>.log` | the transcript, redacted as it is written |
+| `/var/log/tpot-automation/ansible-<run-id>.log` | the playbook's own output. **Not redacted** — do not paste it into a bug report |
+| `/var/lib/tpot-automation/result.json` | the machine-readable outcome |
+| `/var/lib/tpot-automation/verify-config.json` | the configuration the post-boot unit verifies against |
+
+`--json` prints `result.json` on standard output and sends human output to standard error.
+
+`result.json` is written by an exit trap, so it survives an interruption. The one exception is a
+state directory that cannot be created, where the trap warns on standard error instead.
 
 ---
 
@@ -298,6 +397,17 @@ Every setting has one name — the Ansible variable name — in all three channe
 
 Later answer files override earlier ones; flags override everything.
 
+The settings most installs touch:
+
+| | |
+|---|---|
+| `tpot_install_type` | `h` hive (default), `s` sensor, `l` llm, `i` mini, `m` mobile, `t` tarpit |
+| `tpot_os_user` | the account that owns T-Pot. Default `honeypot` |
+| `tpot_web_user` | dashboard user. Defaults to the OS account |
+| `tpot_reboot_policy` | `never` (default), `if-required`, `always` |
+| `tpot_os_upgrade` | `none`, `safe` (default), `full` |
+| `tpot_timezone`, `tpot_locale` | set or leave alone |
+
 `examples/tpot.example.yml` is a commented answer file, identical to `--example-config` output.
 `inventories/example/group_vars/all.yml` documents every setting once.
 
@@ -306,7 +416,7 @@ Later answer files override earlier ones; flags override everything.
 ## Credentials
 
 **No credential reaches a command line.** A process argument list is world-readable in `/proc` for
-the lifetime of the process, and a T-Pot install runs for tens of minutes.
+the lifetime of the process.
 
 * No flag takes a password as its value. `--web-password-file` and `--os-user-password-file` take
   a path, root-owned mode `0600`. `--set` refuses secret keys.
@@ -320,15 +430,14 @@ the lifetime of the process, and a T-Pot install runs for tens of minutes.
 **Upstream is driven so that it never receives a credential.** Upstream's installer takes the
 dashboard password only as a command-line argument, and passes it on a child process's command
 line as well; there is no environment path into it. So this installer invokes upstream as an
-unattended **sensor** install (`-s -t s`, plus `-b` for the pinned ref) — the one code path that
-never asks for a credential — and afterwards performs the two steps the credentialed path would
-have done: copy the chosen edition's compose file over `docker-compose.yml`, and write the
-dashboard user into upstream's `.env` as the base64 of an `htpasswd` record. Both are operations
-upstream documents.
+unattended **sensor** install — the one code path that never asks for a credential — and afterwards
+performs the two steps the credentialed path would have done: copy the chosen edition's compose
+file over `docker-compose.yml`, and write the dashboard user into upstream's `.env` as the base64
+of an `htpasswd` record. Both are operations upstream documents.
 
-Upstream's own `.env` edit silently does nothing when the target line is absent, so this
-installer checks that the write landed. Upstream manages `LS_WEB_USER` itself; this installer
-never writes it.
+Upstream's own `.env` edit silently does nothing when the target line is absent, so this installer
+checks that the write landed. Upstream manages `LS_WEB_USER` itself; this installer never writes
+it.
 
 `SECURITY.md` carries the full position, including the passwordless `sudo` grant that upstream's
 unattended mode requires.
@@ -342,34 +451,28 @@ tpot_upstream_ref   fdafa483e1e0f36b0a7b0cbb6bae1031fe06fc37
 sha256(install.sh)  0e0b893b86aeca80f4ef43c30b851850b0370f43ced37bcda36ecee52faeda50
 ```
 
-**It is a commit, not a tag.** Upstream grew its unattended flags on `master` and has not cut a
-release since. Its install-type and credential flags landed on 2025-07-05; the two that pin the
-payload, `-b` and `-r`, followed thirteen months later. No tag contains either group. The newest tag, `24.04.1`, has no positional-parameter
-handling at all — driven non-interactively it hangs rather than failing. Ten much older tags
-(`18.11` through `22.04.0`) offer a different unattended mechanism (`--conf=`) that would require
-a different design.
+**A full 40-character commit sha is the only accepted form.** Not a tag, not a branch, not an
+abbreviation. `lib/varschema.json` enforces it. Upstream grew its unattended flags on `master` and
+has not cut a release since, so no tag carries the interface this installer drives; and `git`
+resolves an abbreviated sha to the full one, which makes upstream's own re-run check compare seven
+characters against forty and exit `1`.
 
-**The full 40-character sha is required.** `lib/varschema.json` refuses an abbreviation: `git`
-accepts a short sha and checks out the full one, so upstream's re-run check compares seven
-characters against forty, concludes the checkout is somebody else's, and exits `1`.
-
-**A pin pins the recipe, not the software.** `tpot_upstream_ref` sets two things — the `install.sh`
+**A pin pins the recipe, not the software.** `tpot_upstream_ref` sets two things: the `install.sh`
 this project fetches and verifies against the sha256 above, and the `-b` argument deciding which
-payload upstream clones. What upstream clones names a *mutable* image tag: its `.env` sets
-`TPOT_VERSION=24.04.1`, every service is `${TPOT_REPO}/<name>:${TPOT_VERSION}`, and
-`TPOT_PULL_POLICY=always`. Two installs from the same commit a month apart can run different
-containers, and the nightly reboot re-pulls them again. `result.json` reports this as
-`upstream.pins_payload: false`, permanently.
+payload upstream clones. What upstream clones names a *mutable* image tag — every service is
+`${TPOT_REPO}/<name>:${TPOT_VERSION}` and `TPOT_PULL_POLICY=always`. Two installs from the same
+commit a month apart can run different containers, and the nightly reboot re-pulls them again.
+`result.json` reports this as `upstream.pins_payload: false`, permanently.
 
 **A sha pin makes re-running less safe, not more.** With a sha, upstream's `check_tpot_clone`
 matches an existing checkout and skips the clone — over a tree it never refreshes (`update: no`)
 and never integrity-checks, so a modified `docker-compose.yml` passes silently. This is why
 `tpot_force_reinstall` is documented as what it does: `rm -rf ~/tpotce`.
 
-Everything else about a ref is measured once, at pin time, by `tools/pin-upstream.sh` and written
-to `roles/tpot_install/vars/upstream-<ref>.yml`: the sha256, each edition's compose file, the
-container floor verification compares against, and upstream's distribution gate row by row with a
-reason per verdict. That file is generated — move the pin and read the diff.
+Everything else about a ref is measured at pin time by `tools/pin-upstream.sh` and written to
+`roles/tpot_install/vars/upstream-<ref>.yml`: the sha256, each edition's compose file, and
+upstream's distribution gate row by row with a reason per verdict. That file is generated — move
+the pin and read the diff.
 
 ---
 
@@ -379,18 +482,18 @@ T-Pot can submit attack data to the Sicherheitstacho community project. That sub
 upstream's, and **this installer disables it by default** (`tpot_upstream_telemetry: "off"`).
 
 There is no `.env` key and no upstream flag for it. Upstream's documented opt-out is to remove the
-`ewsposter` service from `docker-compose.yml`, so `off` does exactly that: `roles/tpot_install`
-removes the service and the network only it uses by rewriting the parsed compose document rather
-than editing text, then asserts it is gone; `roles/tpot_verify` asserts the same absence on the
-installed host. `"on"` leaves upstream's file untouched. Either way the closing notice and
-`result.json` state which it is.
+`ewsposter` service from `docker-compose.yml`, so `off` does exactly that: the service and the
+network only it uses are removed by rewriting the parsed compose document rather than editing
+text, and their absence is asserted both at install time and on the installed host. `"on"` leaves
+upstream's file untouched. Either way the closing notice and `result.json` state which it is.
+
+In YAML, quote the value: bare `off` is a boolean, not the string.
 
 Two limitations:
 
 * The edit is a working-tree modification inside upstream's git checkout, and upstream's
   `update.sh` overwrites local changes. **The opt-out does not survive an upstream update.**
 * Removing the service does not remove the image, which upstream still pulls. Nothing runs it.
-* In YAML, quote the value: bare `off` is a boolean, not the string.
 
 ---
 
@@ -400,22 +503,30 @@ Two limitations:
 release. No rules are added and none removed. Filtering in front of an internet-facing honeypot,
 if you want it, belongs off the host.
 
-**Upstream is not neutral about the host's filtering.** Its playbook:
+**Upstream is not neutral about the host's filtering.** Beyond the changes listed in
+[What it does to the host](#what-it-does-to-the-host), its playbook sets the `firewalld` public
+zone target to `ACCEPT` and puts SELinux into permissive mode on AlmaLinux, Fedora, RHEL, Rocky
+and openSUSE Tumbleweed. A firewall that was filtering on one of those hosts before is not
+filtering after. Debian and Ubuntu are untouched.
 
-* moves administrative `sshd` to TCP/64295 and disables the DNS stub listener;
-* on Red Hat family distributions, sets the `firewalld` public zone target to `ACCEPT` and puts
-  SELinux into permissive mode — a firewall that was filtering before is not filtering after;
-* adds Docker's repository, installs Docker, and adds the install account to the `docker` group,
-  which is equivalent to root on that machine;
-* removes packages it considers conflicting, installs shell aliases, and enables `tpot.service`;
-* installs a root cron job that reboots the host nightly, stopping T-Pot and pruning containers,
-  images and volumes first. The hour comes from `range(0, 5)` and the minute from `range(0, 60)`,
-  chosen at install time, so no two hosts share a schedule and no document can name yours. The
-  installer reads the job it wrote and prints the time in the closing notice; `crontab -l -u root`
-  is where it lives.
+The nightly reboot job it installs stops T-Pot and prunes containers, images and volumes first.
+Its hour comes from `range(0, 5)` and its minute from `range(0, 60)`, chosen at install time —
+300 possible times, so two hosts can share one. The installer reads the job it wrote and prints
+the time in the closing notice; `crontab -l -u root` is where it lives.
 
-`docs/firewall.md` carries the port list, the evidence behind this section, and a worked
-`nftables` example.
+`docs/firewall.md` carries the full port list and a worked `nftables` example.
+
+---
+
+## Removing it
+
+**There is no uninstaller and reinstalling the host is the supported answer.** That is why
+[What it does to the host](#what-it-does-to-the-host) opens by telling you to use a dedicated
+machine.
+
+Upstream ships a removal playbook of its own, `installer/remove/tpot.yml` in its checkout. This
+installer does not drive it, has never run it, and makes no claim about how much of an install it
+reverses — read it before relying on it.
 
 ---
 
@@ -425,29 +536,20 @@ if you want it, belongs off the host.
 honeypots, dashboard, compose files and playbook are all fetched at install time from the pinned
 ref.
 
-It is not a hardening tool, not a firewall, and not a fleet orchestrator — it runs as root on the
-machine that is to become the honeypot, one host per run, with no remote-target mode.
+It is not a hardening tool, not a firewall, and not a fleet orchestrator.
 
 **IoC forwarding is not implemented.** The `ioc_*` namespace is reserved and documented. With the
 default (`ioc_forwarding_enabled: false`) no connection is opened to any endpoint of yours.
-Setting it `true` **refuses to run** rather than silently doing nothing, and is refused twice:
-`roles/preflight` stops the play on its first check with `11`, whose published meaning is that
-nothing on the host was changed; `roles/ioc_forward` keeps its own assertion as a last line of
-defence and answers `10`, reachable only if the preflight stage was skipped by tag selection. Two
-codes for one input, because by the time the second can fire, "nothing happened" is no longer
-true.
+Setting it `true` is refused in preflight with exit `11`, before anything on the host is changed,
+rather than silently ignored.
 
 ---
 
 ## Licence
 
-**There is no licence yet. `LICENSE` is a deliberate placeholder and all rights are reserved.** No
+**No licence has been chosen. `LICENSE` is a placeholder and all rights are reserved.** No
 permission is granted to use, copy, modify, distribute or sell this software while that file says
 what it says.
-
-Re-licensing a published project requires the agreement of every contributor, so the choice is
-made once, before the first public commit. Replacing `LICENSE` is that event, and that commit also
-owes an SPDX identifier in the repository metadata.
 
 This project installs but does not redistribute upstream T-Pot or the Ansible collections in
 `requirements.yml`. Each carries its own licence.
@@ -472,4 +574,3 @@ This project installs but does not redistribute upstream T-Pot or the Ansible co
 
 Upstream T-Pot's documentation is at <https://github.com/telekom-security/tpotce>. Every claim
 this file makes about upstream's behaviour was read from upstream's source at the pinned commit.
-Move the pin and those claims are owed a re-check.

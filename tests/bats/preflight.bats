@@ -458,9 +458,13 @@ SWEEP
     # was written while the supported tier shipped EMPTY, so nobody could read
     # the claim; D-11 pinned a ref, the tier became two rows, and the sentence
     # started printing on every run on a supported box -- asserting a test
-    # campaign that has never happened. Nothing here has ever been installed
-    # anywhere, and tests/MATRIX-STATUS.md, which is where such evidence would
-    # live, does not exist.
+    # campaign that had not happened.
+    #
+    # Since 2026-09-05 one pair HAS been installed (debian:13 at ref
+    # fdafa483, in tests/MATRIX-STATUS.md), which makes the distinction
+    # sharper rather than moot: this line reports the TIER, and the tier
+    # contains ubuntu:26.04, which nobody has ever run. A message that let a
+    # reader infer otherwise would be the same defect in a new form.
     pf_load
     export PF_OS_RELEASE="$REPO/tests/os-release/debian-13.os-release"
     pf_stage_a || true

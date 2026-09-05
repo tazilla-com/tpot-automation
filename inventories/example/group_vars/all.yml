@@ -7,17 +7,17 @@
 # a line here makes it authoritative for this inventory only -- which is not
 # how the product is meant to be configured.
 #
-# WHAT IS BUILT AND WHAT HAS NEVER BEEN RUN, AND IT IS MOST OF WHAT THIS FILE
-# DESCRIBES. This is version 0.1.0, unreleased. NOTHING HAS EVER BEEN
-# INSTALLED WITH THIS TOOL: there has been no virtual machine, no root, no
-# network and no T-Pot, and not one behaviour described below has been
-# observed happening to a real box. What exists today is install.sh, the shell
-# library beside it, the configuration merge, the Ansible play -- site.yml,
-# verify.yml and eight roles -- the documentation and the build gates. So a
+# WHAT HAS BEEN RUN, AND WHAT HAS NOT, AND IT IS MOST OF WHAT THIS FILE
+# DESCRIBES. This is version 0.1.0, unreleased. ONE INSTALL HAS BEEN MADE
+# WITH THIS TOOL: a Debian 13 host on 2026-09-05, exit 20, all fourteen
+# pre-reboot checks passing, and T-Pot running after the reboot. See
+# tests/MATRIX-STATUS.md, which also says what that run did not establish --
+# exit 0 above all, which has never been observed. That single run exercised
+# one edition, one account policy and one set of ports, so most of the
+# behaviours described below have still not been observed on a real box. A
 # setting below is READ, TYPED, VALIDATED AND RECORDED exactly as described --
 # that half runs, and is tested -- and is then acted on by tasks that are
-# written, linted, syntax-checked and gated, and that have been exercised only
-# against an unprivileged development box. docs/roadmap-ioc.md, which the
+# written, linted, syntax-checked and gated. docs/roadmap-ioc.md, which the
 # prose names below, is still unwritten. docs/firewall.md, also named below,
 # does exist -- and opens by saying that nothing on it has been observed on an
 # installed honeypot either.
@@ -70,8 +70,9 @@
 # as a plan: roles/tpot_install drives upstream as a sensor install, so
 # upstream is never handed a credential flag at all, and then writes the
 # dashboard credential into T-Pot's .env with `htpasswd -n -i` reading it from
-# standard input. Nothing has ever performed either of those against a real
-# box. What holds the claim up mechanically is a build gate,
+# standard input. Both were performed against a real box on 2026-09-05 and the
+# resulting result.json records the argv upstream received, with no credential
+# flag in it. What holds the claim up mechanically is a build gate,
 # tests/check-argv-hygiene.sh, which fails the build on any line that would
 # put a credential on a command line -- including a line of documentation that
 # merely claims we do. SECURITY.md says how the whole arrangement works.

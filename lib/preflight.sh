@@ -1330,7 +1330,7 @@ _tpot_pf_check_os() {
             # architecture we accept). Whether it WORKS is a separate question
             # that a dated run has to answer.
             pf_record os ok \
-                "${_PF_OS_ID} ${_PF_OS_VERSION_ID} -- SUPPORTED tier: the pinned upstream ref's own gate accepts this release and this installer can drive it (${summary}). NOT a claim that it has been tested: that evidence is a dated run in tests/MATRIX-STATUS.md, and no run on a real host has been made.${note}"
+                "${_PF_OS_ID} ${_PF_OS_VERSION_ID} -- SUPPORTED tier: the pinned upstream ref's own gate accepts this release and this installer can drive it (${summary}). NOT a claim that it has been tested: this line reports the TIER, which is derived from the pin, and the tier says nothing about which of its releases anyone has installed. That evidence is a dated run in tests/MATRIX-STATUS.md, which names the pairs that have one.${note}"
             return 0
             ;;
         legacy)

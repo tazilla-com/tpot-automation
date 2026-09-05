@@ -1187,7 +1187,7 @@ HEADER
                 printf '    - %s\n' "$(_pin_yaml_escape "$r")"
             done
         fi
-        printf '  proven: false  # no run on a real guest exists; see tests/MATRIX-STATUS.md\n'
+        printf '  proven: false  # this tool proves nothing; tests/MATRIX-STATUS.md is the record\n'
     } > "$tmp" || rc=$?
 
     if (( rc != 0 )); then

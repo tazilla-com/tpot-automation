@@ -28,9 +28,10 @@ and `ansible-lint`'s production profile, and `tests/check-stage-map.sh` is a
 build gate holding their stage-to-code map against the table at the foot of
 this page.
 
-**Nothing has ever been installed by them.** There has been no virtual
-machine, no root, no docker daemon, no network-facing host and no T-Pot --
-not once, in this project. What has been executed is the tree's own gate
+**One install has been made with them**, on 2026-09-05: a Debian 13 host,
+exit `20`, then rebooted with T-Pot running (`tests/MATRIX-STATUS.md`). Codes
+`0`, `13`, `14`, `15`, `30` and `40` have still never been produced by a real
+run. What has been executed besides that install is the tree's own gate
 suite, `install.sh` itself unprivileged on a development box, and the roles
 against that same box far enough to establish that their expressions evaluate
 and their modules behave as written. Every code from `13` upwards is therefore
@@ -338,10 +339,13 @@ reboot
 install.sh --verify-only             #  -> 0, or 16 naming the failing check
 ```
 
-That is the sequence, and nobody has performed it. On this project's own
-development box both invocations stop at `11` on the `root` check, at step 3
-of ten, and there has never been an installed host to run the second one
-against.
+That sequence has been performed once as far as `20`, on 2026-09-05. Its
+second half has not: the host was verified before the reboot -- `--verify-only`
+correctly refused it with `16`, `listen_admin_ssh` passing and the two container
+listeners failing -- and after the reboot it could no longer be reached from
+where the run was driven. **Exit `0` has never been observed.** On this
+project's own development box both invocations stop at `11` on the `root`
+check, at step 3 of ten.
 
 `--verify-only` is the documented recovery, and it is the one to use.
 
@@ -388,11 +392,24 @@ document, from which `lib/config.py` removes every secret-typed key, and
 `--verify-only` does not ask for a dashboard password -- so nothing has to be
 supplied alongside it.
 
-**A full re-run of `install.sh` on an installed host is not idempotent, and
-this is the trap to know about.** Preflight wants port 22 free or held by the
-host's own sshd, and after a successful install sshd is on 64295 while 22
-belongs to a honeypot -- so a re-run fails at `11` on a perfectly healthy box.
-Verifying means `--verify-only`; that is what it is for.
+**A full re-run of `install.sh` on an installed host does not install
+anything, and this is the behaviour to know about.** Preflight detects the
+existing installation, records `existing_tpot` as a warning, and switches its
+port expectations to the post-install layout -- so administrative ssh on 64295
+and a honeypot on 22 are what it expects to find rather than conflicts, and the
+run does not stop at `11` over them. It then proceeds without installing:
+upstream's installer is skipped, and only configuration and verification are
+applied. `--force-reinstall` is what removes the existing checkout (`rm -rf
+~/tpotce`) and runs upstream's installer over it.
+
+If all you want is to check a host, use `--verify-only`; that is what it is
+for, and it is the only invocation that asks for no dashboard password.
+
+*(This paragraph said the opposite until 2026-09-05 -- that a re-run "fails at
+`11` on a perfectly healthy box" over the port check. That was true of an
+earlier preflight; `_PF_PORT_LAYOUT` has switched to `post_install` on a
+detected installation since, and `_tpot_pf_check_existing_tpot` says so in its
+own message. Corrected against the code, not against a memory of it.)*
 
 The second half of this trap changed shape when the ref was pinned to a full
 commit sha, and it is worth stating in the new form. Upstream refuses to reuse

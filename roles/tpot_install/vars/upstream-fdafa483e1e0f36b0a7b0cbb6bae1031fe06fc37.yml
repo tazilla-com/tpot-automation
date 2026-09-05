@@ -200,4 +200,4 @@ tpot_install_upstream:
   supported:
     - "debian:13"
     - "ubuntu:26.04"
-  proven: false  # no run on a real guest exists; see tests/MATRIX-STATUS.md
+  proven: false  # this tool proves nothing; tests/MATRIX-STATUS.md is the record

@@ -27,11 +27,17 @@
 #   handlers and the rescue would not see it -- and the exit contract is the
 #   product. This is the one structural reason; there is no other.
 #
-# NOTHING HERE HAS EVER INSTALLED ANYTHING.
-#   This file has been syntax-checked, linted and gated, and it has never run
-#   against a real box. No VM, no root, no docker, no T-Pot, ever. Read every
-#   assertion below as what this play is specified to do, not as something
-#   observed.
+# WHAT THIS PLAY HAS ACTUALLY DONE.
+#   It has installed T-Pot on a real box once: Debian 13, 2026-09-05, exit 20,
+#   all fourteen pre-reboot checks passing, and the honeypot answering after
+#   the reboot. tests/MATRIX-STATUS.md is the record.
+#
+#   That is ONE run, in ONE configuration -- the default edition, the default
+#   account policy, the default ports, on one distribution. Every branch below
+#   that configuration did not take is still unobserved, and the post-reboot
+#   half of verification has never been read back at all. Read an assertion
+#   below as what this play is specified to do unless that record says
+#   otherwise.
 
 - name: Install T-Pot, unattended
   hosts: tpot

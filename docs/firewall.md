@@ -29,10 +29,10 @@ source at the ref you pin is where any of it can be re-checked. Every claim abou
 running the tree's own gates and `install.sh --preflight-only` on a developer
 box.
 
-Nothing on this page has been observed on an installed honeypot, because this
-project has never installed one: no virtual machine, no root, no network, no
-T-Pot, not once. The example ruleset at the end has never been loaded on a host
-running T-Pot. Treat it as a starting point you verify, not as a tested recipe.
+The port layout on this page was observed on an installed honeypot once, on
+2026-09-05 (`tests/MATRIX-STATUS.md`). **The example ruleset at the end was not**:
+no filtering of any kind has been applied by this project to a host running
+T-Pot. Treat it as a starting point you verify, not as a tested recipe.
 
 ## What this installer configures: nothing
 
