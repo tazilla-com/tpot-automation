@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/tpot_install/tasks/workspace.yml -- the two directories upstream is
 # about to use, and the state each of them is allowed to be in.
 #

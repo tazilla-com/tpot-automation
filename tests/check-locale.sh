@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # tests/check-locale.sh -- the byte-stable locale must be C.UTF-8, never plain C.
 #
 # THE FAILURE THIS GATE EXISTS TO PREVENT

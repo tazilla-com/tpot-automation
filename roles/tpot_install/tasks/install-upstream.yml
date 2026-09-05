@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/tpot_install/tasks/install-upstream.yml -- run somebody else's
 # installer, for up to ninety minutes, with passwordless sudo.
 #

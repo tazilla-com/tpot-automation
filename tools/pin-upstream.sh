@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 #
 # tools/pin-upstream.sh -- pin an upstream T-Pot ref, and derive everything
 #                          that follows from it.

@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/ioc_forward/tasks/main.yml -- the reservation, and the refusal that
 # makes it one.
 #

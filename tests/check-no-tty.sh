@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # tests/check-no-tty.sh -- nothing in this tree asks a human a question.
 #
 # THE PROMISE THIS GATE DEFENDS

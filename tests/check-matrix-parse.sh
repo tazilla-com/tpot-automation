@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 #
 # tests/check-matrix-parse.sh -- the two readers of support-matrix.yml agree,
 # tier by tier, and the tiers mean what they say.

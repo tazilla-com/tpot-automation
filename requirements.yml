@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # Ansible collections this project needs, and the only ones it installs.
 #
 # Install them with:

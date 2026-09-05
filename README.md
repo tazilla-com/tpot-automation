@@ -7,9 +7,8 @@ verifies the result, and exits with a code a caller can branch on.
 
 With no terminal attached it prompts for nothing. It vendors no upstream code.
 
-**Version 0.1.0.** Installed and exercised on Debian 13 (x86_64); see
-[Supported platforms](#supported-platforms). **No licence has been chosen yet and all rights are
-reserved** — see [Licence](#licence) before using this.
+**Version 1.0.0**, [Apache License 2.0](LICENSE). Installed and exercised on Debian 13 (x86_64);
+see [Supported platforms](#supported-platforms).
 
 ---
 
@@ -547,12 +546,23 @@ rather than silently ignored.
 
 ## Licence
 
-**No licence has been chosen. `LICENSE` is a placeholder and all rights are reserved.** No
-permission is granted to use, copy, modify, distribute or sell this software while that file says
-what it says.
+Apache License 2.0. See [`LICENSE`](LICENSE).
 
-This project installs but does not redistribute upstream T-Pot or the Ansible collections in
-`requirements.yml`. Each carries its own licence.
+```
+Copyright 2026 Tazilla
+SPDX-License-Identifier: Apache-2.0
+```
+
+### Third-party software
+
+This project **installs** but does not contain or redistribute any of the following. Each carries
+its own licence, unaffected by the one above.
+
+| | |
+|---|---|
+| [T-Pot](https://github.com/telekom-security/tpotce), by Deutsche Telekom Security GmbH | fetched at install time at the pinned ref; no upstream source is vendored here |
+| the Ansible collections in `requirements.yml` | resolved from Ansible Galaxy at install time |
+| Docker Engine, and the container images T-Pot's compose files reference | installed and pulled by upstream's installer |
 
 ---
 

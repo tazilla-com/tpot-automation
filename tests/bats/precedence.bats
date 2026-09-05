@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# SPDX-License-Identifier: Apache-2.0
 # tests/bats/precedence.bats -- lib/config.py, the four-channel configuration
 # merge. Two properties are tested here, and the first is worth more than
 # everything else in this suite put together.

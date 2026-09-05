@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# SPDX-License-Identifier: Apache-2.0
 # tests/bats/notice.bats -- lib/notice.sh, the banner install.sh signs off with.
 #
 # WHY THIS FILE EXISTS

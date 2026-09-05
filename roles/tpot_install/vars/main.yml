@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/tpot_install/vars/main.yml -- this role's internals.
 #
 # WHY vars/ AND NOT defaults/

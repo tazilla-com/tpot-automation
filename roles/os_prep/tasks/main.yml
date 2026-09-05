@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/os_prep/tasks/main.yml -- prepare the operating system, and nothing else.
 #
 # WHAT THIS ROLE IS FOR

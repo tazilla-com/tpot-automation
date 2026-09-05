@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # lib/matrix.sh -- the bash reader for support-matrix.yml, and its two tiers.
 #
 # WHY THIS FILE EXISTS

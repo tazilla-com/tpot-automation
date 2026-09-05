@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # lib/result.sh -- builds and writes result.json.
 #
 # WHY THIS FILE EXISTS

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # tests/run-bats.sh -- the unit suite. The other half of tests/run-gates.sh.
 #
 # THE TWO LAYERS, AND WHY BOTH

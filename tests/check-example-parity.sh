@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # tests/check-example-parity.sh -- the two example answer files are one file
 #                                  written twice, and say the same thing.
 #

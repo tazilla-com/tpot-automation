@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/tpot_install/tasks/main.yml -- fetch upstream T-Pot, drive it, and
 # configure the two things its unattended path leaves undone.
 #

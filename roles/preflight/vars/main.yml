@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/preflight/vars/main.yml -- the constants this role needs and no user
 # may set.
 #

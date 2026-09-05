@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# SPDX-License-Identifier: Apache-2.0
 # tests/bats/result-json.bats -- lib/result.sh, the machine-readable outcome.
 #
 # WHY THIS FILE IS LONGER THAN THE FUNCTION IT TESTS

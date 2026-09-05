@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/tpot_user/tasks/main.yml -- create the account that owns T-Pot, and
 # then PROVE it is in the state this role just announced.
 #

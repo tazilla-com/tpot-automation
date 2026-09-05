@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/tpot_user/defaults/main.yml -- the three input keys this role reads.
 #
 # WHY THERE ARE ONLY THREE, AND WHY THE FOURTH IS MISSING ON PURPOSE

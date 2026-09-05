@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/tpot_verify/defaults/main.yml -- the INPUT keys this role reads, and
 # nothing else.
 #

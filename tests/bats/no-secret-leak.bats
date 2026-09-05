@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# SPDX-License-Identifier: Apache-2.0
 #
 # tests/bats/no-secret-leak.bats -- the promise that a credential supplied to
 # this installer never appears in anything the run leaves behind.

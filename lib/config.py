@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """The configuration merge, and the only place precedence lives.
 
 WHY THIS FILE EXISTS

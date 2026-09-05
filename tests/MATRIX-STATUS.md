@@ -15,7 +15,7 @@ this installer *can* drive, which is a claim about code; this file says what it 
 | Date | 2026-09-05 |
 | Result | **Pass** — exit `20` `EX_REBOOT`, then rebooted and T-Pot started |
 | Run id | `20260905T084900Z` |
-| Installer | tpot-automation 0.1.0 |
+| Installer | tpot-automation, at the tree released as 1.0.0 |
 | Edition | `h` (hive), the default. `TPOT_TYPE=HIVE` in T-Pot's `.env` afterwards |
 | Duration | 278 s, of which 210 s was upstream's own installer |
 | Host | Proxmox VM: 4 cores, 9216 MB assigned (8876 MiB `MemTotal`), 80 GB disk, no swap |

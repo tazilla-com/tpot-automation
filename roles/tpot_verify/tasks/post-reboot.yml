@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/tpot_verify/tasks/post-reboot.yml -- what can only be checked once
 # T-Pot is actually running.
 #

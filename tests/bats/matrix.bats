@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# SPDX-License-Identifier: Apache-2.0
 # tests/bats/matrix.bats -- the two-tier support matrix reader, against files
 # this file writes.
 #

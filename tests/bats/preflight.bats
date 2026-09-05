@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# SPDX-License-Identifier: Apache-2.0
 # tests/bats/preflight.bats -- lib/preflight.sh, stages A and B, EXECUTED.
 #
 # WHY THIS FILE EXISTS, AND WHAT IT IS ANSWERABLE FOR

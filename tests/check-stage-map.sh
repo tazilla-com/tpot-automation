@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # tests/check-stage-map.sh -- the play's stage-to-exit-code map is the
 #                             documented one, and it is total.
 #

@@ -5,55 +5,35 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - Unreleased
+## [1.0.0] - 2026-09-05
 
-The first version. Nothing has been released, so everything below is initial
-implementation rather than a change to something earlier.
+First public release. Apache License 2.0.
 
-### What this build actually is
+**What it is.** An unattended installer for the T-Pot honeypot platform. It
+preflights the host, installs its own prerequisites, drives upstream T-Pot's
+installer in upstream's unattended mode at a pinned ref, configures what that
+mode leaves undone, verifies the result, and exits with a code a caller can
+branch on. It vendors no upstream code.
 
-**A slice -- a much larger one since the play landed, and still a slice.** The
-entrypoint, the libraries it sources, the build gates, the Ansible play, its
-eight roles, the tool that pins an upstream ref, the `bats` suite and
-`tests/MATRIX-STATUS.md` are all written. What is not: `tests/fixtures/`, the CI
-workflows and the four documents other shipped files cite. The complete list is
-*Designed, specified, and not built in this release*, below.
+**What has been proven.** T-Pot was installed by this tool on 2026-09-05: a
+Debian 13 host at upstream ref `fdafa483…`, unattended, exit `20` in 278
+seconds with all fourteen pre-reboot verification checks passing, then rebooted
+with the honeypot answering on TCP/22. The run used no `--force-*` override of
+any kind. `tests/MATRIX-STATUS.md` is the dated record.
 
-**This code has now installed T-Pot once.** On 2026-09-05, unattended, on a
-stock Debian 13 cloud image at upstream ref `fdafa483…`: exit 20, all 14
-pre-reboot checks passing, and after a reboot TCP/22 answering as a honeypot
-rather than as the host's sshd. `tests/MATRIX-STATUS.md` carries the row, and is
-as specific about what that run did not establish as about what it did. Every
-other cell of the matrix, in both tiers, remains unrun. There has been no other
-machine, no root, no network and no T-Pot. Every claim below about what
-happens on a real host is a claim about what the code is written to do, not a
-report of it having been done. That was true while the play did not exist and it
-is exactly as true now that it does: the play has been syntax-checked, linted
-and read, and it has never executed one task against a machine.
+**What has not.** Exit `0` has never been observed. The post-boot verification
+unit fires and writes its record to the host, and the network that install was
+driven from cannot reach the host afterwards to read it — administrative SSH
+moves to 64295 by design. One platform, one edition, one account policy and one
+set of port assignment have been exercised; `ubuntu:26.04` is supported by
+derivation from the same pin and has never been run. `docs/compatibility.md`
+and `tests/MATRIX-STATUS.md` both say so, per release and per platform, and are
+the two files entitled to.
 
-**What a run does today, measured rather than predicted.** On this project's own
-development box every invocation that would act on a machine -- a full install
-with the password in the environment, `--preflight-only`, `--verify-only` and
-`--check`, each under `setsid --wait` with stdin closed -- stops in preflight
-stage A and exits `11` (`EX_PREFLIGHT`) on the `root` check, having changed
-nothing. All four wrote their `result.json` when given a writable `--state-dir`,
-and the supplied dashboard password appeared in none of the artefacts they
-produced.
-
-**That is a different refusal from the one this file used to describe, and the
-change is the whole reason for this release's documentation sweep.** Stage A also
-checks that the seventeen files this installer is made of are present, and until
-the play landed `site.yml` and `verify.yml` were two it could not find; every
-earlier version of this section said so, and said it accurately. They are there
-now and that check passes. What stops a run today is that this project has never
-had root, a network, or a guest running a release the pinned ref accepts.
-
-`install.sh` still refuses at step 9 if `site.yml` is absent from the checkout it
-is running from: it logs what is missing, records `internal_error` and returns
-`40`. That arm has never executed and, in a release containing the play, cannot.
-It exists so that a build without a play cannot report success, and the guarantee
-it shares with preflight is unchanged: **no run that has ever been made could
-reach exit `0` or exit `20`**, so none of them claimed to install anything.
+**Not in this release.** IoC forwarding. The `ioc_*` namespace is reserved and
+documented; enabling it is refused in preflight with exit `11` rather than
+silently ignored. The CI workflows are also absent, and the tree's own gates
+and unit suite are run by hand (`tests/run-gates.sh`, `tests/run-bats.sh`).
 
 ### Added
 
@@ -201,10 +181,9 @@ reach exit `0` or exit `20`**, so none of them claimed to install anything.
   a host running T-Pot, and the document says so at the top rather than at the
   bottom.
 
-### Designed, specified, and not built in this release
+### Specified but not shipped in 1.0.0
 
-Listed here because a changelog that omitted them would read as though they
-shipped. Each is specified; none of it exists in this tree.
+Listed because a changelog that omitted them would read as though they shipped.
 
 - **The CI workflows**, including the release gate that refuses a tag while
   `tests/MATRIX-STATUS.md` has a missing or stale row. (Two things have left this
@@ -367,7 +346,7 @@ the code, and where a number appears it was measured on the development machine.
 
 ### Verification status
 
-**Not releasable, and one cell of the matrix has been proven on a machine.**
+**One cell of the matrix has been proven on a machine.**
 A single virtual-machine run has been made: 2026-09-05, Debian 13, upstream ref
 `fdafa483…`, installed to exit 20 and then rebooted, after which TCP/22 answered
 as a honeypot. `tests/MATRIX-STATUS.md` holds the dated record, including the

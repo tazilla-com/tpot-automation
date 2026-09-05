@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/finalize/tasks/main.yml -- the last role site.yml runs, and the one
 # that makes an unattended install honest about itself afterwards.
 #

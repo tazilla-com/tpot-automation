@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # lib/preflight.sh -- the two preflight stages, in bash, before Ansible exists.
 #
 # WHY THIS FILE EXISTS

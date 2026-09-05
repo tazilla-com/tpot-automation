@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # tests/gate-common.sh -- shared machinery for the build gates.
 #
 # WHAT A GATE IS

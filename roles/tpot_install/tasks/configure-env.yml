@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/tpot_install/tasks/configure-env.yml -- the three things upstream's
 # unattended sensor path leaves undone, done here.
 #

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # tests/check-no-expect.sh -- no screen-scraping driver, ever.
 #
 # THE DECISION THIS GATE ENFORCES

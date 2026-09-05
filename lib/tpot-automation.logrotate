@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # logrotate policy for this installer's own transcripts.
 #
 # Installed to /etc/logrotate.d/tpot-automation by lib/log.sh's

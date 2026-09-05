@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/tpot_verify/tasks/pre-reboot.yml -- what can be checked while T-Pot is
 # still stopped.
 #

@@ -33,7 +33,7 @@
     "the rest to the built-in defaults -- a value you copied without deciding on",
     "is a value nobody will dare change later.",
     "",
-    "WHAT HAS BEEN RUN, AND WHAT HAS NOT. This is version 0.1.0, unreleased.",
+    "WHAT HAS BEEN RUN, AND WHAT HAS NOT. This is version 1.0.0.",
     "ONE INSTALL HAS BEEN MADE WITH THIS TOOL: a Debian 13 host on 2026-09-05,",
     "exit 20, all fourteen pre-reboot checks passing, and T-Pot running after",
     "the reboot. tests/MATRIX-STATUS.md is the dated record and says plainly",

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # tests/run-gates.sh -- run every build gate and say honestly what happened.
 #
 # WHAT A GATE IS
@@ -192,11 +193,13 @@ _fixture_check_no_vendor() {
     local d=$1
     _write "$d/innocent.md" <<'EOF'
 Precision, decision, incision, decisive, incisor. None of these may match.
+Copyright 2026 Taz@@illa -- the bare word is permitted since D-13.
+See https://github.com/taz@@illa-com/tpot-automation -- in the PATH, not the host.
 EOF
     _write "$d/leak.yml" <<'EOF'
-tenant: Taz@@illa
 note: CI@@SO integration
 endpoint: https://api.example.@@sk/v1/ioc
+vendor: https://ioc.taz@@illa.example/v1/submit
 EOF
 }
 

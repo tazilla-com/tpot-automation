@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/finalize/vars/main.yml -- the internal constants of the finalize role.
 #
 # WHY vars/ AND NOT defaults/

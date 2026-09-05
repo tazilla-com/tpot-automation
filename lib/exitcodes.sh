@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # lib/exitcodes.sh -- THE source of truth for this installer's exit codes.
 #
 # WHY THIS FILE EXISTS

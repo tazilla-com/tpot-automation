@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# SPDX-License-Identifier: Apache-2.0
 # tests/bats/exitcodes.bats -- the exit contract, executed.
 #
 # WHY THIS FILE EXISTS, GIVEN tests/check-exit-table.sh ALREADY RUNS

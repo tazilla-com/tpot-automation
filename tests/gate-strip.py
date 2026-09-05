@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Lexing support for the tests/check-*.sh build gates.
 
 WHY THIS FILE EXISTS

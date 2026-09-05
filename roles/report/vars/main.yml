@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/report/vars/main.yml -- the stage-to-exit-code map, and the one place
 # the play writes an exit code down.
 #

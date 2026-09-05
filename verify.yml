@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # verify.yml -- verification only. Backs `install.sh --verify-only`.
 #
 # WHY THIS PLAY EXISTS SEPARATELY FROM site.yml

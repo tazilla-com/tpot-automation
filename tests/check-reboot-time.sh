@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # tests/check-reboot-time.sh -- no document names a fixed time for upstream's
 # daily reboot, because upstream does not have one.
 #

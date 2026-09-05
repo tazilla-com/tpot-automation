@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+# SPDX-License-Identifier: Apache-2.0
 #
 # tests/bats/no-tty.bats -- the promise that this installer cannot block on a
 # prompt.

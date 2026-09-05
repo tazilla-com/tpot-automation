@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # tests/check-exit-table.sh -- every written copy of the exit table is the
 # generated one.
 #

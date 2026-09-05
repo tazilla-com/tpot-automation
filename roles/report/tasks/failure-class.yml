@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/report/tasks/failure-class.yml -- tell install.sh how far the run got.
 #
 # Included from the `rescue:` of site.yml and verify.yml, and from nowhere

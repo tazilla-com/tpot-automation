@@ -8,7 +8,7 @@
 # how the product is meant to be configured.
 #
 # WHAT HAS BEEN RUN, AND WHAT HAS NOT, AND IT IS MOST OF WHAT THIS FILE
-# DESCRIBES. This is version 0.1.0, unreleased. ONE INSTALL HAS BEEN MADE
+# DESCRIBES. This is version 1.0.0. ONE INSTALL HAS BEEN MADE
 # WITH THIS TOOL: a Debian 13 host on 2026-09-05, exit 20, all fourteen
 # pre-reboot checks passing, and T-Pot running after the reboot. See
 # tests/MATRIX-STATUS.md, which also says what that run did not establish --

@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/os_prep/defaults/main.yml -- the four documented inputs this role reads.
 #
 # WHY THERE ARE ONLY FOUR, AND WHY THEY LOOK REDUNDANT

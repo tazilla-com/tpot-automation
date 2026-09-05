@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/ioc_forward/defaults/main.yml -- five reserved names, and nothing
 # behind them.
 #

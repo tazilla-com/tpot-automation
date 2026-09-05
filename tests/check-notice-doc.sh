@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # tests/check-notice-doc.sh -- the README's notice block is the real one.
 #
 # WHAT THE NOTICE IS

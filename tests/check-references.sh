@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # tests/check-references.sh -- every path this tree names either exists, or is
 #                              declared absent here. Both directions.
 #

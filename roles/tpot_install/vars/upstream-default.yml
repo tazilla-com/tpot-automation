@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/tpot_install/vars/upstream-default.yml -- the LOUD FALLBACK.
 #
 # WHAT THIS FILE IS FOR. roles/tpot_install loads the data file named after the

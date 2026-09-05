@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # lib/log.sh -- the transcript, the redactor, and the leak tripwire.
 #
 # WHY THIS FILE IS THE ONE TO READ CLOSELY

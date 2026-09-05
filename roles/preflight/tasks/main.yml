@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/preflight/tasks/main.yml -- the refusals, asserted where Ansible can
 # see them.
 #

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # lib/args.sh -- the command-line parser, --help and --version.
 #
 # WHY THIS FILE EXISTS

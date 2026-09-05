@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # tests/check-variable-surface.sh -- one variable surface, described in one way.
 #
 # THE PROBLEM THIS GATE SOLVES

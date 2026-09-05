@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # lib/notice.sh -- THE notice block. It exists exactly once, and this is it.
 #
 # WHY THIS FILE EXISTS

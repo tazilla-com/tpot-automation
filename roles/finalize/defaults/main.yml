@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/finalize/defaults/main.yml -- the two INPUT keys this role reads.
 #
 # WHY ONLY TWO, AND WHY THESE

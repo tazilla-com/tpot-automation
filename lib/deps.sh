@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # lib/deps.sh -- dependency bootstrap: apt prerequisites, ansible-core, collections.
 #
 # WHY THIS FILE EXISTS

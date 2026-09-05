@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # tests/check-argv-hygiene.sh -- no credential ever reaches a command line.
 #
 # THE PROPERTY THIS GATE DEFENDS

@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/tpot_verify/tasks/main.yml -- stage `verify`.
 #
 # WHAT THIS ROLE IS

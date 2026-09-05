@@ -1,4 +1,5 @@
 ---
+# SPDX-License-Identifier: Apache-2.0
 # roles/os_prep/handlers/main.yml -- one handler, and it is load-bearing.
 #
 # It is notified by the task that writes /etc/sysctl.d/99-tpot-automation.conf
