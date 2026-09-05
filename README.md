@@ -145,9 +145,10 @@ breath — and that is now most of the product.
   configuration fixtures it would read;
 * `.github/` — the CI workflows, including the release gate that refuses a tag
   while the matrix record is missing or stale;
-* `tests/MATRIX-STATUS.md`, where a dated record of which (ref × distribution)
-  pair was proven on a real box would live. **Nothing has been proven, so there
-  is no file** — and that absence is why nothing on this page is called tested;
+* ~~`tests/MATRIX-STATUS.md`~~ — **this one now exists.** One pair has been run
+  on a real box: upstream `fdafa483…` × `debian 13`, on 2026-09-05, installed and
+  running. Read the row rather than the headline: it is as specific about what
+  the run did not establish as about what it did;
 * **four referenced documents**, none of them written and every one of them
   cited by a file that does ship: `docs/answer-file.md` and `docs/variables.md`
   (cited by `lib/config.py`), `docs/verification.md` (by `lib/preflight.sh`)
@@ -197,7 +198,8 @@ over.
   that arm, and it has never executed.
 * **Neither support tier has a run behind it.** Not one row, at any ref. The pin
   decides which releases may be called *supported*; only a dated run recorded in
-  `tests/MATRIX-STATUS.md` could call one *tested*, and there is no such file.
+  `tests/MATRIX-STATUS.md` may call one *tested*, and exactly one row there does —
+  `fdafa483…` × `debian 13`, 2026-09-05.
 
 **What has actually been exercised**, all of it unprivileged and on one
 developer machine: the build gates in `tests/`; the support-matrix readers
@@ -375,10 +377,12 @@ and Raspberry Pi OS drops out because no T-Pot has ever been installed on it
 here. The gate is recorded row by row, with the reason for each verdict, in the
 per-ref data file under `roles/tpot_install/vars/`.
 
-**Not one of the two rows has a run behind it.** A run would be recorded with
-its date in `tests/MATRIX-STATUS.md`, and that file does not exist — which is
-why preflight, on recognising your release, says the pinned ref's gate accepts it
-and this installer can drive it, and then says in the same message that this is
+**One of the two rows has a run behind it, and one does not.** `debian 13` was
+installed at this pin on 2026-09-05 and is dated in `tests/MATRIX-STATUS.md`;
+`ubuntu 26.04` has never been run. Preflight does not distinguish them — it
+reports the tier, which is derived from the pin rather than from evidence — so on
+recognising your release it says the pinned ref's gate accepts it and this
+installer can drive it, and then says in the same message that this is
 not a claim it has been tested. That message used to end *"and exercised by this
 project's tests"*. It was written while the tier shipped empty and no box could
 reach that branch of the check; pinning a ref made it reachable, and it began

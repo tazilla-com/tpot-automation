@@ -41,9 +41,11 @@
 #   running every assertion against both proves the reader gives the same answer
 #   for a matrix it has never seen as for the one it ships with.
 #
-#   NEITHER FILE IS A CLAIM THAT ANYTHING WAS INSTALLED. No release in either
-#   has been installed by anyone here; tests/MATRIX-STATUS.md is where that
-#   evidence would live, and it does not exist.
+#   NEITHER FILE IS A CLAIM THAT ANYTHING WAS INSTALLED. Exactly one release
+#   has been installed by anyone here -- debian 13, at ref fdafa483, on
+#   2026-09-05 -- and that evidence lives in tests/MATRIX-STATUS.md, not in
+#   either of these files. Parsing a row correctly says nothing about having
+#   run it.
 #
 # HOW IT PICKS ITS REFERENCE READER, AND WHY IT SAYS WHICH
 #   ansible-playbook, when it is on PATH, is the real consumer: the playbook

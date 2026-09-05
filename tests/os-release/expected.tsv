@@ -32,7 +32,9 @@
 # never by editing this file to match.
 #
 # Neither file is evidence that anything was ever installed anywhere;
-# tests/MATRIX-STATUS.md is where that would live, and it does not exist.
+# tests/MATRIX-STATUS.md is where that lives, and it now holds exactly one
+# row -- debian 13 at ref fdafa483, 2026-09-05. No fixture here is affected by
+# that: a fixture proves parsing, never installation.
 #
 # THE ROW THAT EARNS THE SECOND PAIR: debian-13 resolves SUPPORTED against
 # both files now, and debian:13 is listed in BOTH TIERS of each -- it is what

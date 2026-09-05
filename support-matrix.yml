@@ -24,8 +24,8 @@
 #
 #     EVIDENCE OWED PER ROW: a real run on a real guest at the pinned ref,
 #     dated in tests/MATRIX-STATUS.md. A row with no dated run there blocks a
-#     release tag. NOTHING in this repository is that evidence: no VM run
-#     exists yet.
+#     release tag. ONE PAIR NOW HAS ONE -- fdafa483 x debian 13, installed
+#     2026-09-05. Every other cell in both tiers still has nothing.
 #
 #     IT IS DERIVED, NOT ASSERTED. The list is
 #
@@ -52,9 +52,11 @@
 #     tools/pin-upstream.sh, from that ref's own distribution gate intersected
 #     with what this installer can drive. It is still not a claim that either
 #     row has been TESTED: that evidence is a dated run in
-#     tests/MATRIX-STATUS.md, which does not exist, because no run on a real
-#     guest has ever been made. Supported here means "the pinned upstream will
-#     accept this release and we can drive it", and nothing more.
+#     tests/MATRIX-STATUS.md. That file now exists and carries exactly one
+#     row -- fdafa483 x debian 13, 2026-09-05. Supported here still means only
+#     "the pinned upstream will accept this release and we can drive it";
+#     read the status file for what was actually observed, and for the longer
+#     list of what that run did NOT establish.
 #
 #     tpot_support_matrix_supported_ref carries the ref the list was derived
 #     from. The invariant, asserted by tests/check-matrix-parse.sh: the ref is
@@ -229,8 +231,10 @@
 tpot_support_matrix_supported_ref: "fdafa483e1e0f36b0a7b0cbb6bae1031fe06fc37"
 
 # SUPPORTED at the ref above -- DERIVED from its gate by tools/pin-upstream.sh,
-# never edited by hand. Not yet TESTED: no dated run exists in
-# tests/MATRIX-STATUS.md, because nothing has ever been installed.
+# never edited by hand. TESTED applies to debian:13 at ref fdafa483 ONLY, and
+# only as far as tests/MATRIX-STATUS.md's row says: installed and running,
+# with the post-reboot verification records never read. ubuntu:26.04 has never
+# been run at all.
 tpot_support_matrix_supported:
   - "debian:13"
   - "ubuntu:26.04"

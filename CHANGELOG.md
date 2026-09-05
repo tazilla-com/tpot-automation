@@ -14,12 +14,17 @@ implementation rather than a change to something earlier.
 
 **A slice -- a much larger one since the play landed, and still a slice.** The
 entrypoint, the libraries it sources, the build gates, the Ansible play, its
-eight roles and the tool that pins an upstream ref are all written. What is not:
-the `bats` suite, `tests/fixtures/`, the CI workflows, `tests/MATRIX-STATUS.md`
-and the four documents other shipped files cite. The complete list is *Designed,
-specified, and not built in this release*, below.
+eight roles, the tool that pins an upstream ref, the `bats` suite and
+`tests/MATRIX-STATUS.md` are all written. What is not: `tests/fixtures/`, the CI
+workflows and the four documents other shipped files cite. The complete list is
+*Designed, specified, and not built in this release*, below.
 
-**Nothing has ever been installed by this code.** There has been no virtual
+**This code has now installed T-Pot once.** On 2026-09-05, unattended, on a
+stock Debian 13 cloud image at upstream ref `fdafa483…`: exit 20, all 14
+pre-reboot checks passing, and after a reboot TCP/22 answering as a honeypot
+rather than as the host's sshd. `tests/MATRIX-STATUS.md` carries the row, and is
+as specific about what that run did not establish as about what it did. Every
+other cell of the matrix, in both tiers, remains unrun. There has been no other
 machine, no root, no network and no T-Pot. Every claim below about what
 happens on a real host is a claim about what the code is written to do, not a
 report of it having been done. That was true while the play did not exist and it
@@ -200,14 +205,11 @@ reach exit `0` or exit `20`**, so none of them claimed to install anything.
 Listed here because a changelog that omitted them would read as though they
 shipped. Each is specified; none of it exists in this tree.
 
-- **The CI workflows and the `bats` suite**, including the release gate that
-  refuses a tag while `tests/MATRIX-STATUS.md` has a missing or stale row.
-  (The check that keeps `lib/exitcodes.sh`, `docs/exit-codes.md`, `README.md`
-  and `--help` from drifting apart was on this list and is no longer: it
-  shipped, as `tests/check-exit-table.sh`.)
-- **`tests/MATRIX-STATUS.md`**, the dated per-cell record of which
-  (ref x distribution) pair has actually been installed. It is the only artefact
-  that could let a row be called *tested*, and its absence is why no row is.
+- **The CI workflows**, including the release gate that refuses a tag while
+  `tests/MATRIX-STATUS.md` has a missing or stale row. (Two things have left this
+  list: the check that keeps `lib/exitcodes.sh`, `docs/exit-codes.md`, `README.md`
+  and `--help` from drifting apart shipped as `tests/check-exit-table.sh`, and the
+  `bats` suite shipped -- it now runs 304 tests over the libraries.)
 - **Four referenced documents.** Every one is cited by a file that does ship,
   and none is written: `docs/answer-file.md` and `docs/variables.md`, both
   cited by `lib/config.py`; `docs/verification.md`, cited by
@@ -364,11 +366,14 @@ the code, and where a number appears it was measured on the development machine.
 
 ### Verification status
 
-**Not releasable, and nothing here has been proven on a machine.** No
-virtual-machine run has ever been made. This build has never installed T-Pot;
-there is no host anywhere that it produced, and no transcript of it having
-run. `tests/MATRIX-STATUS.md` is where a dated per-cell record is to live, and
-that file does not exist yet -- so there is no row to read and none to trust.
+**Not releasable, and one cell of the matrix has been proven on a machine.**
+A single virtual-machine run has been made: 2026-09-05, Debian 13, upstream ref
+`fdafa483…`, installed to exit 20 and then rebooted, after which TCP/22 answered
+as a honeypot. `tests/MATRIX-STATUS.md` holds the dated record, including the
+list of what the run did NOT establish -- most importantly that the post-reboot
+verification records were written on the box and never read, because that
+network cannot be reached from where the run was driven. **Exit 0 has still
+never been observed from this product.**
 
 What *has* been executed is the tree's own gates, unprivileged, on a
 development box -- `tests/run-gates.sh`, every gate passing, exit `0`; the play
@@ -393,8 +398,8 @@ The support matrix has two tiers, and the honest statement of each is:
   `tests/check-matrix-parse.sh` requires the tier and that ref to be empty or
   non-empty together, so a supported row can never appear without the pin it came
   from. **Tested** is a different word needing a different artefact -- a dated
-  row in `tests/MATRIX-STATUS.md` -- and that file does not exist. No cell in
-  either tier has one.
+  row in `tests/MATRIX-STATUS.md`. Exactly one cell has one: `debian:13` at ref
+  `fdafa483…`. `ubuntu:26.04` is supported by derivation and has never been run.
 - **Legacy is nine older releases, documented and never claimed as tested:**
   Debian 11/12/13, Ubuntu 20.04/22.04/24.04 and Linux Mint 20/21/22. They are
   the releases the earlier installer was used on. Upstream T-Pot's own
