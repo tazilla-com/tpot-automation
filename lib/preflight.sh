@@ -305,16 +305,18 @@ _PF_INSTALLED_EVIDENCE=""
 # pre_install, post_install, post_install_incomplete, or unknown.
 _PF_PORT_LAYOUT="unknown"
 
-# THE FIVE TEST SEAMS, and the reason there are exactly five.
+# THE SIX TEST SEAMS, and the reason there are exactly six.
 #
 # Everything preflight measures comes from either a COMMAND or a FILE. A
 # command is replaced in a test by putting a fixture earlier on $PATH -- that
 # is how `ss`, `nproc`, `df`, `curl`, `getent` and `systemctl` would be
 # exercised, and it needs nothing from this file. A file cannot be replaced
 # that way, so the files preflight reads directly are named by variables that
-# default to the real thing. Four of them name one file each. The fifth,
-# PF_APT_ROOT, names a prefix, because reachability_apt follows a path out of
-# the sources files and a per-file seam could not cover where it lands.
+# default to the real thing. Four of them name one file each. PF_APT_ROOT names
+# a prefix, because reachability_apt follows a path out of the sources files and
+# a per-file seam could not cover where it lands. PF_DOCKER_DIR names a
+# DIRECTORY whose EXISTENCE is the thing under test, because disk_docker says a
+# different sentence depending on it.
 #
 # WHAT ACTUALLY EXISTS TO POINT THEM AT, TODAY:
 #
@@ -336,8 +338,12 @@ _PF_PORT_LAYOUT="unknown"
 #                            $TMP and points this at them -- including the
 #                            mirror+file: indirection a Debian cloud image
 #                            uses, which is what made this seam necessary.
+#   PF_DOCKER_DIR            tests/bats/preflight.bats points it at a path in
+#                            $TMP that it creates or does not, so both arms of
+#                            the disk_docker record are reachable without
+#                            depending on whether the box has docker installed.
 #
-# So three of the five seams are open at one end. The memory, cpus and
+# So three of the six seams are open at one end. The memory, cpus and
 # max_map_count checks have never been run against anything but whichever box
 # a session happened to be on -- one meminfo, one processor count, one
 # max_map_count, all of them this developer machine's. Their threshold
@@ -368,6 +374,16 @@ _PF_PORT_LAYOUT="unknown"
 # lands, so this one is a root to prepend -- empty in production, a $TMP tree
 # in a test, and the indirection is then covered end to end by construction.
 : "${PF_APT_ROOT:=}"
+
+# The sixth seam, and CI found the reason for it. disk_docker reports a
+# DIFFERENT sentence depending on whether /var/lib/docker exists -- when it
+# does not, the record names the filesystem that will hold it and says so.
+# tests/bats/preflight.bats asserted that sentence, which made the test pass on
+# a developer box with no docker and fail on a GitHub runner, whose image has
+# docker installed. The product was right in both cases; the test had baked in
+# a property of the machine it was written on. With this variable both branches
+# are reachable deterministically on any box.
+: "${PF_DOCKER_DIR:=/var/lib/docker}"
 
 # ===========================================================================
 # THE RECORD
@@ -2017,10 +2033,10 @@ _tpot_pf_check_disk_docker() {
     local min warn path gb note=""
     min=$(_tpot_pf_int tpot_min_disk_gb "$_PF_DEF_MIN_DISK_GB")
     warn=$(_tpot_pf_int tpot_warn_disk_gb "$_PF_DEF_WARN_DISK_GB")
-    path="/var/lib/docker"
+    path=$PF_DOCKER_DIR
     if [[ ! -e $path ]]; then
         path=$(_tpot_pf_nearest_existing "$path")
-        note="/var/lib/docker does not exist yet, so this is the filesystem that will hold it"
+        note="${PF_DOCKER_DIR} does not exist yet, so this is the filesystem that will hold it"
     fi
     if ! gb=$(_tpot_pf_free_gb "$path"); then
         pf_record disk_docker inconclusive \

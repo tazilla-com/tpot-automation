@@ -1006,14 +1006,8 @@ stage_b_mem() {
     assert_contains $'cpus\tinconclusive' "$out" 'the cpus record'
 }
 
-@test "a filesystem below the disk floor fails, separately for home and for docker" {
-    # Measured separately on purpose: /home and /var/lib/docker are frequently
-    # different devices, and the one that fills is usually not the one
-    # somebody checked. Neither directory exists on this box, so both records
-    # are also the "nearest existing ancestor" path -- which is the normal
-    # case for a preflight, not an edge.
-    pf_load
-    no_network
+# df_stub -- a df reporting 10 GiB free on one filesystem, first on $PATH.
+df_stub() {
     mkdir -p "$TMP/bin"
     {
         printf '#!/usr/bin/env bash\n'
@@ -1022,12 +1016,58 @@ stage_b_mem() {
     } > "$TMP/bin/df"
     chmod +x "$TMP/bin/df"
     PATH="$TMP/bin:$PATH"
+}
+
+@test "a filesystem below the disk floor fails, separately for home and for docker" {
+    # Measured separately on purpose: /home and the docker directory are
+    # frequently different devices, and the one that fills is usually not the
+    # one somebody checked.
+    #
+    # THIS TEST ASSERTS ONLY WHAT IS TRUE ON EVERY BOX. It also asserted the
+    # words "does not exist yet" in the disk_docker record -- a clause the
+    # check emits only when the docker directory is ABSENT. That passed on a
+    # developer box with no docker and failed on a GitHub runner, whose image
+    # has docker installed and where the record is correct and differently
+    # worded. The product was right both times; the test had baked in a
+    # property of the machine it was written on, and CI found it on the first
+    # run that reached this far. Both wordings have a test each, below.
+    pf_load
+    no_network
+    df_stub
     public_json '"tpot_ansible_source": "distro"'
     pf_stage_b || true
     assert_check disk_home fail
     assert_check disk_docker fail
     assert_contains '10 GiB free' "$(pf_detail disk_home)" 'the disk_home record'
+    assert_contains '10 GiB free' "$(pf_detail disk_docker)" 'the disk_docker record'
+    assert_contains 'below the hard floor' "$(pf_detail disk_docker)" 'the disk_docker record'
+}
+
+@test "when the docker directory is absent the record names the filesystem that will hold it" {
+    pf_load
+    no_network
+    df_stub
+    export PF_DOCKER_DIR="$TMP/no-such-docker-dir"
+    public_json '"tpot_ansible_source": "distro"'
+    pf_stage_b || true
+    assert_check disk_docker fail
     assert_contains 'does not exist yet' "$(pf_detail disk_docker)" 'the disk_docker record'
+    assert_contains 'will hold it' "$(pf_detail disk_docker)" 'the disk_docker record'
+}
+
+@test "when the docker directory exists the record does not claim it is absent" {
+    # The arm a runner with docker installed takes, and the one that was
+    # untested until CI ran the suite somewhere other than a developer box.
+    pf_load
+    no_network
+    df_stub
+    export PF_DOCKER_DIR="$TMP/docker"
+    mkdir -p "$PF_DOCKER_DIR"
+    public_json '"tpot_ansible_source": "distro"'
+    pf_stage_b || true
+    assert_check disk_docker fail
+    assert_contains "$PF_DOCKER_DIR" "$(pf_detail disk_docker)" 'the disk_docker record'
+    refute_contains 'does not exist yet' "$(pf_detail disk_docker)" 'the disk_docker record'
 }
 
 @test "--force-low-resources downgrades a disk failure as well, and says which floor was crossed" {

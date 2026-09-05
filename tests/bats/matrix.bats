@@ -471,8 +471,10 @@ YAML
     # and tested" while the supported tier shipped empty, so nothing printed
     # it. The moment D-11 pinned a ref it became a claim that went out on every
     # run on an unrecognised box -- asserting a test campaign that has never
-    # happened. Nothing has ever been installed on any guest; the evidence
-    # would be a dated row in tests/MATRIX-STATUS.md, which does not exist.
+    # happened. One dated row exists now -- debian:13 at the pinned ref, in
+    # tests/MATRIX-STATUS.md -- which makes the distinction sharper, not moot:
+    # the summary describes a TIER, and the tier also holds ubuntu:26.04, which
+    # nobody has installed.
     #
     # The assertion is deliberately not a match on today's wording: every
     # occurrence of "tested" is stripped of its negation first, and what is left

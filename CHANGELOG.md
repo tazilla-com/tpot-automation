@@ -5,6 +5,32 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] - 2026-09-05
+
+### Fixed
+
+**A unit test had a property of the developer's machine baked into it, and CI found it.** This is
+the first defect continuous integration caught that nothing here could have, and it is worth
+stating plainly because it is the entire argument for having CI at all.
+
+`disk_docker` reports a different sentence depending on whether the docker directory exists: when it
+does not, the record names the filesystem that *will* hold it and says so. The test asserted that
+sentence. It passed on a machine with no docker installed and failed on a GitHub runner, whose image
+has docker — where the record was correct and differently worded. **The product was right both
+times.** The test's own comment said the quiet part: *"Neither directory exists on this box."*
+
+Fixed by making it not depend on the box. `PF_DOCKER_DIR` is a sixth test seam — the first one whose
+subject is a directory's *existence* rather than a file's contents — and the single test becomes
+three: one asserting only what is true everywhere, one for the absent arm, one for the present arm.
+**The present arm had never been executed anywhere**, on any machine, until now.
+
+### Changed
+
+The seam block in `lib/preflight.sh` documents six seams instead of five, and says what each is
+pointed at today.
+
+A stale comment in `tests/bats/matrix.bats` still said `tests/MATRIX-STATUS.md` "does not exist".
+
 ## [1.0.4] - 2026-09-05
 
 ### Fixed
