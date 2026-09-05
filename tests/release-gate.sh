@@ -30,11 +30,14 @@
 #      can read the notes for.
 #
 # WHAT IT DOES NOT ASSERT
-#   That every SUPPORTED platform has been run. It has not: ubuntu:26.04 is
-#   supported by derivation from the pin and has never been installed, and
-#   docs/compatibility.md says so. Demanding otherwise here would either block
-#   every release or force the tree to lie about a platform, and this file is
-#   not going to be the reason for either.
+#   That every SUPPORTED platform has been run. Both of them have been, as it
+#   happens -- but the rule must not depend on that, and the reason is the same
+#   one that keeps this file out of tests/check-*.sh: the supported list is
+#   DERIVED from whichever ref is pinned, so moving the pin recomputes it and
+#   every row is unrun again the instant it changes. A gate demanding a dated
+#   run for every supported platform would block the first release after any
+#   re-pin, or force the tree to lie about a platform. It asserts that each
+#   pinned REF has evidence, which is the thing a release is actually about.
 #
 # EXIT: 0 clean, 1 findings, 3 could not run.
 set -uo pipefail

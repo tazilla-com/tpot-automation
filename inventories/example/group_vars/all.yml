@@ -245,7 +245,7 @@
 # upstream will accept and what this installer can drive, and nothing more:
 # the evidence for a tested row is a dated run in tests/MATRIX-STATUS.md.
 # ONE ROW EXISTS: debian:13 at this ref, 2026-09-05. ubuntu:26.04 is supported
-# by derivation from the same gate and has never been installed.
+# tested too, and it is the row that carries this project's only observed exit 0.
 #
 # AND PINNING A COMMIT DOES NOT PIN THE SOFTWARE THAT RUNS. T-Pot's own .env
 # names a mutable image tag and sets a pull policy of `always`, so every

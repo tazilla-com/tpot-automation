@@ -235,10 +235,15 @@
 tpot_support_matrix_supported_ref: "fdafa483e1e0f36b0a7b0cbb6bae1031fe06fc37"
 
 # SUPPORTED at the ref above -- DERIVED from its gate by tools/pin-upstream.sh,
-# never edited by hand. TESTED applies to debian:13 at ref fdafa483 ONLY, and
-# only as far as tests/MATRIX-STATUS.md's row says: installed and running,
-# with the post-reboot verification records never read. ubuntu:26.04 has never
-# been run at all.
+# never edited by hand. BOTH rows are now TESTED at ref fdafa483, each with a
+# dated row in tests/MATRIX-STATUS.md, and each only as far as its row says:
+# ubuntu:26.04 was carried through to exit 0 with 25 of 25 checks; debian:13
+# reached exit 20 with T-Pot running, its post-reboot records never read
+# because the administrative pinhole was still closed on the day.
+#
+# DERIVED AND TESTED REMAIN DIFFERENT WORDS. Move the pin and this list is
+# recomputed from the new ref's gate -- at which point it is derived again and
+# tested by nothing, until somebody runs it and dates a row.
 tpot_support_matrix_supported:
   - "debian:13"
   - "ubuntu:26.04"

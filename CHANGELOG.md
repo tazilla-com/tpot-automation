@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.7] - 2026-09-05
+
+### Changed
+
+**Documentation caught up with two tested platforms.** 1.0.6 recorded the Ubuntu run but left
+several statements written when only one platform had been installed, and two of them were in files
+a reader trusts most:
+
+* `support-matrix.yml` said *"TESTED applies to debian:13 … ONLY … ubuntu:26.04 has never been run
+  at all."* Both rows are tested now, and the note says which row proved what — while keeping the
+  distinction that matters: **derived and tested remain different words**, and moving the pin
+  recomputes the list and makes every row unrun again.
+* `tests/release-gate.sh` justified not requiring a run per supported platform by saying Ubuntu had
+  never been installed. That reason expired; the rule did not. It is restated on the durable
+  ground — the supported list is derived from the pinned ref, so any re-pin leaves every row unrun,
+  and a gate demanding otherwise would block the first release after one.
+
+`README.md`'s header, the example inventory and both example answer files now say both platforms
+are tested rather than naming one. The 1.0.1 and 1.0.2 notes keep their original wording with a
+pointer, because each was true when written.
+
 ## [1.0.6] - 2026-09-05
 
 ### Added
@@ -273,7 +294,8 @@ cover it, including the no-regression case.
 
 `ubuntu:26.04` is still unrun. The platform this project develops on has one guest template and no
 way to make another, so the fix above is proven against a reproduction rather than against Ubuntu.
-See `docs/compatibility.md`.
+See `docs/compatibility.md`. *(Both halves stopped being true on 2026-09-05: the platform built an
+Ubuntu template, and the fix was confirmed against real Ubuntu — see 1.0.6.)*
 
 ## [1.0.0] - 2026-09-05
 
@@ -297,7 +319,8 @@ unit fires and writes its record to the host, and the network that install was
 driven from cannot reach the host afterwards to read it — administrative SSH
 moves to 64295 by design. One platform, one edition, one account policy and one
 set of port assignment have been exercised; `ubuntu:26.04` is supported by
-derivation from the same pin and has never been run. `docs/compatibility.md`
+derivation from the same pin and has never been run. *(Run and verified on
+2026-09-05 — see 1.0.6.)* `docs/compatibility.md`
 and `tests/MATRIX-STATUS.md` both say so, per release and per platform, and are
 the two files entitled to.
 
@@ -653,6 +676,7 @@ The support matrix has two tiers, and the honest statement of each is:
   from. **Tested** is a different word needing a different artefact -- a dated
   row in `tests/MATRIX-STATUS.md`. Exactly one cell has one: `debian:13` at ref
   `fdafa483…`. `ubuntu:26.04` is supported by derivation and has never been run.
+  *(Run and verified 2026-09-05 — see 1.0.6.)*
 - **Legacy is a historical record of where the predecessor ran, not a
   compatibility claim by this project (D-12):** Debian 11/12/13, Ubuntu
   20.04/22.04/24.04 and Linux Mint 20/21/22. Upstream T-Pot's own

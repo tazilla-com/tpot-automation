@@ -7,8 +7,9 @@ verifies the result, and exits with a code a caller can branch on.
 
 With no terminal attached it prompts for nothing. It vendors no upstream code.
 
-**Version 1.0.6**, [Apache License 2.0](LICENSE). Installed and exercised on Debian 13 (x86_64);
-see [Supported platforms](#supported-platforms).
+**Version 1.0.7**, [Apache License 2.0](LICENSE). Both supported platforms are tested: Ubuntu
+26.04 installed and **verified** end to end, Debian 13 installed and running. See
+[Supported platforms](#supported-platforms).
 
 ---
 
